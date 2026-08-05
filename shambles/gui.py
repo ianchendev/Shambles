@@ -1,5 +1,6 @@
 """A compact window for switching Claude Code accounts."""
 
+import datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -9,6 +10,19 @@ from .paths import Paths
 
 WINDOW_TITLE = "Shambles"
 PAD = 10
+
+#: Colour per expiry severity. Amber and red are only reached below seven days.
+EXPIRY_COLOURS = {
+    profiles.EXPIRY_OK: "grey",
+    profiles.EXPIRY_SOON: "#b26a00",
+    profiles.EXPIRY_GONE: "#c0392b",
+}
+
+EXPIRY_TOOLTIP = (
+    "Refresh token {verb} {date}.\n\n"
+    "This is the rolling 30-day window that lets Shambles switch to this "
+    "account without a verification email. Using the account renews it."
+)
 
 
 def header_text(paths, state) -> str:
@@ -27,6 +41,13 @@ def header_text(paths, state) -> str:
     org = account.get("organizationName")
     suffix = f"  ·  {org}" if org else ""
     return f"{state.profile}\n{email}{suffix}"
+
+
+def expiry_tooltip(profile) -> str:
+    """The exact date behind the short countdown chip."""
+    when = datetime.datetime.fromtimestamp(profile.refresh_expires_ms / 1000)
+    verb = "expired" if profile.days_left < 0 else "expires"
+    return EXPIRY_TOOLTIP.format(verb=verb, date=when.strftime("%d %b %Y, %H:%M"))
 
 
 class Tooltip:
@@ -175,6 +196,15 @@ class ShamblesApp(tk.Tk):
                     pady=(0, PAD))
         ttk.Label(detail, foreground="grey",
                   text=profile.email or "unknown").pack(side="left")
+
+        label = profiles.expiry_label(profile)
+        if label:
+            severity = profiles.expiry_severity(profile)
+            chip = ttk.Label(detail, text=f"  {label}",
+                             foreground=EXPIRY_COLOURS[severity])
+            chip.pack(side="left")
+            Tooltip(chip, expiry_tooltip(profile))
+
         if profile.warning:
             badge = ttk.Label(detail, text=" ⚠")
             badge.pack(side="left")

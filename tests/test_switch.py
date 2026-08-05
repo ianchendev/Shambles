@@ -4,7 +4,7 @@ import os
 import pytest
 
 from helpers import NOW, make_claude_json, make_profile, write_json
-from shambles import configjson, links, switcher
+from shambles import configjson, links, profiles, switcher
 from shambles.errors import ForeignLinkError, ProfileNotFoundError
 
 
@@ -88,6 +88,29 @@ def test_switch_to_profile_without_sidecar_clears_identity(paths):
     assert "oauthAccount" not in live
     assert "cachedUsageUtilization" not in live
     assert live["projects"] == {"/some/dir": {"allowedTools": []}}
+
+
+def test_switching_to_a_lapsed_profile_is_not_an_error(paths):
+    """A dead refresh token needs no cleanup. Shambles does not validate
+    tokens -- it moves a symlink. Claude Code then fails its refresh and
+    prompts /login, which overwrites .credentials.json anyway. So a stale
+    file is never in the way, and deleting it would only destroy the
+    evidence of which account the profile belonged to."""
+    _setup(paths)
+    stale = make_profile(paths, "Lapsed", email="lapsed@example.com",
+                         refresh_expires_ms=NOW - 12 * 86_400_000)
+    before = (stale / ".credentials.json").read_bytes()
+
+    state = _switch(paths, "Lapsed")
+
+    assert state.kind == links.MANAGED
+    assert state.profile == "Lapsed"
+    assert (stale / ".credentials.json").read_bytes() == before
+    # the UI still knows whose account it was, and says so plainly
+    p = [x for x in profiles.discover(paths, "Lapsed", NOW) if x.name == "Lapsed"][0]
+    assert p.email == "lapsed@example.com"
+    assert p.token_state == profiles.TOKEN_EXPIRED
+    assert profiles.expiry_label(p) == "expired 12d ago"
 
 
 def test_switch_backs_up_claude_json(paths):
