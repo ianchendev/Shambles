@@ -46,16 +46,7 @@ def test_header_reports_a_broken_link(paths):
     assert "Broken" in text
 
 
-def _display_or_skip():
-    """A real Tk window needs a display; skip rather than fail without one."""
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:
-        pytest.skip(f"no display: {exc}")
-    root.destroy()
-
-
-def test_window_renders_every_profile_state(paths):
+def test_window_renders_every_profile_state(paths, make_app):
     """Builds the real widget tree and forces a render pass, so a broken
     card layout fails here instead of only when the user launches it."""
     import json
@@ -63,8 +54,6 @@ def test_window_renders_every_profile_state(paths):
 
     from helpers import DAY_MS, make_claude_json, make_profile
     from shambles import gui, switcher
-
-    _display_or_skip()
 
     # The window reads the real clock, so anchor the fixtures to it. The extra
     # hour keeps each value off a day boundary, where flooring would flip it.
@@ -81,7 +70,7 @@ def test_window_renders_every_profile_state(paths):
     os.symlink(str(paths.profile_dir("Healthy")), str(paths.claude_dir),
                target_is_directory=True)
 
-    app = gui.ShamblesApp(paths)
+    app = make_app(paths)
     app.update()
 
     assert app.winfo_width() >= 400
@@ -96,17 +85,14 @@ def test_window_renders_every_profile_state(paths):
     # the active card offers no Switch of its own
     assert sum(t == "Switch" for t in texts) == 3
 
-    app.destroy()
 
 
-def test_window_renders_with_no_profiles(paths):
+def test_window_renders_with_no_profiles(paths, make_app):
     from shambles import gui
 
-    _display_or_skip()
-    app = gui.ShamblesApp(paths)
+    app = make_app(paths)
     app.update()
     assert any("No profiles yet" in t for t in _all_text(app.rows))
-    app.destroy()
 
 
 def _all_text(widget):

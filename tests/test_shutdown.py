@@ -96,21 +96,18 @@ def test_signal_closes_the_window(tmp_path, sig):
     assert _expect_exit(proc, sig) == 0
 
 
-def test_wm_delete_window_is_handled(tmp_path):
+def test_wm_delete_window_is_handled(tmp_path, make_app):
     """The title-bar X routes through our own close path, so tooltips are
     torn down rather than orphaned."""
-    from shambles.gui import ShamblesApp
     from shambles.paths import Paths
 
-    _display_or_skip()
-    app = ShamblesApp(Paths.for_home(tmp_path))
+    app = make_app(Paths.for_home(tmp_path))
     app.update()
     assert app.protocol("WM_DELETE_WINDOW"), "no close handler registered"
     app.on_close()
-    app.destroy()
 
 
-def test_tooltip_dies_with_its_widget(tmp_path):
+def test_tooltip_dies_with_its_widget(tmp_path, make_app):
     """A tooltip is an override-redirect Toplevel: the window manager draws no
     frame and cannot close it. If its owner is destroyed while it is visible --
     which refresh() does on every switch -- it would be orphaned on screen
@@ -118,8 +115,7 @@ def test_tooltip_dies_with_its_widget(tmp_path):
     from shambles import gui
     from shambles.paths import Paths
 
-    _display_or_skip()
-    app = gui.ShamblesApp(Paths.for_home(tmp_path))
+    app = make_app(Paths.for_home(tmp_path))
     holder = tk.Frame(app)
     holder.pack()
     label = tk.Label(holder, text="hover me")
@@ -135,15 +131,13 @@ def test_tooltip_dies_with_its_widget(tmp_path):
     app.update()
     assert tip.tip is None, "tooltip outlived the widget it belonged to"
 
-    app.destroy()
 
 
-def test_close_tears_down_every_open_tooltip(tmp_path):
+def test_close_tears_down_every_open_tooltip(tmp_path, make_app):
     from shambles import gui
     from shambles.paths import Paths
 
-    _display_or_skip()
-    app = gui.ShamblesApp(Paths.for_home(tmp_path))
+    app = make_app(Paths.for_home(tmp_path))
     label = tk.Label(app, text="x")
     label.pack()
     tip = gui.Tooltip(label, "help")
@@ -153,4 +147,3 @@ def test_close_tears_down_every_open_tooltip(tmp_path):
 
     app.on_close()
     assert tip.tip is None, "close left a frameless tooltip on screen"
-    app.destroy()
