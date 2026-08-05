@@ -76,9 +76,8 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pytest
 ```
 
-104 tests, plus 3 GUI smoke tests that require `python3-tk`. Every test runs
-against a synthetic home in `tmp_path`. None reads or writes your real
-`~/.claude`.
+107 tests. Every one runs against a synthetic home in `tmp_path`. None reads or
+writes your real `~/.claude`.
 
 The load-bearing test is
 `tests/test_switch.py::test_credentials_survive_a_round_trip_unmodified` — it
@@ -88,7 +87,9 @@ stops solving the problem it exists for.
 
 ## Platform notes
 
-Developed and verified on WSL2 Ubuntu with WSLg. The Windows code paths
+Developed and verified on WSL2 Ubuntu with WSLg, Python 3.12, Tk 8.6. The
+window renders at 420×292 and a `Switch` click was confirmed to swap the token
+and the displayed email together. The Windows code paths
 (`target_is_directory=True`, the WinError 1314 Developer Mode message) are
 written to spec but **have not been exercised** — there was no Windows-side
 Claude Code install to test against.
