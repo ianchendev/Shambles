@@ -140,3 +140,77 @@ def save_current_account(paths, name, *, now_ms_fn=now_ms, sleep=time.sleep) -> 
     outgoing = configjson.extract_account_keys(configjson.load(paths.claude_json))
     configjson.write_sidecar(paths.sidecar(clean), outgoing, now_ms_fn())
     return clean
+
+
+SETTINGS_NAME = "settings.json"
+
+SAVE_FIRST = (
+    "~/.claude is still a real directory.\n\n"
+    "Use 'Save Current Account' first, so your existing login is preserved as "
+    "a profile."
+)
+
+
+def add_empty_account(paths, name, *, seed_settings: bool = True,
+                      now_ms_fn=now_ms, sleep=time.sleep) -> str:
+    """Create a fresh profile and switch to it, ready for ``/login``.
+
+    Only ``settings.json`` is ever seeded -- never ``.credentials.json``. The
+    new profile is deliberately unauthenticated; plugins come back on their own
+    via ``enabledPlugins`` in the copied settings.
+    """
+    state = links.inspect(paths)
+    if state.kind == links.FOREIGN:
+        raise ForeignLinkError(FOREIGN_LINK_MESSAGE.format(target=state.target))
+    if state.kind == links.UNMANAGED:
+        raise ShamblesError(SAVE_FIRST)
+
+    clean = profiles.validate_profile_name(name, profiles.list_profile_names(paths))
+    paths.profiles_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    destination = paths.profile_dir(clean)
+    destination.mkdir(mode=0o700)
+
+    if seed_settings and state.kind == links.MANAGED:
+        source = paths.profile_dir(state.profile) / SETTINGS_NAME
+        if source.is_file():
+            shutil.copy2(source, destination / SETTINGS_NAME)
+
+    switch(paths, clean, now_ms_fn=now_ms_fn, sleep=sleep)
+    return clean
+
+
+def rename_profile(paths, old_name: str, new_name: str, *, sleep=time.sleep) -> str:
+    """Rename a profile, re-pointing ~/.claude if it was the active one.
+
+    The symlink stores an absolute target, so renaming the directory underneath
+    it leaves it dangling until it is re-pointed.
+    """
+    source = paths.profile_dir(old_name)
+    if not source.is_dir():
+        raise ProfileNotFoundError(f"Profile '{old_name}' no longer exists on disk.")
+
+    others = [n for n in profiles.list_profile_names(paths) if n != old_name]
+    clean = profiles.validate_profile_name(new_name, others)
+    if clean == old_name:
+        return old_name
+
+    state = links.inspect(paths)
+    was_active = state.kind == links.MANAGED and state.profile == old_name
+
+    destination = paths.profile_dir(clean)
+    retry.with_retry(
+        lambda: os.rename(source, destination),
+        f"rename '{old_name}'",
+        sleep=sleep,
+    )
+    if was_active:
+        links.point_to(paths, destination, sleep=sleep)
+    return clean
+
+
+def remove_dangling_link(paths) -> None:
+    """Delete a ~/.claude symlink whose profile has been removed."""
+    state = links.inspect(paths)
+    if state.kind != links.DANGLING:
+        raise ShamblesError("~/.claude is not a broken link.")
+    paths.claude_dir.unlink()
