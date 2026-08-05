@@ -43,6 +43,12 @@ def switch(paths, target_name: str, *, now_ms_fn=now_ms, sleep=time.sleep):
     if state.kind == links.MANAGED and state.profile == target_name:
         return state  # already there; touch nothing
 
+    # Pre-flight: refuse before anything moves. Failing after the swap would
+    # leave the link on the new profile carrying the old identity, and this
+    # same call would then return early above as "already there", so the
+    # splice would never happen on a retry.
+    configjson.load_for_write(paths.claude_json)
+
     previous = state.profile if state.kind in (links.MANAGED, links.DANGLING) else None
     stamp = now_ms_fn()
 

@@ -244,6 +244,34 @@ pkill -CONT -f shambles.py && pkill -f shambles.py
 The `-CONT` matters — a stopped process cannot act on `SIGTERM` until it is
 resumed first.
 
+### Your session history is per-profile
+
+This surprises people, so it is worth stating plainly: **switching profiles
+also switches your Claude Code session history.**
+
+Session transcripts live in `~/.claude/projects/`, which is *inside* the
+directory Shambles swaps. So each profile carries its own history:
+
+```
+~/.claude-profiles/Admin/projects/     <- sessions started while Admin was active
+~/.claude-profiles/Ian-Work/projects/  <- sessions started while Ian-Work was active
+```
+
+After a switch, `claude --resume` lists only the sessions belonging to the
+profile you are now on. **Nothing is deleted** — the others are still on disk
+under the other profile, and switching back reveals them again.
+
+A session that is *open* when you switch is a special case: Claude Code holds
+the whole transcript in memory and rewrites the entire file, so it follows you
+into the new profile intact. The old profile keeps a frozen partial copy, which
+is why the same session id can appear under two profiles with different lengths.
+
+To find a session you cannot see:
+
+```bash
+grep -rl "some text you remember" ~/.claude-profiles/*/projects/ | head
+```
+
 ### The one real caveat
 
 **Do not switch while a Claude Code session is running.** A live session holds

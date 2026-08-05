@@ -1,7 +1,10 @@
 import json
 
+import pytest
+
 from helpers import NOW, account, make_claude_json, write_json
 from shambles import configjson
+from shambles.errors import ConfigUnreadableError
 
 
 def test_load_missing_file_returns_empty(tmp_path):
@@ -95,3 +98,58 @@ def test_backup_prunes_to_ten_newest(paths):
     assert len(kept) == 10
     assert f"claude.json.{NOW + 13}" in kept
     assert f"claude.json.{NOW}" not in kept
+
+
+# ---- refusing to clobber an unreadable config ---------------------------
+# ~/.claude.json holds every project, MCP server and machine ID. Claude Code
+# rewrites it on its own schedule, so a read landing mid-write sees truncated
+# JSON. load() answers {} for anything unusable, which is right for merely
+# displaying a profile -- but splicing on top of that {} and writing it back
+# would replace the user's entire config with two keys.
+
+def test_refuses_to_splice_onto_an_unparseable_config(paths):
+    paths.claude_json.write_text('{"projects": {"a": 1}, "mcpServers": {trunc')
+    before = paths.claude_json.read_text()
+
+    with pytest.raises(ConfigUnreadableError):
+        configjson.apply_account_keys(paths.claude_json, {"oauthAccount": {"x": 1}})
+
+    assert paths.claude_json.read_text() == before, "config was modified anyway"
+
+
+def test_refuses_when_the_config_is_a_json_array(paths):
+    paths.claude_json.write_text('["not", "an", "object"]')
+    with pytest.raises(ConfigUnreadableError):
+        configjson.apply_account_keys(paths.claude_json, {})
+
+
+def test_still_creates_a_config_that_does_not_exist(paths):
+    """Absent is not the same as corrupt: a fresh machine must still work."""
+    assert not paths.claude_json.exists()
+    configjson.apply_account_keys(paths.claude_json, {"oauthAccount": {"e": 1}})
+    assert configjson.load(paths.claude_json)["oauthAccount"] == {"e": 1}
+
+
+def test_treats_an_empty_file_as_absent(paths):
+    paths.claude_json.write_text("")
+    configjson.apply_account_keys(paths.claude_json, {"oauthAccount": {"e": 2}})
+    assert configjson.load(paths.claude_json)["oauthAccount"] == {"e": 2}
+
+
+def test_preserves_every_unrelated_key_when_splicing(paths):
+    original = {
+        "projects": {"/a": {"history": ["one", "two"]}},
+        "mcpServers": {"srv": {"cmd": "x"}},
+        "userID": "abc123",
+        "oauthAccount": {"emailAddress": "old@example.com"},
+    }
+    paths.claude_json.write_text(json.dumps(original))
+
+    configjson.apply_account_keys(
+        paths.claude_json, {"oauthAccount": {"emailAddress": "new@example.com"}})
+
+    after = configjson.load(paths.claude_json)
+    assert after["projects"] == original["projects"], "prompt history lost"
+    assert after["mcpServers"] == original["mcpServers"]
+    assert after["userID"] == "abc123"
+    assert after["oauthAccount"]["emailAddress"] == "new@example.com"
