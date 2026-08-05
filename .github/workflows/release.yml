@@ -1,0 +1,107 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: shambles-linux-x86_64
+            built: dist/shambles
+          - os: windows-latest
+            artifact: shambles-windows-x64.exe
+            built: dist/shambles.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install X server (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Install
+        run: pip install -e ".[dev]" pyinstaller
+
+      # Never ship a build that has not passed its own suite.
+      - name: Test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m pytest
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pytest
+
+      # --windowed only on Windows: it suppresses the console window for a GUI
+      # app there. On Linux it would swallow the --version and --help output.
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: pyinstaller --onefile --name shambles shambles/__main__.py
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: pyinstaller --onefile --windowed --name shambles shambles/__main__.py
+
+      - name: Smoke-test the binary
+        if: runner.os == 'Linux'
+        run: ./dist/shambles --version
+
+      - name: Rename
+        shell: bash
+        run: mv "${{ matrix.built }}" "${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Download the binary for your platform below, or install with pipx:
+
+            ```bash
+            pipx install git+https://github.com/ianchendev/Shambles
+            shambles
+            ```
+
+            **The binaries are unsigned.** Windows SmartScreen will warn on
+            first run — that is expected for an unsigned publisher. If you
+            would rather not run an unsigned binary that manages credential
+            files, use the pipx install above and read the source first.
+
+            **macOS is not supported.** Claude Code stores credentials in the
+            Keychain there rather than in `.credentials.json`, so swapping the
+            directory would move everything except the login.
+
+            **Windows requires Developer Mode** (Settings → System → For
+            developers) or Administrator, because creating a symlink is a
+            privileged operation.
+
+            **WSL users:** run the Linux build *inside* WSL. A Windows `.exe`
+            manages `C:\Users\<you>\.claude`, which is a different Claude Code
+            installation from the one in your WSL home directory.

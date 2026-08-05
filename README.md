@@ -21,11 +21,43 @@ allowance.
 
 ## Install
 
+**Recommended — pipx.** No signing warnings, works identically on Linux and
+inside WSL:
+
 ```bash
-sudo apt install python3-tk        # the only dependency
-git clone <this repo> && cd Shambles
-python3 shambles.py
+sudo apt install python3-tk                              # the only dependency
+pipx install git+https://github.com/ianchendev/Shambles
+shambles
 ```
+
+**Or download a binary** from [Releases](https://github.com/ianchendev/Shambles/releases)
+— a single file, nothing to install. See the platform notes below first; the
+binaries are unsigned, so Windows SmartScreen will warn on first run.
+
+**Or from a checkout:**
+
+```bash
+git clone https://github.com/ianchendev/Shambles && cd Shambles
+python3 shambles.py          # or: python3 -m shambles
+```
+
+### Before you install, check it applies to you
+
+| You run Claude Code in… | Use |
+|---|---|
+| Linux desktop | either the binary or pipx |
+| WSL (Ubuntu etc.) | the **Linux** build, run **inside WSL** — see below |
+| Windows natively | the Windows binary, **plus Developer Mode** |
+| macOS | **not supported** — see Platform notes |
+
+**WSL is the sharp edge.** A Windows `.exe` manages
+`C:\Users\<you>\.claude`, which is a *different* Claude Code installation from
+the one in your WSL home directory. If you use Claude Code inside WSL, install
+inside WSL.
+
+**Windows needs Developer Mode** (Settings → System → For developers) or
+Administrator, because creating a symlink is a privileged operation. Shambles
+detects the refusal and tells you, but it cannot grant itself the right.
 
 ## Using it
 
@@ -223,12 +255,17 @@ the outside — Claude Code holds no lock Shambles could wait on.
 
 ```bash
 python3 -m venv --system-site-packages .venv
-.venv/bin/pip install pytest
+.venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest
 ```
 
-107 tests. Every one runs against a synthetic home in `tmp_path`. None reads or
+139 tests. Every one runs against a synthetic home in `tmp_path`. None reads or
 writes your real `~/.claude`.
+
+CI runs the suite on Linux and Windows across Python 3.10 and 3.12, under
+`xvfb` so the GUI render and shutdown tests actually execute rather than skip.
+Tagging `v*` builds unsigned single-file binaries for Linux and Windows and
+attaches them to a GitHub Release — but only after the suite passes on both.
 
 The load-bearing test is
 `tests/test_switch.py::test_credentials_survive_a_round_trip_unmodified` — it
