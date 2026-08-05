@@ -1,0 +1,97 @@
+import json
+
+from helpers import NOW, account, make_claude_json, write_json
+from shambles import configjson
+
+
+def test_load_missing_file_returns_empty(tmp_path):
+    assert configjson.load(tmp_path / "nope.json") == {}
+
+
+def test_load_malformed_file_returns_empty(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{ not json", encoding="utf-8")
+    assert configjson.load(bad) == {}
+
+
+def test_load_non_dict_returns_empty(tmp_path):
+    arr = tmp_path / "arr.json"
+    arr.write_text("[1, 2]", encoding="utf-8")
+    assert configjson.load(arr) == {}
+
+
+def test_extract_pulls_only_account_keys(paths):
+    data = make_claude_json(paths)
+    got = configjson.extract_account_keys(data)
+    assert set(got) == {"oauthAccount", "cachedUsageUtilization"}
+
+
+def test_apply_preserves_every_other_key_and_order(paths):
+    make_claude_json(paths, email="old@example.com")
+    before = json.loads(paths.claude_json.read_text(encoding="utf-8"))
+
+    configjson.apply_account_keys(
+        paths.claude_json,
+        {"oauthAccount": account("new@example.com"),
+         "cachedUsageUtilization": {"accountUuid": "uuid-b"}},
+    )
+
+    after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
+    assert list(after.keys()) == list(before.keys())
+    assert after["numStartups"] == before["numStartups"]
+    assert after["projects"] == before["projects"]
+    assert after["machineID"] == before["machineID"]
+    assert after["oauthAccount"]["emailAddress"] == "new@example.com"
+    assert after["cachedUsageUtilization"]["accountUuid"] == "uuid-b"
+
+
+def test_apply_with_empty_account_deletes_both_keys(paths):
+    make_claude_json(paths)
+    configjson.apply_account_keys(paths.claude_json, {})
+    after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
+    assert "oauthAccount" not in after
+    assert "cachedUsageUtilization" not in after
+    assert after["projects"] == {"/some/dir": {"allowedTools": []}}
+
+
+def test_apply_leaves_no_temp_file(paths):
+    make_claude_json(paths)
+    configjson.apply_account_keys(paths.claude_json, {})
+    leftovers = list(paths.home.glob(".claude.json.*"))
+    assert leftovers == []
+
+
+def test_sidecar_round_trip(paths):
+    sidecar = paths.sidecar("Work")
+    sidecar.parent.mkdir(parents=True)
+    configjson.write_sidecar(sidecar, {"oauthAccount": account("w@example.com")}, NOW)
+
+    got = configjson.read_sidecar(sidecar)
+    assert got["oauthAccount"]["emailAddress"] == "w@example.com"
+    assert "stashed_at" not in got  # read_sidecar returns account keys only
+    assert json.loads(sidecar.read_text(encoding="utf-8"))["stashed_at"] == NOW
+
+
+def test_read_missing_sidecar_returns_empty(paths):
+    assert configjson.read_sidecar(paths.sidecar("Ghost")) == {}
+
+
+def test_backup_copies_and_returns_path(paths):
+    make_claude_json(paths)
+    dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
+    assert dest == paths.backup_dir / f"claude.json.{NOW}"
+    assert dest.exists()
+
+
+def test_backup_of_missing_file_is_none(paths):
+    assert configjson.backup(paths.claude_json, paths.backup_dir, NOW) is None
+
+
+def test_backup_prunes_to_ten_newest(paths):
+    make_claude_json(paths)
+    for i in range(14):
+        configjson.backup(paths.claude_json, paths.backup_dir, NOW + i)
+    kept = sorted(p.name for p in paths.backup_dir.glob("claude.json.*"))
+    assert len(kept) == 10
+    assert f"claude.json.{NOW + 13}" in kept
+    assert f"claude.json.{NOW}" not in kept
