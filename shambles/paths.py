@@ -2,6 +2,11 @@
 
 ``Path.home()`` is called in exactly one place -- :meth:`Paths.real` -- so the
 test suite can point the entire application at a temporary directory.
+
+``~/.claude`` is an ordinary directory here and is never replaced. Only the
+login inside it is account-scoped; session history, plugins, file history and
+settings are machine-scoped and stay shared, which is how Claude Code itself
+behaves.
 """
 
 from dataclasses import dataclass
@@ -11,8 +16,20 @@ CLAUDE_DIRNAME = ".claude"
 CLAUDE_JSON_NAME = ".claude.json"
 PROFILES_DIRNAME = ".claude-profiles"
 BACKUP_DIRNAME = ".shambles-backups"
-SIDECAR_NAME = ".shambles.json"
-TMP_LINK_NAME = ".claude.shambles-tmp"
+
+#: Claude Code's own name for the live login inside ~/.claude.
+LIVE_CREDENTIALS_NAME = ".credentials.json"
+
+#: Per-profile files. Small: tokens and the account identity, nothing else.
+CREDENTIALS_NAME = "credentials.json"
+ACCOUNT_NAME = "account.json"
+
+#: Records which profile the live login belongs to.
+ACTIVE_NAME = "active"
+
+#: Pre-1.0 layout, where ~/.claude was a symlink into a full profile copy.
+LEGACY_SIDECAR_NAME = ".shambles.json"
+LEGACY_CREDENTIALS_NAME = ".credentials.json"
 
 
 @dataclass(frozen=True)
@@ -36,6 +53,10 @@ class Paths:
         return self.home / CLAUDE_JSON_NAME
 
     @property
+    def live_credentials(self) -> Path:
+        return self.claude_dir / LIVE_CREDENTIALS_NAME
+
+    @property
     def profiles_dir(self) -> Path:
         return self.home / PROFILES_DIRNAME
 
@@ -44,11 +65,22 @@ class Paths:
         return self.profiles_dir / BACKUP_DIRNAME
 
     @property
-    def tmp_link(self) -> Path:
-        return self.home / TMP_LINK_NAME
+    def active_marker(self) -> Path:
+        return self.profiles_dir / ACTIVE_NAME
 
     def profile_dir(self, name: str) -> Path:
         return self.profiles_dir / name
 
-    def sidecar(self, name: str) -> Path:
-        return self.profile_dir(name) / SIDECAR_NAME
+    def credentials(self, name: str) -> Path:
+        return self.profile_dir(name) / CREDENTIALS_NAME
+
+    def account(self, name: str) -> Path:
+        return self.profile_dir(name) / ACCOUNT_NAME
+
+    # -- legacy layout, read only during migration -----------------------
+
+    def legacy_credentials(self, name: str) -> Path:
+        return self.profile_dir(name) / LEGACY_CREDENTIALS_NAME
+
+    def legacy_sidecar(self, name: str) -> Path:
+        return self.profile_dir(name) / LEGACY_SIDECAR_NAME

@@ -65,7 +65,7 @@ def test_apply_leaves_no_temp_file(paths):
 
 
 def test_sidecar_round_trip(paths):
-    sidecar = paths.sidecar("Work")
+    sidecar = paths.account("Work")
     sidecar.parent.mkdir(parents=True)
     configjson.write_sidecar(sidecar, {"oauthAccount": account("w@example.com")}, NOW)
 
@@ -76,7 +76,7 @@ def test_sidecar_round_trip(paths):
 
 
 def test_read_missing_sidecar_returns_empty(paths):
-    assert configjson.read_sidecar(paths.sidecar("Ghost")) == {}
+    assert configjson.read_sidecar(paths.account("Ghost")) == {}
 
 
 def test_backup_copies_and_returns_path(paths):

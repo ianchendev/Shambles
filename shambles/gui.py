@@ -5,7 +5,7 @@ import signal
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from . import links, profiles, switcher
+from . import configjson, migrate, profiles, state, switcher
 from .errors import ShamblesError
 from .paths import Paths
 from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
@@ -32,26 +32,30 @@ RENAME_HINT = "Double-click to rename"
 SIGNAL_POLL_MS = 150
 
 
-def header_text(paths, state) -> str:
-    """What ~/.claude currently points at.
+def header_text(paths, current) -> str:
+    """Who is logged in right now.
 
     Managed profiles return two lines -- name, then email and organisation --
     which the header renders at different weights.
     """
-    if state.kind == links.UNMANAGED:
-        return "~/.claude is not managed yet — use Save Current Account."
-    if state.kind == links.MISSING:
-        return "~/.claude is not set up — use Add Empty Account."
-    if state.kind == links.FOREIGN:
-        return f"⚠ ~/.claude points outside Shambles: {state.target}"
-    if state.kind == links.DANGLING:
-        return f"⚠ Broken link — '{state.profile}' is missing from disk."
+    if current.kind == state.LEGACY_LAYOUT:
+        return ("⚠ Your session history is split across profiles — "
+                "run the migration below.")
+    if current.kind == state.UNMANAGED:
+        return "No accounts saved yet — use Save Current Account."
+    if current.kind == state.UNKNOWN:
+        return "⚠ Not sure which account is live — use Save Current Account."
+    if current.kind == state.MISSING_PROFILE:
+        return f"⚠ Profile '{current.profile}' is missing from disk."
+    if current.kind == state.DRIFTED:
+        return (f"⚠ Signed in as {current.live_email}, "
+                f"but '{current.profile}' expects {current.expected_email}.")
 
-    account = profiles.resolve_account(paths, state.profile, state.profile)
-    email = account.get("emailAddress") or "unknown"
+    account = profiles.resolve_account(paths, current.profile, current.profile)
+    email = account.get("emailAddress") or current.live_email or "unknown"
     org = account.get("organizationName")
     suffix = f"  ·  {org}" if org else ""
-    return f"{state.profile}\n{email}{suffix}"
+    return f"{current.profile}\n{email}{suffix}"
 
 
 def expiry_tooltip(profile) -> str:
@@ -258,24 +262,28 @@ class ShamblesApp(tk.Tk):
     def refresh(self):
         """Re-read everything from disk. No cached view state, ever."""
         t = self.theme
-        state = links.inspect(self.paths)
+        current = state.inspect(self.paths)
 
-        lines = header_text(self.paths, state).split("\n")
-        managed = state.kind == links.MANAGED
-        self.caption.config(text="ACTIVE PROFILE" if managed else "STATUS")
+        lines = header_text(self.paths, current).split("\n")
+        managed = current.kind == state.MANAGED
+        self.caption.config(text="ACTIVE ACCOUNT" if managed else "STATUS")
         self.title_label.config(
             text=lines[0],
             font=t.title if managed else t.name,
             fg=t["text"] if managed else t["warn"])
         self.subtitle.config(text=lines[1] if len(lines) > 1 else "")
 
-        self.save_button.config(
-            state="normal" if state.kind == links.UNMANAGED else "disabled")
+        savable = current.kind in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED)
+        self.save_button.config(state="normal" if savable else "disabled")
 
         for child in self.rows.winfo_children():
             child.destroy()
 
-        found = profiles.discover(self.paths, state.profile, switcher.now_ms())
+        if current.kind == state.LEGACY_LAYOUT:
+            self._render_migration_offer()
+            return
+
+        found = profiles.discover(self.paths, current.profile, switcher.now_ms())
         if not found:
             tk.Label(self.rows, text="No profiles yet.", font=t.body,
                      bg=t["window"], fg=t["faint"]).pack(anchor="w")
@@ -284,10 +292,28 @@ class ShamblesApp(tk.Tk):
         for profile in found:
             self._render_card(profile)
 
-        if state.kind == links.DANGLING:
-            ttk.Button(self.rows, text="Remove broken link",
+        if current.kind == state.MISSING_PROFILE:
+            ttk.Button(self.rows, text="Forget that profile",
                        style="Shambles.TButton",
-                       command=self.on_remove_link).pack(anchor="w", pady=(GAP_S, 0))
+                       command=self.on_forget_marker).pack(anchor="w", pady=(GAP_S, 0))
+
+    def _render_migration_offer(self):
+        """Shown while ~/.claude is still a symlink from the old layout."""
+        t = self.theme
+        card = tk.Frame(self.rows, bg=t["chip_soon_bg"], padx=GAP_M, pady=GAP_M)
+        card.pack(fill="x", pady=(0, GAP_S))
+        tk.Label(card, text="Session history is split per account", font=t.name,
+                 bg=t["chip_soon_bg"], fg=t["chip_soon_fg"], anchor="w",
+                 justify="left").pack(fill="x")
+        tk.Label(card, bg=t["chip_soon_bg"], fg=t["chip_soon_fg"], font=t.body,
+                 anchor="w", justify="left",
+                 wraplength=WINDOW_WIDTH - 4 * GAP_L,
+                 text=("An older version gave every account its own copy of "
+                       "~/.claude, so switching hid your transcripts. Merging "
+                       "them restores one shared history. Nothing is deleted."),
+                 ).pack(fill="x", pady=(GAP_XS, GAP_M))
+        ttk.Button(card, text="Merge my history", style="Accent.TButton",
+                   command=self.on_migrate).pack(anchor="w")
 
     def _render_card(self, profile):
         """One profile as a bordered card, accented when it is the active one."""
@@ -362,8 +388,30 @@ class ShamblesApp(tk.Tk):
         self._guarded(
             lambda: switcher.rename_profile(self.paths, old_name, new_name))
 
-    def on_remove_link(self):
-        self._guarded(lambda: switcher.remove_dangling_link(self.paths))
+    def on_forget_marker(self):
+        self._guarded(lambda: switcher.forget_active_marker(self.paths))
+
+    def on_migrate(self):
+        plan = migrate.survey(self.paths)
+        mb = plan.bytes_to_copy / 1048576
+        proceed = messagebox.askokcancel(
+            WINDOW_TITLE,
+            "Older versions of Shambles gave every account its own copy of "
+            "~/.claude, so each had a separate session history.\n\n"
+            f"This merges them into one shared directory, keeping '{plan.base}' "
+            f"as the base and copying in {plan.merged_files} files "
+            f"({mb:.0f} MB) from the others.\n\n"
+            "Nothing is deleted. The old profile folders stay on disk for you "
+            "to remove once you are happy.\n\nContinue?",
+            parent=self)
+        if not proceed:
+            return
+        self._guarded(lambda: migrate.run(self.paths, now_ms=switcher.now_ms()))
+        messagebox.showinfo(
+            WINDOW_TITLE,
+            "Migration complete. Your session history is now shared across "
+            "every account, and switching will not hide it again.",
+            parent=self)
 
     def on_save(self):
         if switcher.crosses_filesystem(self.paths):
@@ -381,8 +429,8 @@ class ShamblesApp(tk.Tk):
             self._guarded(lambda: switcher.save_current_account(self.paths, name))
 
     def on_add(self):
-        state = links.inspect(self.paths)
-        dialog = AddAccountDialog(self, state.profile, self.theme)
+        current = state.inspect(self.paths)
+        dialog = AddAccountDialog(self, current.profile, self.theme)
         if dialog.result is None:
             return
         name, seed = dialog.result

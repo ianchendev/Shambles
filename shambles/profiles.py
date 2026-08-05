@@ -7,9 +7,7 @@ from pathlib import Path
 from . import configjson
 from .errors import ProfileNameError
 
-CREDENTIALS_NAME = ".credentials.json"
-BACKUPS_DIRNAME = "backups"
-BACKUP_GLOB = ".claude.json.backup.*"
+CREDENTIALS_NAME = "credentials.json"
 
 TOKEN_OK = "ok"
 TOKEN_MISSING = "missing"
@@ -90,18 +88,9 @@ def expiry_severity(profile: Profile) -> str | None:
 
 
 def list_profile_names(paths) -> list[str]:
-    """Non-dot directories directly under ~/.claude-profiles/.
-
-    The leading dot on .shambles-backups/ is what excludes it.
-    """
-    if not paths.profiles_dir.is_dir():
-        return []
-    names = [
-        entry.name
-        for entry in paths.profiles_dir.iterdir()
-        if entry.is_dir() and not entry.name.startswith(".")
-    ]
-    return sorted(names, key=str.casefold)
+    """Profile directories, case-insensitively sorted for display."""
+    from . import state
+    return sorted(state.profile_names(paths), key=str.casefold)
 
 
 def token_state(profile_dir, now_ms: int) -> str:
@@ -117,35 +106,21 @@ def token_state(profile_dir, now_ms: int) -> str:
 def resolve_account(paths, name: str, active_name: str | None) -> dict:
     """Best-known ``oauthAccount`` blob for a profile; ``{}`` if unknown.
 
-    Four sources, first hit wins: the live ~/.claude.json when this profile is
-    active, then its sidecar, then the newest .claude.json backup Claude Code
-    left inside the profile, then nothing.
+    The live ~/.claude.json wins for the active profile, since it is the one
+    Claude Code keeps current. Otherwise fall back to what was stashed when
+    this profile was last active.
     """
     if active_name is not None and name == active_name:
         live = configjson.load(paths.claude_json).get("oauthAccount")
         if _usable(live):
             return live
 
-    stashed = configjson.read_sidecar(paths.sidecar(name)).get("oauthAccount")
-    if _usable(stashed):
-        return stashed
-
-    return _account_from_backups(paths.profile_dir(name) / BACKUPS_DIRNAME)
+    stashed = configjson.read_sidecar(paths.account(name)).get("oauthAccount")
+    return stashed if _usable(stashed) else {}
 
 
 def _usable(account) -> bool:
     return isinstance(account, dict) and bool(account.get("emailAddress"))
-
-
-def _account_from_backups(backups_dir: Path) -> dict:
-    if not backups_dir.is_dir():
-        return {}
-    snaps = sorted(backups_dir.glob(BACKUP_GLOB), key=_stamp, reverse=True)
-    for snap in snaps:
-        account = configjson.load(snap).get("oauthAccount")
-        if _usable(account):
-            return account
-    return {}
 
 
 def _stamp(path: Path) -> int:
