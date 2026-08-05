@@ -1,21 +1,34 @@
-"""The operations Shambles performs on the user's Claude Code configuration."""
+"""Switching accounts by swapping the login, and nothing else.
+
+``~/.claude`` stays exactly where it is. Only two things move:
+
+* ``~/.claude/.credentials.json`` -- the OAuth tokens
+* ``oauthAccount`` and ``cachedUsageUtilization`` in ``~/.claude.json``
+
+Everything else in ``~/.claude`` -- session history, plugins, file history,
+todos, settings -- is machine-scoped and shared across accounts, which is how
+Claude Code behaves on its own. An earlier design swapped the whole directory
+and so partitioned session history per account; that was wrong.
+"""
 
 import os
 import shutil
 import time
 from pathlib import Path
 
-from . import configjson, links, profiles, retry
-from .errors import (AlreadyManagedError, ForeignLinkError, ProfileNotFoundError,
-                     ShamblesError)
+from . import configjson, profiles, state
+from .errors import (AlreadyManagedError, ProfileNotFoundError,
+                     SwitchFailedError)
 
-IDE_DIRNAME = "ide"
-LOCK_GLOB = "*.lock"
+NOTHING_TO_SAVE = (
+    "There is no login to save — ~/.claude has no credentials file yet.\n\n"
+    "Run 'claude' and sign in first, then save that account here."
+)
 
-FOREIGN_LINK_MESSAGE = (
-    "~/.claude is a symlink to {target}, which is outside ~/.claude-profiles/.\n\n"
-    "Shambles will not touch a setup it did not create. Remove or re-point that "
-    "link by hand first."
+SAVE_FIRST = (
+    "Save your current account first.\n\n"
+    "Otherwise the login in ~/.claude would be replaced with nothing and you "
+    "would have to sign in again to get it back."
 )
 
 
@@ -23,200 +36,138 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _copy_secret(source: Path, dest: Path) -> None:
+    """Copy a credentials file, atomically and readable only by its owner."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".shambles-tmp")
+    shutil.copyfile(source, tmp)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, dest)
+
+
+def stash_live_login(paths, name: str, *, now_ms_fn=now_ms) -> None:
+    """Capture whatever is logged in right now into profile ``name``."""
+    paths.profile_dir(name).mkdir(parents=True, exist_ok=True)
+    if paths.live_credentials.exists():
+        _copy_secret(paths.live_credentials, paths.credentials(name))
+    account = configjson.extract_account_keys(
+        configjson.load(paths.claude_json))
+    configjson.write_sidecar(paths.account(name), account, now_ms_fn())
+
+
 def switch(paths, target_name: str, *, now_ms_fn=now_ms, sleep=time.sleep):
-    """Make ``target_name`` the active profile.
+    """Make ``target_name`` the logged-in account.
 
-    Stashes the outgoing account's identity, backs up ~/.claude.json, swaps the
-    link atomically, splices the incoming identity in, and carries the VS Code
-    lock files across. Returns the resulting :class:`~shambles.links.LinkState`.
+    Stashes the outgoing login, restores the incoming one, and splices the
+    matching identity into ~/.claude.json. Session history is untouched: it
+    never moves.
     """
-    state = links.inspect(paths)
-    if state.kind == links.FOREIGN:
-        raise ForeignLinkError(FOREIGN_LINK_MESSAGE.format(target=state.target))
+    current = state.inspect(paths)
+    if current.kind == state.LEGACY_LAYOUT:
+        raise SwitchFailedError(MIGRATION_REQUIRED)
 
-    target_dir = paths.profile_dir(target_name)
-    if not target_dir.is_dir():
+    if not paths.profile_dir(target_name).is_dir():
         raise ProfileNotFoundError(
-            f"Profile '{target_name}' no longer exists on disk."
-        )
+            f"Profile '{target_name}' no longer exists on disk.")
 
-    if state.kind == links.MANAGED and state.profile == target_name:
-        return state  # already there; touch nothing
-
-    # Pre-flight: refuse before anything moves. Failing after the swap would
-    # leave the link on the new profile carrying the old identity, and this
-    # same call would then return early above as "already there", so the
-    # splice would never happen on a retry.
+    # Refuse before anything moves if the config cannot be parsed; writing
+    # onto an unreadable config would replace the whole file.
     configjson.load_for_write(paths.claude_json)
 
-    previous = state.profile if state.kind in (links.MANAGED, links.DANGLING) else None
     stamp = now_ms_fn()
-
-    if previous and paths.profile_dir(previous).is_dir():
-        outgoing = configjson.extract_account_keys(configjson.load(paths.claude_json))
-        configjson.write_sidecar(paths.sidecar(previous), outgoing, stamp)
-
     configjson.backup(paths.claude_json, paths.backup_dir, stamp)
 
-    links.point_to(paths, target_dir, sleep=sleep)
+    # Stash the outgoing login so switching away is never lossy. Skipped when
+    # the marker points at a profile that is already gone.
+    if current.profile and paths.profile_dir(current.profile).is_dir():
+        stash_live_login(paths, current.profile, now_ms_fn=lambda: stamp)
 
-    incoming = configjson.read_sidecar(paths.sidecar(target_name))
-    configjson.apply_account_keys(paths.claude_json, incoming)
-
-    if previous:
-        carry_ide_locks(paths.profile_dir(previous), target_dir)
-
-    return links.inspect(paths)
-
-
-def carry_ide_locks(source_dir, target_dir) -> None:
-    """Copy the VS Code extension's IPC lock files into the incoming profile.
-
-    These record a live extension host (pid, workspace, IPC token) rather than
-    anything account-specific, but they live inside the swapped directory. Left
-    behind, the CLI loses sight of the running extension.
-
-    Deliberately non-fatal: a lost lock file costs a window reload, not a
-    broken switch.
-    """
-    source = Path(source_dir) / IDE_DIRNAME
-    if not source.is_dir():
-        return
-    destination = Path(target_dir) / IDE_DIRNAME
+    incoming = paths.credentials(target_name)
+    paths.claude_dir.mkdir(parents=True, exist_ok=True)
     try:
-        destination.mkdir(mode=0o700, parents=True, exist_ok=True)
-        for lock in source.glob(LOCK_GLOB):
-            shutil.copy2(lock, destination / lock.name)
-    except OSError:
-        pass
+        if incoming.exists():
+            _copy_secret(incoming, paths.live_credentials)
+        else:
+            # A profile that has never been signed into: clear the login so
+            # Claude Code prompts for one rather than reusing the last account.
+            paths.live_credentials.unlink(missing_ok=True)
+    except OSError as exc:
+        raise SwitchFailedError(
+            f"Could not update the login in ~/.claude:\n{exc}") from exc
+
+    configjson.apply_account_keys(
+        paths.claude_json, configjson.read_sidecar(paths.account(target_name)))
+    state.write_active(paths, target_name)
+    return state.inspect(paths)
 
 
-NOTHING_TO_SAVE = (
-    "There is no ~/.claude directory to save.\n\n"
-    "Use 'Add Empty Account' to create a profile and log in fresh."
+MIGRATION_REQUIRED = (
+    "~/.claude is still a symlink from an older version of Shambles.\n\n"
+    "That layout gave every account its own copy of your session history. "
+    "Run the migration to merge them back into one shared directory."
 )
-
-
-def crosses_filesystem(paths) -> bool:
-    """True if ~/.claude sits on a different device from its future parent.
-
-    ``shutil.move`` silently degrades from a rename to copytree+rmtree across
-    devices -- slow, and non-atomic on a directory holding live credentials.
-    """
-    try:
-        return os.stat(paths.claude_dir).st_dev != os.stat(paths.home).st_dev
-    except OSError:
-        return False
 
 
 def save_current_account(paths, name, *, now_ms_fn=now_ms, sleep=time.sleep) -> str:
-    """Move the real ~/.claude into a profile and leave a symlink behind.
-
-    The only operation that relocates live data. If the symlink cannot be
-    created afterwards, the move is undone before the error propagates --
-    without that, a Windows privilege error would leave the user with no
-    ~/.claude at all.
-    """
-    state = links.inspect(paths)
-    if state.kind == links.FOREIGN:
-        raise ForeignLinkError(FOREIGN_LINK_MESSAGE.format(target=state.target))
-    if state.kind in (links.MANAGED, links.DANGLING):
+    """Record the account that is logged in right now as a profile."""
+    current = state.inspect(paths)
+    if current.kind == state.LEGACY_LAYOUT:
+        raise SwitchFailedError(MIGRATION_REQUIRED)
+    if current.kind == state.MANAGED:
         raise AlreadyManagedError(
-            "~/.claude is already managed by Shambles — nothing to save."
-        )
-    if state.kind != links.UNMANAGED:
-        raise ShamblesError(NOTHING_TO_SAVE)
+            f"This login is already saved as '{current.profile}'.")
+    if not paths.live_credentials.exists():
+        raise AlreadyManagedError(NOTHING_TO_SAVE)
 
-    clean = profiles.validate_profile_name(name, profiles.list_profile_names(paths))
-    paths.profiles_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    destination = paths.profile_dir(clean)
-
-    shutil.move(str(paths.claude_dir), str(destination))
-    try:
-        target = str(destination.absolute())
-        retry.with_retry(
-            lambda: os.symlink(target, str(paths.claude_dir), target_is_directory=True),
-            "create the ~/.claude symlink",
-            sleep=sleep,
-        )
-    except BaseException:
-        shutil.move(str(destination), str(paths.claude_dir))
-        raise
-
-    outgoing = configjson.extract_account_keys(configjson.load(paths.claude_json))
-    configjson.write_sidecar(paths.sidecar(clean), outgoing, now_ms_fn())
-    return clean
-
-
-SETTINGS_NAME = "settings.json"
-
-SAVE_FIRST = (
-    "~/.claude is still a real directory.\n\n"
-    "Use 'Save Current Account' first, so your existing login is preserved as "
-    "a profile."
-)
+    name = profiles.validate_profile_name(name, state.profile_names(paths))
+    stash_live_login(paths, name, now_ms_fn=now_ms_fn)
+    state.write_active(paths, name)
+    return name
 
 
 def add_empty_account(paths, name, *, seed_settings: bool = True,
                       now_ms_fn=now_ms, sleep=time.sleep) -> str:
-    """Create a fresh profile and switch to it, ready for ``/login``.
+    """Create a profile with no login and make it current.
 
-    Only ``settings.json`` is ever seeded -- never ``.credentials.json``. The
-    new profile is deliberately unauthenticated; plugins come back on their own
-    via ``enabledPlugins`` in the copied settings.
+    ``seed_settings`` is accepted for compatibility and ignored: settings now
+    live in the shared ~/.claude and are never per-account.
     """
-    state = links.inspect(paths)
-    if state.kind == links.FOREIGN:
-        raise ForeignLinkError(FOREIGN_LINK_MESSAGE.format(target=state.target))
-    if state.kind == links.UNMANAGED:
-        raise ShamblesError(SAVE_FIRST)
+    current = state.inspect(paths)
+    if current.kind == state.LEGACY_LAYOUT:
+        raise SwitchFailedError(MIGRATION_REQUIRED)
+    if current.kind == state.UNMANAGED and paths.live_credentials.exists():
+        raise AlreadyManagedError(SAVE_FIRST)
 
-    clean = profiles.validate_profile_name(name, profiles.list_profile_names(paths))
-    paths.profiles_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    destination = paths.profile_dir(clean)
-    destination.mkdir(mode=0o700)
-
-    if seed_settings and state.kind == links.MANAGED:
-        source = paths.profile_dir(state.profile) / SETTINGS_NAME
-        if source.is_file():
-            shutil.copy2(source, destination / SETTINGS_NAME)
-
-    switch(paths, clean, now_ms_fn=now_ms_fn, sleep=sleep)
-    return clean
+    name = profiles.validate_profile_name(name, state.profile_names(paths))
+    paths.profile_dir(name).mkdir(parents=True, exist_ok=True)
+    return switch(paths, name, now_ms_fn=now_ms_fn, sleep=sleep).profile or name
 
 
 def rename_profile(paths, old_name: str, new_name: str, *, sleep=time.sleep) -> str:
-    """Rename a profile, re-pointing ~/.claude if it was the active one.
+    if not paths.profile_dir(old_name).is_dir():
+        raise ProfileNotFoundError(f"Profile '{old_name}' does not exist.")
 
-    The symlink stores an absolute target, so renaming the directory underneath
-    it leaves it dangling until it is re-pointed.
-    """
-    source = paths.profile_dir(old_name)
-    if not source.is_dir():
-        raise ProfileNotFoundError(f"Profile '{old_name}' no longer exists on disk.")
-
-    others = [n for n in profiles.list_profile_names(paths) if n != old_name]
-    clean = profiles.validate_profile_name(new_name, others)
-    if clean == old_name:
+    existing = [n for n in state.profile_names(paths) if n != old_name]
+    new_name = profiles.validate_profile_name(new_name, existing)
+    if new_name == old_name:
         return old_name
 
-    state = links.inspect(paths)
-    was_active = state.kind == links.MANAGED and state.profile == old_name
+    try:
+        paths.profile_dir(old_name).rename(paths.profile_dir(new_name))
+    except OSError as exc:
+        raise SwitchFailedError(f"Could not rename the profile:\n{exc}") from exc
 
-    destination = paths.profile_dir(clean)
-    retry.with_retry(
-        lambda: os.rename(source, destination),
-        f"rename '{old_name}'",
-        sleep=sleep,
-    )
-    if was_active:
-        links.point_to(paths, destination, sleep=sleep)
-    return clean
+    if state.read_active(paths) == old_name:
+        state.write_active(paths, new_name)
+    return new_name
 
 
-def remove_dangling_link(paths) -> None:
-    """Delete a ~/.claude symlink whose profile has been removed."""
-    state = links.inspect(paths)
-    if state.kind != links.DANGLING:
-        raise ShamblesError("~/.claude is not a broken link.")
-    paths.claude_dir.unlink()
+def forget_active_marker(paths) -> None:
+    """Clear a marker pointing at a profile that no longer exists."""
+    state.write_active(paths, None)
+
+
+def crosses_filesystem(paths) -> bool:
+    """Kept for the GUI's warning. Nothing large is copied any more, so this
+    is always false; the credentials file is half a kilobyte."""
+    return False

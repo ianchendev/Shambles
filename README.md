@@ -2,10 +2,14 @@
 
 Switch between Claude Code accounts without waiting for a verification email.
 
-Claude Code hardcodes its config path to `~/.claude`, and the VS Code extension
-host ignores environment variables — so the only way to run more than one
-account is to change what that path resolves to. Shambles keeps each account in
-`~/.claude-profiles/<Name>` and swaps an OS-level symlink between them.
+Claude Code hardcodes its config path to `~/.claude` and the VS Code extension
+host ignores environment variables, so there is no supported way to run more
+than one account. Shambles keeps each account's login in
+`~/.claude-profiles/<Name>/` and swaps just that one file into place.
+
+`~/.claude` itself is never moved or replaced. Your session history, plugins,
+settings and project trust stay exactly where they are and are shared by every
+account, which is how Claude Code behaves on its own.
 
 ## Why this skips the login wait
 
@@ -56,28 +60,27 @@ the one in your WSL home directory. If you use Claude Code inside WSL, install
 inside WSL.
 
 **Windows needs Developer Mode** (Settings → System → For developers) or
-Administrator, because creating a symlink is a privileged operation. Shambles
-detects the refusal and tells you, but it cannot grant itself the right.
+Administrator only if you are migrating from a pre-1.0 layout, which used
+symlinks. Ordinary switching needs no special privileges.
 
 ## Using it
 
 ### First run
 
-`~/.claude` is still a real directory. Click **Save Current Account** and name
-it (e.g. `Work`). Shambles moves the directory into `~/.claude-profiles/Work`
-and leaves a symlink behind. Nothing is deleted, and if the symlink cannot be
-created the move is rolled straight back.
+Click **Save Current Account** and name it (e.g. `Work`). Shambles copies the
+login out of `~/.claude` into `~/.claude-profiles/Work/` and records it as
+active. Nothing moves and nothing is deleted — `~/.claude` is left exactly as
+it was.
 
 ### Adding an account
 
-Your existing login **cannot** be affected by this. Each profile has its own
-`.credentials.json` in its own directory — two separate files. Signing into one
-is physically incapable of signing out the other, because there is no shared
-credential store to overwrite.
+Your existing login **cannot** be lost by this. It is copied into its profile
+before anything is replaced, so the account you are leaving is always
+recoverable by switching back.
 
 1. **Close any running Claude Code sessions**, in VS Code and in terminals.
-2. Click **Add Empty Account**, name it, and leave *Copy settings from …*
-   checked so your plugins, permissions and model prefs carry over. The new
+2. Click **Add Account** and name it. Settings and plugins are shared, so there
+   is nothing to copy across. The new
    profile becomes active immediately — empty, with no token.
 3. In a **terminal**, run `claude`, then `/login`. The OAuth flow writes
    `.credentials.json` into the new profile only. This is the one and only time
@@ -98,22 +101,28 @@ a change on disk, not a change inside a live process.
 
 ## What it touches
 
+Only your **login** is account-scoped. Everything else in `~/.claude` is
+machine-scoped and stays shared, which is how Claude Code behaves on its own.
+
 | Path | Treatment |
 |---|---|
-| `~/.claude` | symlink, swapped atomically |
-| `~/.claude.json` | real file; only `oauthAccount` and `cachedUsageUtilization` are spliced |
-| `~/.claude-profiles/<Name>/` | the profile directories |
-| `~/.claude-profiles/<Name>/.shambles.json` | that profile's stashed identity |
+| `~/.claude/.credentials.json` | swapped — this is the only file that moves |
+| `~/.claude.json` | only `oauthAccount` and `cachedUsageUtilization` spliced |
+| `~/.claude/projects/`, `plugins/`, `file-history/`, `settings.json` | **never touched** |
+| `~/.claude-profiles/<Name>/credentials.json` | that account's tokens |
+| `~/.claude-profiles/<Name>/account.json` | that account's identity |
+| `~/.claude-profiles/active` | which profile is live |
 | `~/.claude-profiles/.shambles-backups/` | last 10 copies of `~/.claude.json` |
 
-Project trust, MCP servers and prompt history live in `~/.claude.json` and stay
-**shared** across profiles — switching accounts does not make you re-trust your
-directories.
+`~/.claude` is an ordinary directory and is never replaced. Session history,
+plugins, project trust, MCP servers and settings are all **shared across every
+account** — switching does not hide your transcripts or make you re-trust your
+directories. A profile is about half a kilobyte.
 
 ## Where the tokens live
 
 ```
-~/.claude-profiles/<Name>/.credentials.json          mode 600
+~/.claude-profiles/<Name>/credentials.json           mode 600
   claudeAiOauth.accessToken             ~8 hour life, refreshed silently
   claudeAiOauth.refreshToken            the thing that saves you the email
   claudeAiOauth.expiresAt               epoch ms
@@ -122,9 +131,9 @@ directories.
 ```
 
 The **email is not in that file**. It lives in `~/.claude.json` under
-`oauthAccount.emailAddress`, outside the swapped directory — which is precisely
-why Shambles has to splice that one key on every switch. Without it you would
-swap the token but keep displaying the previous account's name.
+`oauthAccount.emailAddress`, which is precisely why Shambles has to splice that
+one key on every switch. Without it you would swap the token but keep
+displaying the previous account's name.
 
 Directory permissions: `~/.claude-profiles/` is created `700`, so no other
 local user can traverse into it, and each `.credentials.json` stays `600`.
@@ -157,10 +166,8 @@ deliberate:
 - **It is diagnostic.** The lapsed file is what lets the UI distinguish
   "this account expired twelve days ago" from "never logged in here".
 - **It is never in the way.** Switching to a lapsed profile is not an error.
-  Shambles does not validate tokens; it moves a symlink. Claude Code then fails
-  its refresh and prompts `/login`, which overwrites the file anyway.
-
-Covered by `tests/test_switch.py::test_switching_to_a_lapsed_profile_is_not_an_error`.
+  Shambles does not validate tokens; it copies a file. Claude Code then fails
+  its refresh and prompts `/login`, which overwrites it anyway.
 
 For a countdown without opening the app:
 
@@ -169,7 +176,7 @@ For a countdown without opening the app:
 import json,datetime,pathlib
 for d in sorted(p for p in (pathlib.Path.home()/'.claude-profiles').iterdir()
                 if p.is_dir() and p.name[0]!='.'):
-    c = d/'.credentials.json'
+    c = d/'credentials.json'
     if not c.exists(): print(f'{d.name:<14} no token'); continue
     ms = json.loads(c.read_text())['claudeAiOauth']['refreshTokenExpiresAt']
     t = datetime.datetime.fromtimestamp(ms/1000)
@@ -200,22 +207,21 @@ What protects your data:
 - Every write to `~/.claude.json` is preceded by a backup into
   `.shambles-backups/` and performed atomically (temp file + `os.replace`),
   preserving all other keys and their original order.
-- On Linux the symlink swap is a rename over the top, so `~/.claude` never
-  briefly ceases to exist. A crash mid-switch leaves either the old link or
-  the new one, never nothing. **Windows cannot do this** — `MoveFileEx`
-  refuses to replace an existing directory link — so there Shambles removes
-  the old link before creating the new one, leaving a short window where
-  `~/.claude` is absent. An interrupted switch is recoverable: the next
-  attempt succeeds because the destination is already gone.
-- `Save Current Account` rolls the directory move back if the symlink cannot be
-  created — without that, a Windows privilege error would leave you with no
-  `~/.claude` at all.
-- Shambles refuses to touch a `~/.claude` symlink pointing outside
-  `~/.claude-profiles/`.
+- The outgoing login is copied into its profile **before** the incoming one is
+  installed, so switching away can never strand an account.
+- Credentials are written to a temporary file, `chmod 600`, then renamed into
+  place, so a half-written credentials file is never visible.
+- A `~/.claude.json` that fails to parse aborts the switch **before** anything
+  moves. Without that check, splicing onto an unreadable config would replace
+  every project, MCP server and machine ID in it with two keys.
+- If the live login belongs to an account other than the one Shambles thinks is
+  active — someone ran `/login` by hand — the UI says so rather than
+  mislabelling it.
 - There is no delete-profile button. The only deletions in the entire codebase
-  are pruning backups past ten, removing its own temporary symlink, and
-  unlinking a dangling `~/.claude` when you explicitly click *Remove broken
-  link*. Nothing deletes profile data.
+  are pruning backups past ten and clearing the live credentials file when you
+  switch to a profile that has never been logged in.
+- `~/.claude` is never moved, replaced or deleted. Session history, plugins and
+  settings are simply not part of what switching touches.
 
 ### Closing the window
 
@@ -244,33 +250,25 @@ pkill -CONT -f shambles.py && pkill -f shambles.py
 The `-CONT` matters — a stopped process cannot act on `SIGTERM` until it is
 resumed first.
 
-### Your session history is per-profile
+### Your session history is shared
 
-This surprises people, so it is worth stating plainly: **switching profiles
-also switches your Claude Code session history.**
+Session transcripts live in `~/.claude/projects/`, keyed by project path rather
+than by account, and Shambles leaves that directory alone. Every account sees
+every session, exactly as it does without Shambles installed.
 
-Session transcripts live in `~/.claude/projects/`, which is *inside* the
-directory Shambles swaps. So each profile carries its own history:
+**Versions before 1.0 got this wrong.** They swapped the whole `~/.claude`
+directory, so each account had its own `projects/` folder and switching
+appeared to erase weeks of history. If you used one of those, Shambles detects
+the old layout on startup and offers to merge everything back into one shared
+directory. Nothing is deleted; the old profile folders are left for you to
+remove once you are satisfied.
 
-```
-~/.claude-profiles/Admin/projects/     <- sessions started while Admin was active
-~/.claude-profiles/Ian-Work/projects/  <- sessions started while Ian-Work was active
-```
+Run that migration with **no Claude Code sessions open**. It briefly replaces
+`~/.claude`, and a running session writes there continuously.
 
-After a switch, `claude --resume` lists only the sessions belonging to the
-profile you are now on. **Nothing is deleted** — the others are still on disk
-under the other profile, and switching back reveals them again.
-
-A session that is *open* when you switch is a special case: Claude Code holds
-the whole transcript in memory and rewrites the entire file, so it follows you
-into the new profile intact. The old profile keeps a frozen partial copy, which
-is why the same session id can appear under two profiles with different lengths.
-
-To find a session you cannot see:
-
-```bash
-grep -rl "some text you remember" ~/.claude-profiles/*/projects/ | head
-```
+Unrelated but worth knowing: Claude Code prunes sessions older than 30 days on
+its own. Raise `cleanupPeriodDays` in `~/.claude/settings.json` if you want to
+keep them longer.
 
 ### The one real caveat
 
@@ -315,11 +313,9 @@ written to spec but **have not been exercised** — there was no Windows-side
 Claude Code install to test against.
 
 **macOS is not supported.** Claude Code stores credentials in the system
-Keychain there, not in `.credentials.json`, so swapping the directory would
-swap everything *except* the login — which is the one thing this tool exists to
-swap.
+Keychain there rather than in `.credentials.json`, so there is no file for
+Shambles to swap.
 
-Do not point a Windows `%USERPROFILE%\.claude` at a WSL path or vice versa.
-Cross-boundary symlinks break Claude Code's file operations and produce 9p
-permission problems on a `600` credentials file. Run Shambles inside whichever
-environment you use Claude Code in.
+Run Shambles inside whichever environment you actually use Claude Code in. A
+Windows build manages `C:\Users\<you>\.claude`, which is a different
+installation from the one in a WSL home directory.

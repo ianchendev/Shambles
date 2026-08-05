@@ -11,39 +11,55 @@ def test_module_imports_and_exposes_run():
     assert issubclass(gui.ShamblesApp, tk.Tk)
 
 
-def test_header_text_for_each_link_state(paths):
-    import os
-
+def test_header_text_for_each_state(paths):
     from helpers import make_claude_json, make_profile
-    from shambles import gui, links
+    from shambles import gui, state
 
-    make_profile(paths, "Work", email="work@example.com")
     make_claude_json(paths, email="work@example.com")
+    assert "no accounts saved" in gui.header_text(
+        paths, state.inspect(paths)).lower()
 
-    assert "not set up" in gui.header_text(paths, links.inspect(paths)).lower()
-
-    os.symlink(str(paths.profile_dir("Work")), str(paths.claude_dir),
-               target_is_directory=True)
-    text = gui.header_text(paths, links.inspect(paths))
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    text = gui.header_text(paths, state.inspect(paths))
     assert "Work" in text
     assert "work@example.com" in text
 
 
-def test_header_reports_a_broken_link(paths):
-    import os
+def test_header_reports_a_missing_profile(paths):
+    from helpers import make_claude_json, make_profile
+    from shambles import gui, state
 
-    from helpers import make_profile
-    from shambles import gui, links
-
-    make_profile(paths, "Gone")
-    os.symlink(str(paths.profile_dir("Gone")), str(paths.claude_dir),
-               target_is_directory=True)
+    make_profile(paths, "Gone", email="gone@example.com", active=True)
+    make_claude_json(paths, email="gone@example.com")
     for child in paths.profile_dir("Gone").iterdir():
         child.unlink()
     paths.profile_dir("Gone").rmdir()
 
-    text = gui.header_text(paths, links.inspect(paths))
-    assert "Broken" in text
+    text = gui.header_text(paths, state.inspect(paths))
+    assert "Gone" in text and "missing" in text.lower()
+
+
+def test_header_reports_drift_after_a_manual_login(paths):
+    from helpers import make_claude_json, make_profile
+    from shambles import gui, state
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="someone-else@example.com")
+    text = gui.header_text(paths, state.inspect(paths))
+    assert "someone-else@example.com" in text
+
+
+def test_header_offers_migration_for_the_legacy_layout(paths):
+    import os
+
+    from helpers import make_claude_json, make_profile
+    from shambles import gui, state
+
+    make_profile(paths, "Work", email="work@example.com")
+    make_claude_json(paths, email="work@example.com")
+    os.symlink(str(paths.profile_dir("Work")), str(paths.claude_dir),
+               target_is_directory=True)
+    assert "migration" in gui.header_text(paths, state.inspect(paths)).lower()
 
 
 def test_window_renders_every_profile_state(paths, make_app):
@@ -67,8 +83,7 @@ def test_window_renders_every_profile_state(paths, make_app):
                  refresh_expires_ms=now - 3 * DAY_MS + hour)
     make_profile(paths, "Fresh", token=False)
     make_claude_json(paths, email="ok@example.com")
-    os.symlink(str(paths.profile_dir("Healthy")), str(paths.claude_dir),
-               target_is_directory=True)
+    paths.active_marker.write_text("Healthy\n", encoding="utf-8")
 
     app = make_app(paths)
     app.update()
