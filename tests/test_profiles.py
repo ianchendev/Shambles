@@ -104,6 +104,71 @@ def test_healthy_profile_has_no_warning(paths):
     assert p.warning is None
 
 
+# ---- refresh-window countdown -------------------------------------------
+
+def test_discover_reports_days_left(paths):
+    make_profile(paths, "Work", email="w@example.com",
+                 refresh_expires_ms=NOW + 29 * DAY_MS + 3_600_000)
+    p = profiles.discover(paths, "Work", NOW)[0]
+    assert p.refresh_expires_ms == NOW + 29 * DAY_MS + 3_600_000
+    assert p.days_left == 29          # floored, not rounded up
+
+
+def test_days_left_is_negative_once_lapsed(paths):
+    make_profile(paths, "Stale", refresh_expires_ms=NOW - 3 * DAY_MS)
+    p = profiles.discover(paths, None, NOW)[0]
+    assert p.days_left == -3
+    assert p.token_state == profiles.TOKEN_EXPIRED
+
+
+def test_days_left_is_none_without_credentials(paths):
+    make_profile(paths, "Fresh", token=False)
+    p = profiles.discover(paths, None, NOW)[0]
+    assert p.refresh_expires_ms is None
+    assert p.days_left is None
+
+
+@pytest.mark.parametrize("days,expected", [
+    (29, "29d"),
+    (8, "8d"),
+    (7, "7d"),
+    (1, "1d"),
+    (0, "today"),
+    (-1, "expired 1d ago"),
+    (-12, "expired 12d ago"),
+])
+def test_expiry_label(paths, days, expected):
+    make_profile(paths, "P", refresh_expires_ms=NOW + days * DAY_MS)
+    p = profiles.discover(paths, None, NOW)[0]
+    assert profiles.expiry_label(p) == expected
+
+
+def test_expiry_label_is_none_without_a_token(paths):
+    make_profile(paths, "Fresh", token=False)
+    p = profiles.discover(paths, None, NOW)[0]
+    assert profiles.expiry_label(p) is None
+
+
+@pytest.mark.parametrize("days,severity", [
+    (29, profiles.EXPIRY_OK),
+    (8, profiles.EXPIRY_OK),
+    (7, profiles.EXPIRY_SOON),
+    (1, profiles.EXPIRY_SOON),
+    (0, profiles.EXPIRY_SOON),
+    (-1, profiles.EXPIRY_GONE),
+])
+def test_expiry_severity(paths, days, severity):
+    make_profile(paths, "P", refresh_expires_ms=NOW + days * DAY_MS)
+    p = profiles.discover(paths, None, NOW)[0]
+    assert profiles.expiry_severity(p) == severity
+
+
+def test_expiry_severity_is_none_without_a_token(paths):
+    make_profile(paths, "Fresh", token=False)
+    p = profiles.discover(paths, None, NOW)[0]
+    assert profiles.expiry_severity(p) is None
+
+
 # ---- discover -----------------------------------------------------------
 
 def test_discover_marks_the_active_profile(paths):

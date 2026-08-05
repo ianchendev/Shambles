@@ -1,5 +1,6 @@
 """Discovering profiles and working out who each one belongs to."""
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,15 @@ TOKEN_WARNINGS = {
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
 
+#: Below this many days remaining, the countdown is worth drawing attention to.
+EXPIRY_WARN_DAYS = 7
+
+EXPIRY_OK = "ok"
+EXPIRY_SOON = "soon"
+EXPIRY_GONE = "gone"
+
+MS_PER_DAY = 86_400_000
+
 
 @dataclass(frozen=True)
 class Profile:
@@ -34,10 +44,49 @@ class Profile:
     email: str | None
     org: str | None
     token_state: str
+    #: When this account's refresh token lapses. ``None`` if there is no
+    #: readable credentials file at all.
+    refresh_expires_ms: int | None = None
+    #: Whole days until that moment, negative once past. Computed against the
+    #: clock passed to :func:`discover`, never read from the system here.
+    days_left: int | None = None
 
     @property
     def warning(self) -> str | None:
         return TOKEN_WARNINGS.get(self.token_state)
+
+
+def refresh_expiry_ms(profile_dir) -> int | None:
+    """When this profile's refresh token lapses, or ``None`` if unreadable."""
+    oauth = configjson.load(Path(profile_dir) / CREDENTIALS_NAME).get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        return None
+    expires = oauth.get("refreshTokenExpiresAt")
+    return expires if isinstance(expires, (int, float)) else None
+
+
+def expiry_label(profile: Profile) -> str | None:
+    """Short countdown for the UI, e.g. ``"29d"`` or ``"expired 3d ago"``."""
+    days = profile.days_left
+    if days is None:
+        return None
+    if days < 0:
+        return f"expired {abs(days)}d ago"
+    if days == 0:
+        return "today"
+    return f"{days}d"
+
+
+def expiry_severity(profile: Profile) -> str | None:
+    """How loudly the UI should render the countdown."""
+    days = profile.days_left
+    if days is None:
+        return None
+    if days < 0:
+        return EXPIRY_GONE
+    if days <= EXPIRY_WARN_DAYS:
+        return EXPIRY_SOON
+    return EXPIRY_OK
 
 
 def list_profile_names(paths) -> list[str]:
@@ -111,6 +160,10 @@ def discover(paths, active_name: str | None, now_ms: int) -> list[Profile]:
     for name in list_profile_names(paths):
         directory = paths.profile_dir(name)
         account = resolve_account(paths, name, active_name)
+        expires = refresh_expiry_ms(directory)
+        # Floor rather than truncate, so a token 12 hours past its window
+        # reads as "expired 1d ago" instead of "today".
+        days = math.floor((expires - now_ms) / MS_PER_DAY) if expires else None
         found.append(
             Profile(
                 name=name,
@@ -119,6 +172,8 @@ def discover(paths, active_name: str | None, now_ms: int) -> list[Profile]:
                 email=account.get("emailAddress"),
                 org=account.get("organizationName"),
                 token_state=token_state(directory, now_ms),
+                refresh_expires_ms=expires,
+                days_left=days,
             )
         )
     return found
