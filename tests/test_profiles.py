@@ -41,15 +41,6 @@ def test_inactive_profile_reads_its_sidecar(paths):
     assert got["emailAddress"] == "personal@example.com"
 
 
-def test_falls_back_to_newest_claude_json_backup(paths):
-    d = make_profile(paths, "Old")          # no sidecar
-    backups = d / "backups"
-    write_json(backups / ".claude.json.backup.100",
-               {"oauthAccount": account("older@example.com")})
-    write_json(backups / ".claude.json.backup.900",
-               {"oauthAccount": account("newest@example.com")})
-    got = profiles.resolve_account(paths, "Old", active_name="Work")
-    assert got["emailAddress"] == "newest@example.com"
 
 
 def test_unknown_email_when_nothing_on_disk(paths):
@@ -57,13 +48,6 @@ def test_unknown_email_when_nothing_on_disk(paths):
     assert profiles.resolve_account(paths, "Bare", active_name="Work") == {}
 
 
-def test_malformed_sidecar_falls_through_to_backup(paths):
-    d = make_profile(paths, "Broken")
-    paths.sidecar("Broken").write_text("{ not json", encoding="utf-8")
-    write_json(d / "backups" / ".claude.json.backup.500",
-               {"oauthAccount": account("rescued@example.com")})
-    got = profiles.resolve_account(paths, "Broken", active_name="Work")
-    assert got["emailAddress"] == "rescued@example.com"
 
 
 # ---- token state --------------------------------------------------------
@@ -80,7 +64,7 @@ def test_token_missing_when_no_credentials_file(paths):
 
 def test_token_missing_when_credentials_malformed(paths):
     d = make_profile(paths, "Broken")
-    (d / ".credentials.json").write_text("{ not json", encoding="utf-8")
+    paths.credentials("Broken").write_text("{ not json", encoding="utf-8")
     assert profiles.token_state(d, NOW) == profiles.TOKEN_MISSING
 
 

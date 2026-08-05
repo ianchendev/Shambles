@@ -35,17 +35,39 @@ def credentials(refresh_expires_ms=NOW + 30 * DAY_MS, access_token="tok"):
 
 
 def make_profile(paths, name, *, email=None, token=True,
-                 refresh_expires_ms=NOW + 30 * DAY_MS, settings=None):
-    """Create a profile directory, optionally with a sidecar and credentials."""
+                 refresh_expires_ms=NOW + 30 * DAY_MS, settings=None,
+                 active=False):
+    """Create a slim profile: credentials and a stashed identity, nothing else."""
     d = paths.profile_dir(name)
     d.mkdir(parents=True, exist_ok=True)
     if token:
-        write_json(d / ".credentials.json", credentials(refresh_expires_ms))
+        write_json(paths.credentials(name), credentials(refresh_expires_ms))
     if email:
-        write_json(paths.sidecar(name),
+        write_json(paths.account(name),
                    {"oauthAccount": account(email), "stashed_at": NOW})
-    if settings is not None:
-        write_json(d / "settings.json", settings)
+    if active:
+        paths.active_marker.write_text(name + "\n", encoding="utf-8")
+    return d
+
+
+def make_live_login(paths, refresh_expires_ms=NOW + 30 * DAY_MS):
+    """Put a credentials file inside the shared ~/.claude."""
+    paths.claude_dir.mkdir(parents=True, exist_ok=True)
+    write_json(paths.live_credentials, credentials(refresh_expires_ms))
+    return paths.live_credentials
+
+
+def make_legacy_profile(paths, name, *, email=None, sessions=0):
+    """A pre-1.0 profile: a full ~/.claude copy with its own history."""
+    d = paths.profile_dir(name)
+    (d / "projects" / "-some-project").mkdir(parents=True, exist_ok=True)
+    write_json(d / ".credentials.json", credentials())
+    if email:
+        write_json(d / ".shambles.json",
+                   {"oauthAccount": account(email), "stashed_at": NOW})
+    for i in range(sessions):
+        (d / "projects" / "-some-project" / f"{name}-{i}.jsonl").write_text(
+            '{"type":"user"}\n', encoding="utf-8")
     return d
 
 
