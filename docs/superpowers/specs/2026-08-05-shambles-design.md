@@ -72,7 +72,50 @@ every profile folder carries its own historical copy of `oauthAccount.emailAddre
 This means a profile's email is recoverable even if Shambles never stashed it, so
 **no manual email-entry fallback is required**.
 
-### 2.4 Environment
+### 2.4 Token lifetimes — why swapping avoids re-login
+
+Measured on the live credentials file on 2026-08-05:
+
+| | expires | from measurement |
+|---|---|---|
+| access token | 2026-08-06 00:21 | +0.3 days |
+| refresh token | 2026-09-03 23:09 | +29.3 days |
+
+The access token lasts hours; Claude Code exchanges the refresh token for a new one
+automatically, with no user interaction. The refresh window is **rolling**, not a
+countdown from signup: the account was created 2025-11-17 yet its refresh token
+expires 30 days from the day before measurement, so each refresh mints a replacement
+with a fresh clock.
+
+**This is the core premise of the tool.** The email verification step is the initial
+OAuth grant only. Once granted, the refresh token is what sustains the session, and
+it lives in `.credentials.json` — a file. Preserving that file per account means
+switching restores a live session with zero re-authentication. An account only
+returns to the email flow if it goes entirely unused for 30+ days.
+
+Rate limits remain enforced server-side per `accountUuid`. Switching yields the
+target account's own bucket; it neither pools nor extends any single account's
+allowance.
+
+### 2.5 Machine-scoped state living inside the swappable directory
+
+`~/.claude/ide/<pid>.lock` is the VS Code extension ↔ CLI handshake:
+
+```
+pid               int    extension host process id
+workspaceFolders  list   e.g. ['/home/ianchen/tools/Shambles']
+ideName           str    'Visual Studio Code'
+transport         str    'ws'
+runningInWindows  bool
+authToken         str    36-char UUID — IPC token, NOT the account token
+```
+
+This is per-process machine state, not account state, but it sits inside the
+directory being swapped. A naive switch would hide these from the CLI and sever its
+link to the running extension host. Shambles therefore copies `ide/*.lock` across on
+switch (§6.1 step 5).
+
+### 2.6 Environment
 
 - Claude Code 2.1.220, WSL only. `/mnt/c/Users/IanChen/` contains neither `.claude`
   nor `.claude.json` — there is no Windows-side install on this machine.
@@ -99,7 +142,9 @@ This means a profile's email is recoverable even if Shambles never stashed it, s
 ~/.claude-profiles/
   Work/                          <- a real .claude directory
     .credentials.json
-    .shambles.json               <- sidecar: {"oauthAccount": {...}, "stashed_at": <ms>}
+    .shambles.json               <- sidecar: {"oauthAccount": {...},
+                                 <-           "cachedUsageUtilization": {...},
+                                 <-           "stashed_at": <ms>}
     settings.json
     backups/  projects/  plugins/  sessions/  ...
   Personal/
@@ -143,12 +188,23 @@ falling through to the next.
 
 ```
 0. guard    if B is already active -> no-op, return
-1. stash    ~/.claude.json .oauthAccount        -> <A>/.shambles.json
+1. stash    ~/.claude.json .oauthAccount + .cachedUsageUtilization
+                                                -> <A>/.shambles.json
 2. backup   ~/.claude.json                      -> .shambles-backups/claude.json.<ts>
 3. swap     os.symlink(abspath(B), ~/.claude.shambles-tmp, target_is_directory=True)
             os.replace(~/.claude.shambles-tmp, ~/.claude)
-4. splice   <B>/.shambles.json .oauthAccount    -> ~/.claude.json
+4. splice   <B>/.shambles.json  ->  ~/.claude.json .oauthAccount
+                                                 + .cachedUsageUtilization
+5. carry    <A>/ide/*.lock                      -> <B>/ide/    (mkdir 0700 if absent)
 ```
+
+Both spliced keys are account-scoped: `cachedUsageUtilization` is keyed by
+`accountUuid`, so carrying A's value into B's session would display the wrong usage
+figures. They are stashed and restored as a pair.
+
+Step 5 preserves the VS Code handshake described in §2.5. Copy, do not move — A's
+own copy stays valid for when the user switches back. Failure here is logged and
+**non-fatal**: a lost lock file costs a VS Code window reload, not a broken switch.
 
 Symlink targets are always **absolute**. A relative target would resolve differently
 depending on the process's working directory and would silently break if
@@ -162,8 +218,8 @@ Step 4 writes to a temp file in the same directory, `os.replace`s it into positi
 then `chmod 600`. All other keys and their order are preserved (`json.load` into a
 dict preserves insertion order on 3.7+).
 
-If B has no stashed `oauthAccount`, the key is **deleted** from `~/.claude.json`
-rather than left holding A's identity. Claude Code re-fetches it on next start.
+If B has no sidecar, both keys are **deleted** from `~/.claude.json` rather than left
+holding A's identity and usage figures. Claude Code re-fetches them on next start.
 
 Steps 3 and 4 retry 3× at 500 ms on `OSError`/`PermissionError` to absorb file locks.
 
@@ -285,9 +341,15 @@ Core cases:
 
 - bootstrap: real dir → moved, symlinked, sidecar written
 - bootstrap rollback: `os.symlink` patched to raise → directory restored intact
-- switch: link re-points, A's `oauthAccount` stashed, B's spliced in
-- switch to a profile with no sidecar: `oauthAccount` key deleted, not stale
+- switch: link re-points, A's `oauthAccount` + `cachedUsageUtilization` stashed,
+  B's spliced in
+- switch to a profile with no sidecar: both keys deleted, not stale
 - splice preserves every other key in `~/.claude.json` byte-for-byte
+- `.credentials.json` survives a round trip A → B → A unmodified, including
+  `refreshToken` and `refreshTokenExpiresAt` — this is what makes re-login
+  unnecessary (§2.4) and is the single most important test in the suite
+- `ide/*.lock` carried into the target profile; A retains its own copy
+- a step-5 failure is swallowed and the switch still reports success
 - email chain: each of the four steps in isolation, including backup-file fallback
 - token states: missing, malformed, expired, valid
 - dangling symlink detected and repairable
@@ -298,7 +360,20 @@ Core cases:
 
 GUI is smoke-tested only (constructs against a fake root, no display assertions).
 
-## 11. Out of scope
+## 11. Operating expectation
+
+The switch changes files on disk. A Claude Code process that has already started
+holds the token it loaded at startup, so a switch does not retroactively re-account
+an in-flight session. The intended flow is:
+
+1. Hit the session limit on account A.
+2. Run Shambles, click `Switch` on account B.
+3. Start a **new** Claude Code session in VS Code. If the extension does not pick it
+   up, reload the window (`Developer: Reload Window`).
+
+Seconds, against minutes of waiting for a verification email.
+
+## 12. Out of scope
 
 - Deleting profiles (D6)
 - Any WSL ↔ Windows bridging (D7)
@@ -306,7 +381,7 @@ GUI is smoke-tested only (constructs against a fake root, no display assertions)
 - Automating `/login` — the user runs `claude` themselves
 - macOS Keychain, which stores credentials differently from `.credentials.json`
 
-## 12. Verification note
+## 13. Verification note
 
 The Windows code paths (`target_is_directory=True`, WinError 1314 handling) are
 written to spec but **cannot be exercised on this machine** — there is no Windows-side
