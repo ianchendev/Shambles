@@ -1,6 +1,7 @@
 """A compact window for switching Claude Code accounts."""
 
 import datetime
+import signal
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
@@ -26,6 +27,9 @@ EXPIRY_TOOLTIP = (
 )
 
 RENAME_HINT = "Double-click to rename"
+
+#: How often to hand control back to Python so pending signals get dispatched.
+SIGNAL_POLL_MS = 150
 
 
 def header_text(paths, state) -> str:
@@ -58,12 +62,24 @@ def expiry_tooltip(profile) -> str:
 
 
 class Tooltip:
-    """Tkinter has no tooltip widget, so here is the smallest useful one."""
+    """Tkinter has no tooltip widget, so here is the smallest useful one.
+
+    The popup is an override-redirect Toplevel, which means the window manager
+    draws no frame around it and offers no way to close it. Anything that can
+    leave one visible without an owner strands it on the desktop permanently,
+    so every path that could do so is closed off below.
+    """
+
+    #: Every tooltip currently showing, so shutdown can sweep them up.
+    _open = set()
 
     def __init__(self, widget, text, theme=None):
         self.widget, self.text, self.theme, self.tip = widget, text, theme, None
         widget.bind("<Enter>", self._show, add="+")
         widget.bind("<Leave>", self._hide, add="+")
+        # refresh() destroys every row widget on each switch. Without this a
+        # tooltip visible at that moment never sees <Leave> and is orphaned.
+        widget.bind("<Destroy>", self._hide, add="+")
 
     def _show(self, _event=None):
         if self.tip or not self.text:
@@ -78,11 +94,21 @@ class Tooltip:
             opts = {"font": self.theme.body, "bg": "#22242a", "fg": "#f4f5f7"}
         tk.Label(self.tip, text=self.text, justify="left", relief="flat",
                  wraplength=340, padx=GAP_S, pady=GAP_XS + 2, **opts).pack()
+        Tooltip._open.add(self)
 
     def _hide(self, _event=None):
-        if self.tip:
-            self.tip.destroy()
+        if self.tip is not None:
+            try:
+                self.tip.destroy()
+            except tk.TclError:
+                pass
             self.tip = None
+        Tooltip._open.discard(self)
+
+    @classmethod
+    def hide_all(cls):
+        for tip in list(cls._open):
+            tip._hide()
 
 
 class AddAccountDialog(tk.Toplevel):
@@ -180,7 +206,52 @@ class ShamblesApp(tk.Tk):
                    command=self.on_add).pack(side="right")
 
         self.minsize(WINDOW_WIDTH, 0)
+
+        self._pump = None
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self._install_signal_handlers()
+        self._pump_signals()
         self.refresh()
+
+    # -- shutdown ---------------------------------------------------------
+
+    def _install_signal_handlers(self):
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, self._on_signal)
+            except (ValueError, OSError):
+                pass  # not the main thread; nothing we can install
+
+    def _on_signal(self, _signum, _frame):
+        self.on_close()
+
+    def _pump_signals(self):
+        """Hand control back to Python on a timer.
+
+        Tk's mainloop blocks inside C waiting on X events, and Python only
+        dispatches signal handlers between bytecode instructions. Without this
+        tick, Ctrl+C is recorded and never delivered: the window looks frozen,
+        the user reaches for Ctrl+Z, and a SIGSTOPped process cannot answer the
+        window manager's close request. The result is a window that nothing on
+        the desktop can shut. This callback does nothing except exist, which is
+        enough to give the interpreter a moment to run pending handlers.
+        """
+        self._pump = self.after(SIGNAL_POLL_MS, self._pump_signals)
+
+    def on_close(self):
+        """The single exit path, shared by the title-bar X and by signals."""
+        Tooltip.hide_all()
+        if self._pump is not None:
+            try:
+                self.after_cancel(self._pump)
+            except tk.TclError:
+                pass
+            self._pump = None
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.quit()
 
     # -- rendering --------------------------------------------------------
 
@@ -325,5 +396,15 @@ class ShamblesApp(tk.Tk):
 
 
 def run(paths=None) -> int:
-    ShamblesApp(paths).mainloop()
+    app = ShamblesApp(paths)
+    try:
+        app.mainloop()
+    finally:
+        # on_close only leaves the mainloop; the teardown belongs here so it
+        # also runs if mainloop exits by any other route.
+        Tooltip.hide_all()
+        try:
+            app.destroy()
+        except tk.TclError:
+            pass
     return 0
