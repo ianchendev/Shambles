@@ -38,3 +38,9 @@ class AlreadyManagedError(ShamblesError):
 
 class SwitchFailedError(ShamblesError):
     """A filesystem step failed after exhausting its retries."""
+
+
+class ConfigUnreadableError(ShamblesError):
+    """~/.claude.json exists but could not be parsed, so it must not be
+    written over. Claude Code rewrites that file on its own schedule, and a
+    read landing mid-write sees truncated JSON."""

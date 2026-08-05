@@ -11,6 +11,8 @@ import os
 import shutil
 from pathlib import Path
 
+from .errors import ConfigUnreadableError
+
 #: Keys in ~/.claude.json that belong to the logged-in account rather than the
 #: machine. ``cachedUsageUtilization`` is keyed by accountUuid, so carrying one
 #: account's copy into another's session shows the wrong usage figures.
@@ -49,13 +51,53 @@ def write_atomic(path, config: dict) -> None:
     os.replace(tmp, path)
 
 
+CORRUPT_CONFIG_HELP = (
+    "~/.claude.json could not be read, so Shambles stopped rather than "
+    "overwrite it.\n\n"
+    "That file holds every project, MCP server and machine ID. Claude Code "
+    "rewrites it on its own schedule, so this usually means a read landed "
+    "mid-write.\n\n"
+    "Close any running Claude Code session and try again. A recent copy is "
+    "in {backups}."
+)
+
+
+def load_for_write(path) -> dict:
+    """Parse a config that is about to be written back.
+
+    ``load`` answers ``{}`` for anything unusable, which is right when merely
+    displaying a profile. Splicing onto that ``{}`` and writing it back would
+    replace the whole config with two keys, so the write path has to tell
+    "absent" apart from "unreadable" and refuse the latter.
+    """
+    path = Path(path)
+    try:
+        if not path.exists() or path.stat().st_size == 0:
+            return {}
+    except OSError as exc:
+        raise ConfigUnreadableError(
+            CORRUPT_CONFIG_HELP.format(backups="the backups directory")) from exc
+
+    try:
+        with path.open(encoding="utf-8") as fh:
+            config = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigUnreadableError(
+            CORRUPT_CONFIG_HELP.format(backups="the backups directory")) from exc
+
+    if not isinstance(config, dict):
+        raise ConfigUnreadableError(
+            CORRUPT_CONFIG_HELP.format(backups="the backups directory"))
+    return config
+
+
 def apply_account_keys(path, account: dict) -> None:
     """Splice ``account`` into the config at ``path``.
 
     Keys missing from ``account`` are deleted rather than left holding the
     previous profile's identity -- Claude Code re-fetches them on next start.
     """
-    config = load(path)
+    config = load_for_write(path)
     for key in ACCOUNT_KEYS:
         if key in account:
             config[key] = account[key]
