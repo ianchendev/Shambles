@@ -108,8 +108,23 @@ def test_leaves_ordinary_paths_untouched():
 
 
 def test_accepts_path_objects():
+    """Compared against os.fspath rather than a literal: Path renders with the
+    host's separator, so a hardcoded POSIX string fails on Windows."""
     from pathlib import Path as P
-    assert links._strip_extended(P("/home/me/Work")) == "/home/me/Work"
+    p = P("/home/me/Work")
+    assert links._strip_extended(p) == os.fspath(p)
+
+
+def test_discard_removes_a_symlink(paths):
+    target = make_profile(paths, "Work")
+    os.symlink(str(target), str(paths.claude_dir), target_is_directory=True)
+    links._discard(paths.claude_dir)
+    assert not paths.claude_dir.is_symlink()
+    assert target.is_dir(), "discard must not touch what the link pointed at"
+
+
+def test_discard_is_a_noop_when_nothing_is_there(paths):
+    links._discard(paths.claude_dir)  # must not raise
 
 
 def _no_sleep(_seconds):
