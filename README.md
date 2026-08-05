@@ -99,11 +99,38 @@ local user can traverse into it, and each `.credentials.json` stays `600`.
 
 ## Checking token health
 
-The ⚠ badge in the UI is **binary** — it tells you a token is missing or the
-refresh window has already passed. It does not tell you how much time is left,
-so a profile with one day remaining looks identical to one with twenty-nine.
+Each row shows a countdown chip beside the email:
 
-For the actual countdown:
+| Chip | Meaning | Colour |
+|---|---|---|
+| `29d` | days until the refresh window closes | grey |
+| `4d` | seven days or fewer remaining | amber |
+| `today` | closes today | amber |
+| `expired 12d ago` | window already closed; needs `/login` | red |
+| *(none)* + ⚠ | no credentials file — never logged in here | — |
+
+Hover any chip for the exact date and time. A ⚠ still appears alongside a red
+chip, carrying the "run /login" tooltip.
+
+### Why an expired token is left in place
+
+Shambles never deletes a `.credentials.json`, even a long-dead one. That is
+deliberate:
+
+- **Clock drift makes deletion dangerous.** WSL2's clock can jump when Windows
+  resumes from sleep. A drifted clock would mark a perfectly good token dead,
+  and an automatic delete would then cost you a real verification email — the
+  exact thing this tool exists to avoid. A wrong label is recoverable; a
+  deleted refresh token is not.
+- **It is diagnostic.** The lapsed file is what lets the UI distinguish
+  "this account expired twelve days ago" from "never logged in here".
+- **It is never in the way.** Switching to a lapsed profile is not an error.
+  Shambles does not validate tokens; it moves a symlink. Claude Code then fails
+  its refresh and prompts `/login`, which overwrites the file anyway.
+
+Covered by `tests/test_switch.py::test_switching_to_a_lapsed_profile_is_not_an_error`.
+
+For a countdown without opening the app:
 
 ```bash
 .venv/bin/python -c "
@@ -121,7 +148,7 @@ Two things worth understanding:
 
 - **Ignore the access token.** It expires within hours and is refreshed
   automatically. Only `refreshTokenExpiresAt` decides whether you face the
-  email flow again.
+  email flow again — it is the one the UI counts down.
 - **The 30-day clock resets on use, not on the calendar.** Every refresh mints
   a replacement with a fresh window. Rotating between accounts normally keeps
   all of them alive indefinitely; an account parked and untouched for 30+ days
