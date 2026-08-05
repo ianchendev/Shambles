@@ -99,9 +99,37 @@ def point_to(paths, profile_dir, *, sleep=time.sleep) -> None:
     )
 
 
+def _discard(path: Path) -> None:
+    """Remove a symlink, on either platform.
+
+    Windows needs ``rmdir`` for a *directory* symlink -- ``unlink`` raises
+    there. ``rmdir`` refuses a non-empty real directory, so this cannot
+    silently eat a profile.
+    """
+    if not (path.is_symlink() or path.exists()):
+        return
+    try:
+        path.unlink()
+    except OSError:
+        os.rmdir(path)
+
+
 def _swap(paths, target: str) -> None:
     tmp = paths.tmp_link
-    if tmp.is_symlink() or tmp.exists():
-        tmp.unlink()
+    _discard(tmp)
     os.symlink(target, tmp, target_is_directory=True)
-    os.replace(tmp, paths.claude_dir)
+    link = paths.claude_dir
+    try:
+        os.replace(tmp, link)
+    except OSError:
+        # Windows' MoveFileEx refuses to replace an existing directory or
+        # directory link, so the atomic swap simply is not available there:
+        # every switch failed with WinError 5. Fall back to remove-then-
+        # rename, which briefly leaves ~/.claude absent. If that window is
+        # interrupted, the next attempt succeeds because the destination is
+        # already gone.
+        if os.name != "nt" or not link.is_symlink():
+            _discard(tmp)
+            raise
+        _discard(link)
+        os.replace(tmp, link)

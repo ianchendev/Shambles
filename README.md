@@ -200,9 +200,13 @@ What protects your data:
 - Every write to `~/.claude.json` is preceded by a backup into
   `.shambles-backups/` and performed atomically (temp file + `os.replace`),
   preserving all other keys and their original order.
-- The symlink swap is a rename over the top, so `~/.claude` never briefly
-  ceases to exist. A crash mid-switch leaves either the old link or the new
-  one, never nothing.
+- On Linux the symlink swap is a rename over the top, so `~/.claude` never
+  briefly ceases to exist. A crash mid-switch leaves either the old link or
+  the new one, never nothing. **Windows cannot do this** — `MoveFileEx`
+  refuses to replace an existing directory link — so there Shambles removes
+  the old link before creating the new one, leaving a short window where
+  `~/.claude` is absent. An interrupted switch is recoverable: the next
+  attempt succeeds because the destination is already gone.
 - `Save Current Account` rolls the directory move back if the symlink cannot be
   created — without that, a Windows privilege error would leave you with no
   `~/.claude` at all.
