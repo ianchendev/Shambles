@@ -39,16 +39,45 @@ def inspect(paths) -> LinkState:
     return LinkState(MISSING)
 
 
+#: Windows returns directory links in extended-length form. See _strip_extended.
+_EXTENDED_PREFIX = "\\\\?\\"
+_EXTENDED_UNC_PREFIX = "\\\\?\\UNC\\"
+
+
+def _strip_extended(path) -> str:
+    r"""Drop Windows' extended-length prefix from a path.
+
+    ``os.readlink`` on Windows hands back the raw reparse target, which for a
+    directory link is the extended-length form ``\\?\C:\...``. Compared against
+    an ordinary ``C:\...`` root that looks like a different volume entirely, so
+    every managed profile was misread as a foreign link and Shambles refused to
+    operate at all. POSIX paths pass through untouched.
+    """
+    text = os.fspath(path)
+    if text.startswith(_EXTENDED_UNC_PREFIX):
+        return "\\\\" + text[len(_EXTENDED_UNC_PREFIX):]
+    if text.startswith(_EXTENDED_PREFIX):
+        return text[len(_EXTENDED_PREFIX):]
+    return text
+
+
+def _real(path) -> str:
+    """Absolute, prefix-free path for comparison.
+
+    ``realpath`` does not fail on a missing path, which is what lets a dangling
+    link still report which profile it was pointing at.
+    """
+    return _strip_extended(os.path.realpath(_strip_extended(path)))
+
+
 def _profile_name_for(paths, target: Path) -> str | None:
     """The profile name if ``target`` is a direct child of the profiles dir.
 
     Compared through ``realpath`` so a hand-made link survives symlinked home
-    directories. ``realpath`` does not fail on a missing path, which is what
-    lets a dangling link still report which profile it was pointing at.
+    directories.
     """
     try:
-        root = os.path.realpath(paths.profiles_dir)
-        relative = os.path.relpath(os.path.realpath(target), root)
+        relative = os.path.relpath(_real(target), _real(paths.profiles_dir))
     except (OSError, ValueError):
         return None
     parts = Path(relative).parts

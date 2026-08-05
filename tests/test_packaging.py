@@ -3,14 +3,22 @@
 import os
 import subprocess
 import sys
-import tomllib
+
+import pytest
 
 import shambles
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # stdlib only from 3.11; we still support 3.10
+    tomllib = None
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _pyproject():
+    if tomllib is None:
+        pytest.skip("tomllib needs Python 3.11+; metadata checks run on newer jobs")
     with open(os.path.join(REPO, "pyproject.toml"), "rb") as fh:
         return tomllib.load(fh)
 

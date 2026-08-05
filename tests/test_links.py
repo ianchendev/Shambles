@@ -85,5 +85,32 @@ def test_point_to_surfaces_a_persistent_failure(paths, monkeypatch):
         links.point_to(paths, target, sleep=_no_sleep)
 
 
+# ---- Windows extended-length paths --------------------------------------
+# os.readlink on Windows returns \\?\C:\... for a directory link. Comparing
+# that against a plain C:\... root made every managed profile look foreign,
+# which disabled the whole application there. These run on any platform
+# because the normalisation is pure string work.
+
+def test_strips_the_windows_extended_prefix():
+    assert links._strip_extended(r"\\?\C:\Users\me\.claude-profiles\Work") == \
+        r"C:\Users\me\.claude-profiles\Work"
+
+
+def test_strips_the_windows_unc_prefix():
+    assert links._strip_extended(r"\\?\UNC\server\share\Work") == \
+        r"\\server\share\Work"
+
+
+def test_leaves_ordinary_paths_untouched():
+    assert links._strip_extended("/home/me/.claude-profiles/Work") == \
+        "/home/me/.claude-profiles/Work"
+    assert links._strip_extended(r"C:\Users\me\Work") == r"C:\Users\me\Work"
+
+
+def test_accepts_path_objects():
+    from pathlib import Path as P
+    assert links._strip_extended(P("/home/me/Work")) == "/home/me/Work"
+
+
 def _no_sleep(_seconds):
     pass
