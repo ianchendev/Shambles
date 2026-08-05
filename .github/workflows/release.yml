@@ -54,9 +54,29 @@ jobs:
         if: runner.os == 'Windows'
         run: pyinstaller --onefile --windowed --name shambles shambles/__main__.py
 
-      - name: Smoke-test the binary
+      # Both platforms, always. A Linux-only smoke test let a broken Windows
+      # binary through once already: PyInstaller runs the entry file as a
+      # top-level script, so a relative import inside it killed the bundle on
+      # startup. Only the Linux job noticed.
+      - name: Smoke-test the binary (Linux)
         if: runner.os == 'Linux'
-        run: ./dist/shambles --version
+        run: |
+          ./dist/shambles --version
+          ./dist/shambles --help
+
+      - name: Smoke-test the binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # --windowed detaches, so Start-Process -Wait is needed to get the
+          # exit code at all.
+          $p = Start-Process -FilePath .\dist\shambles.exe `
+                             -ArgumentList '--version' `
+                             -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) {
+            Write-Error "binary exited $($p.ExitCode)"; exit 1
+          }
+          Write-Host "binary started and exited cleanly"
 
       - name: Rename
         shell: bash
