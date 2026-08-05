@@ -77,6 +77,16 @@ def _expect_exit(proc, sig, timeout=15):
     return proc.returncode
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason=(
+        "Windows has no kill(pid, SIGINT): Ctrl+C there is a console "
+        "CTRL_C_EVENT that cannot be sent to an unrelated process, and "
+        "SIGTERM maps to TerminateProcess, which kills outright rather than "
+        "unwinding. Windows users close the window with the X button, which "
+        "test_wm_delete_window_is_handled covers on every platform."
+    ),
+)
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
 def test_signal_closes_the_window(tmp_path, sig):
     """Ctrl+C must work. Without it users reach for Ctrl+Z and strand the
