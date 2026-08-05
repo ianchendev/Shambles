@@ -1,11 +1,13 @@
 """The operations Shambles performs on the user's Claude Code configuration."""
 
+import os
 import shutil
 import time
 from pathlib import Path
 
-from . import configjson, links, profiles
-from .errors import ForeignLinkError, ProfileNotFoundError
+from . import configjson, links, profiles, retry
+from .errors import (AlreadyManagedError, ForeignLinkError, ProfileNotFoundError,
+                     ShamblesError)
 
 IDE_DIRNAME = "ide"
 LOCK_GLOB = "*.lock"
@@ -81,3 +83,60 @@ def carry_ide_locks(source_dir, target_dir) -> None:
             shutil.copy2(lock, destination / lock.name)
     except OSError:
         pass
+
+
+NOTHING_TO_SAVE = (
+    "There is no ~/.claude directory to save.\n\n"
+    "Use 'Add Empty Account' to create a profile and log in fresh."
+)
+
+
+def crosses_filesystem(paths) -> bool:
+    """True if ~/.claude sits on a different device from its future parent.
+
+    ``shutil.move`` silently degrades from a rename to copytree+rmtree across
+    devices -- slow, and non-atomic on a directory holding live credentials.
+    """
+    try:
+        return os.stat(paths.claude_dir).st_dev != os.stat(paths.home).st_dev
+    except OSError:
+        return False
+
+
+def save_current_account(paths, name, *, now_ms_fn=now_ms, sleep=time.sleep) -> str:
+    """Move the real ~/.claude into a profile and leave a symlink behind.
+
+    The only operation that relocates live data. If the symlink cannot be
+    created afterwards, the move is undone before the error propagates --
+    without that, a Windows privilege error would leave the user with no
+    ~/.claude at all.
+    """
+    state = links.inspect(paths)
+    if state.kind == links.FOREIGN:
+        raise ForeignLinkError(FOREIGN_LINK_MESSAGE.format(target=state.target))
+    if state.kind in (links.MANAGED, links.DANGLING):
+        raise AlreadyManagedError(
+            "~/.claude is already managed by Shambles — nothing to save."
+        )
+    if state.kind != links.UNMANAGED:
+        raise ShamblesError(NOTHING_TO_SAVE)
+
+    clean = profiles.validate_profile_name(name, profiles.list_profile_names(paths))
+    paths.profiles_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    destination = paths.profile_dir(clean)
+
+    shutil.move(str(paths.claude_dir), str(destination))
+    try:
+        target = str(destination.absolute())
+        retry.with_retry(
+            lambda: os.symlink(target, str(paths.claude_dir), target_is_directory=True),
+            "create the ~/.claude symlink",
+            sleep=sleep,
+        )
+    except BaseException:
+        shutil.move(str(destination), str(paths.claude_dir))
+        raise
+
+    outgoing = configjson.extract_account_keys(configjson.load(paths.claude_json))
+    configjson.write_sidecar(paths.sidecar(clean), outgoing, now_ms_fn())
+    return clean
