@@ -7,7 +7,11 @@ suite run against a temporary directory.
 
 import sys
 
-from . import __version__
+# Absolute, not relative. PyInstaller runs this file as a top-level script
+# rather than as a module inside its package, so `from . import ...` raises
+# "attempted relative import with no known parent package" and the bundled
+# binary dies on startup. Absolute imports work in both contexts.
+from shambles import __version__
 
 USAGE = """\
 shambles — switch between Claude Code accounts
@@ -48,7 +52,7 @@ def main(argv=None) -> int:
         sys.stderr.write(TK_MISSING)
         return 1
 
-    from .gui import run
+    from shambles.gui import run
     return run()
 
 
