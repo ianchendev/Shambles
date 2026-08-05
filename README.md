@@ -181,6 +181,33 @@ What protects your data:
   unlinking a dangling `~/.claude` when you explicitly click *Remove broken
   link*. Nothing deletes profile data.
 
+### Closing the window
+
+The title-bar X, `Ctrl+C` in the launching terminal, and `kill <pid>` all shut
+Shambles down cleanly.
+
+`Ctrl+C` needs explaining, because Tk does not give it to you for free. Tk's
+`mainloop()` blocks inside C waiting on X events, while Python only dispatches
+signal handlers between bytecode instructions — so by default `Ctrl+C` is
+recorded and never delivered. The app looks frozen, and the natural next move
+is `Ctrl+Z`, which SIGSTOPs the process. A stopped process cannot answer the
+window manager's close request, leaving a window that nothing on the desktop
+can shut, surviving even after you kill the terminal.
+
+Shambles avoids this with a 150 ms no-op timer that hands control back to the
+interpreter often enough for signals to land. Covered by
+`tests/test_shutdown.py`.
+
+**If you ever do end up with a frozen window** (from an older build, or after
+pressing `Ctrl+Z`):
+
+```bash
+pkill -CONT -f shambles.py && pkill -f shambles.py
+```
+
+The `-CONT` matters — a stopped process cannot act on `SIGTERM` until it is
+resumed first.
+
 ### The one real caveat
 
 **Do not switch while a Claude Code session is running.** A live session holds
