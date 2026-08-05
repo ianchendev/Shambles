@@ -5,7 +5,7 @@ import pytest
 
 from helpers import NOW, make_claude_json, make_profile, write_json
 from shambles import configjson, links, profiles, switcher
-from shambles.errors import ForeignLinkError, ProfileNotFoundError
+from shambles.errors import ConfigUnreadableError, ForeignLinkError, ProfileNotFoundError
 
 
 def _clock():
@@ -194,3 +194,27 @@ def test_carry_ide_locks_is_silent_when_source_has_none(paths):
     b = make_profile(paths, "B")
     switcher.carry_ide_locks(a, b)
     assert not (b / "ide").exists()
+
+
+def test_corrupt_config_aborts_before_the_link_moves(paths):
+    """A mid-write ~/.claude.json must abort the switch with nothing changed.
+
+    Aborting *after* the swap would be worse than useless: the link would point
+    at the new profile carrying the old identity, and re-running the same
+    switch returns early as 'already there', so the splice would never happen.
+    """
+    make_profile(paths, "Work", email="work@example.com")
+    make_profile(paths, "Personal", email="me@example.com")
+    make_claude_json(paths, email="work@example.com")
+    os.symlink(str(paths.profile_dir("Work")), str(paths.claude_dir),
+               target_is_directory=True)
+
+    paths.claude_json.write_text('{"projects": {"a": 1}, "mcpServers": {trunc')
+    before = paths.claude_json.read_text()
+
+    with pytest.raises(ConfigUnreadableError):
+        switcher.switch(paths, "Personal")
+
+    state = links.inspect(paths)
+    assert state.profile == "Work", "link moved despite the abort"
+    assert paths.claude_json.read_text() == before
