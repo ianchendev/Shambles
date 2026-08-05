@@ -1,0 +1,142 @@
+import pytest
+
+from helpers import (NOW, DAY_MS, account, make_claude_json, make_profile,
+                     write_json)
+from shambles import profiles
+from shambles.errors import ProfileNameError
+
+
+# ---- discovery ----------------------------------------------------------
+
+def test_no_profiles_dir_lists_nothing(paths):
+    assert profiles.list_profile_names(paths) == []
+
+
+def test_lists_directories_case_insensitively_sorted(paths):
+    for name in ("zeta", "Alpha", "beta"):
+        make_profile(paths, name)
+    assert profiles.list_profile_names(paths) == ["Alpha", "beta", "zeta"]
+
+
+def test_skips_dotted_entries_and_files(paths):
+    make_profile(paths, "Work")
+    paths.backup_dir.mkdir(parents=True)
+    (paths.profiles_dir / "stray.txt").write_text("x", encoding="utf-8")
+    assert profiles.list_profile_names(paths) == ["Work"]
+
+
+# ---- email chain --------------------------------------------------------
+
+def test_active_profile_reads_live_claude_json(paths):
+    make_profile(paths, "Work", email="stale@example.com")
+    make_claude_json(paths, email="live@example.com")
+    got = profiles.resolve_account(paths, "Work", active_name="Work")
+    assert got["emailAddress"] == "live@example.com"
+
+
+def test_inactive_profile_reads_its_sidecar(paths):
+    make_profile(paths, "Personal", email="personal@example.com")
+    make_claude_json(paths, email="live@example.com")
+    got = profiles.resolve_account(paths, "Personal", active_name="Work")
+    assert got["emailAddress"] == "personal@example.com"
+
+
+def test_falls_back_to_newest_claude_json_backup(paths):
+    d = make_profile(paths, "Old")          # no sidecar
+    backups = d / "backups"
+    write_json(backups / ".claude.json.backup.100",
+               {"oauthAccount": account("older@example.com")})
+    write_json(backups / ".claude.json.backup.900",
+               {"oauthAccount": account("newest@example.com")})
+    got = profiles.resolve_account(paths, "Old", active_name="Work")
+    assert got["emailAddress"] == "newest@example.com"
+
+
+def test_unknown_email_when_nothing_on_disk(paths):
+    make_profile(paths, "Bare")
+    assert profiles.resolve_account(paths, "Bare", active_name="Work") == {}
+
+
+def test_malformed_sidecar_falls_through_to_backup(paths):
+    d = make_profile(paths, "Broken")
+    paths.sidecar("Broken").write_text("{ not json", encoding="utf-8")
+    write_json(d / "backups" / ".claude.json.backup.500",
+               {"oauthAccount": account("rescued@example.com")})
+    got = profiles.resolve_account(paths, "Broken", active_name="Work")
+    assert got["emailAddress"] == "rescued@example.com"
+
+
+# ---- token state --------------------------------------------------------
+
+def test_token_ok(paths):
+    d = make_profile(paths, "Work")
+    assert profiles.token_state(d, NOW) == profiles.TOKEN_OK
+
+
+def test_token_missing_when_no_credentials_file(paths):
+    d = make_profile(paths, "Fresh", token=False)
+    assert profiles.token_state(d, NOW) == profiles.TOKEN_MISSING
+
+
+def test_token_missing_when_credentials_malformed(paths):
+    d = make_profile(paths, "Broken")
+    (d / ".credentials.json").write_text("{ not json", encoding="utf-8")
+    assert profiles.token_state(d, NOW) == profiles.TOKEN_MISSING
+
+
+def test_token_expired_when_refresh_window_passed(paths):
+    d = make_profile(paths, "Stale", refresh_expires_ms=NOW - DAY_MS)
+    assert profiles.token_state(d, NOW) == profiles.TOKEN_EXPIRED
+
+
+def test_warning_text_matches_spec(paths):
+    d = make_profile(paths, "Fresh", token=False)
+    p = profiles.discover(paths, active_name=None, now_ms=NOW)[0]
+    assert p.path == d
+    assert p.warning == (
+        "No token found. Switch to this profile and run 'claude' in terminal to login."
+    )
+
+
+def test_healthy_profile_has_no_warning(paths):
+    make_profile(paths, "Work", email="w@example.com")
+    p = profiles.discover(paths, active_name="Work", now_ms=NOW)[0]
+    assert p.warning is None
+
+
+# ---- discover -----------------------------------------------------------
+
+def test_discover_marks_the_active_profile(paths):
+    make_profile(paths, "Work", email="w@example.com")
+    make_profile(paths, "Personal", email="p@example.com")
+    make_claude_json(paths, email="w@example.com")
+
+    found = {p.name: p for p in profiles.discover(paths, "Work", NOW)}
+    assert found["Work"].active is True
+    assert found["Personal"].active is False
+    assert found["Personal"].email == "p@example.com"
+    assert found["Work"].org == "Acme"
+
+
+# ---- name validation ----------------------------------------------------
+
+def test_validate_trims_and_returns_clean_name():
+    assert profiles.validate_profile_name("  Work  ", []) == "Work"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", ".", "..", ".hidden",
+                                 "a/b", "a\\b", "a:b", "a*b", "a?b",
+                                 'a"b', "a<b", "a>b", "a|b"])
+def test_validate_rejects(bad):
+    with pytest.raises(ProfileNameError):
+        profiles.validate_profile_name(bad, [])
+
+
+def test_validate_rejects_duplicates_case_insensitively():
+    with pytest.raises(ProfileNameError):
+        profiles.validate_profile_name("work", ["Work"])
+
+
+def test_validate_rejects_none():
+    with pytest.raises(ProfileNameError):
+        profiles.validate_profile_name(None, [])
