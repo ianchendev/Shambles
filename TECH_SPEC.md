@@ -6,7 +6,7 @@ Architectural reference for the Claude Code account switcher.
 |---|---|
 | **Version** | 1.0 (post-redesign) |
 | **Target** | Claude Code 2.1.x — CLI and VS Code extension |
-| **Platforms** | Linux, WSL2, Windows. macOS unsupported |
+| **Platforms** | Linux and WSL2 confirmed. Windows unverified — see §1.11. macOS unsupported |
 | **Runtime** | Python 3.10+, Tkinter. No third-party dependencies |
 | **Source** | ~1,800 lines across 13 modules |
 | **Tests** | 169 cases, all passing on Linux and Windows |
@@ -34,13 +34,22 @@ on the refresh token in `.credentials.json`:
 claudeAiOauth.accessToken             ~8 hour lifetime, refreshed silently
 claudeAiOauth.refreshToken            the credential that avoids the email
 claudeAiOauth.expiresAt               epoch ms
-claudeAiOauth.refreshTokenExpiresAt   epoch ms — rolling 30-day window
+claudeAiOauth.refreshTokenExpiresAt   epoch ms — rolling; width varies, read it
 claudeAiOauth.scopes / subscriptionType / rateLimitTier
 ```
 
 Preserving that file per account makes every subsequent switch instant. An
-account returns to the email flow only after ~30 days of complete disuse, since
-each use renews the window.
+account returns to the email flow only after the refresh window lapses, since
+each use re-mints it.
+
+**The window width is not a constant and must not be hardcoded.** Measurements
+recorded in [token-storage.md](docs/token-storage.md) differ by an order of
+magnitude — ~28 days across three blobs on Linux/Team, ~4 days on a single
+macOS/Max 5x sample. Which variable moves it is unresolved.
+`profiles.refresh_expiry_ms()` reads `refreshTokenExpiresAt` out of the blob
+rather than deriving it, so the countdown is correct under either regime. The
+**rolling** property is confirmed by both samples and is what matters: an
+account in regular use never approaches its deadline.
 
 **Shambles never rotates, refreshes, decodes or transmits a token.** It moves
 bytes on a local filesystem. All token lifecycle management remains Claude
@@ -216,6 +225,38 @@ Idempotent, and refuses on the legacy layout — ejecting a symlinked
 `~/.claude` would leave a dangling link.
 
 Nothing in eject deletes a credentials file.
+
+### 1.11 Platform reach is narrower than the build matrix suggests
+
+Shambles swaps `~/.claude/.credentials.json`. That file is not where Claude Code
+keeps credentials on every platform. Per source analysis of the shipping bundle
+([token-storage.md](docs/token-storage.md)), the binary defines **three**
+backends:
+
+| Platform | Backend | Store |
+|---|---|---|
+| Linux / fallback | `plaintext` | `$CLAUDE_CONFIG_DIR/.credentials.json`, mode 0600 |
+| macOS | `keychain` | Keychain generic password, service name **computed** from a hash of the config dir |
+| Windows | `windows-credman` | Credential Manager, values **chunked** at 2000 chars |
+
+Consequences for this codebase:
+
+- **Linux and WSL2 — confirmed working.** The plaintext backend is the one
+  Shambles manipulates, verified in daily use on the development host.
+- **Windows — unverified, and likely non-functional.** If Claude Code uses
+  Credential Manager there, `~/.claude/.credentials.json` never exists, so
+  `save_current_account` would report nothing to save and a switch would move a
+  file no reader consults. CI builds and tests a Windows binary, which proves
+  the *app* runs — not that account switching works. Supporting Windows
+  properly means a Credential Manager backend that reassembles chunked entries,
+  which does not exist.
+- **macOS — unsupported, correctly.** The Keychain is the sole store; there is
+  no file to swap. Any future support must compute
+  `` `Claude Code${suffix}-credentials${dirHash}` `` rather than hardcode it.
+
+The Windows and macOS rows are graded [SRC] in the source document — read out of
+the shipping bundle on a macOS host, not executed on Windows. The Linux row is
+the only one this project has exercised.
 
 ### 1.10 Migration from the legacy layout
 
@@ -608,7 +649,7 @@ documented in the README's *Adding an account* and *Switching* procedures. A
 session started within the last few hours is not at risk.
 
 **Recovery.** Benign and self-correcting. Switch to the affected profile and run
-`/login` once. The 30-day window reopens. No data is lost — session history is
+`/login` once. The refresh window reopens. No data is lost — session history is
 not involved.
 
 **Status.** Documented, not fixed. A robust fix would require either an
@@ -715,8 +756,9 @@ Stated explicitly rather than implied:
 - **The browser-bypass claim is structural**, not observed end to end (§5.1).
 - **The 8-hour refresh interaction is undemonstrated** (§4.4). Reproducing it
   requires an 8-hour session straddling a switch.
-- **Windows and macOS are untested on hardware.** Platform-specific paths are
-  reasoned about and, for Windows privilege errors, unit-tested via synthetic
-  `winerror` attributes.
+- **Windows account switching is unverified and probably broken** (§1.11). The
+  CI Windows job proves the app starts and its tests pass; it does not exercise
+  a real Claude Code login, because the runner has none. macOS is unsupported by
+  design.
 - **Migration ran once on real data**, verified complete afterwards. It is
   one-way; re-running is refused.

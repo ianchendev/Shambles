@@ -20,10 +20,13 @@ CHIP_STYLES = {
     profiles.EXPIRY_GONE: ("chip_gone_fg", "chip_gone_bg"),
 }
 
+#: Deliberately names no fixed width. Observed refresh windows differ by an
+#: order of magnitude across platform and plan samples (docs/token-storage.md),
+#: and the chip beside this tooltip already shows the account's real figure.
 EXPIRY_TOOLTIP = (
     "Refresh token {verb} {date}.\n\n"
-    "This is the rolling 30-day window that lets Shambles switch to this "
-    "account without a verification email. Using the account renews it."
+    "This rolling window is what lets Shambles switch to this account without "
+    "a verification email. Using the account renews it."
 )
 
 RENAME_HINT = "Double-click to rename"

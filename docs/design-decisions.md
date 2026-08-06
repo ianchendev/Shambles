@@ -1,5 +1,14 @@
 # Design decisions
 
+> **Status: mixed.** DD-1 through DD-3 describe principles the shipped v1.0
+> follows. **DD-4 is a proposal for multi-provider support that is not
+> implemented** — there is no provider or adapter layer in `shambles/`, and
+> Codex is not supported. Read it as a design intent, not a description.
+>
+> For shipped architecture see [TECH_SPEC.md](../TECH_SPEC.md); for the
+> credential-store research behind DD-4 see
+> [token-storage.md](token-storage.md).
+
 Recorded decisions and their rationale, for the cross-platform, multi-provider
 switcher scoped in [#2](https://github.com/ianchendev/Shambles/issues/2).
 Evidence for the claims below is in [token-storage.md](token-storage.md).
@@ -157,6 +166,11 @@ happens silently. Access tokens, refresh tokens, expiry timestamps and org UUIDs
 are never presented as things to manage, and there is no "refresh", "repair" or
 "manage tokens" affordance.
 
+> **As shipped:** upheld for tokens — none is ever displayed. v1.0 does add
+> Save, Add, Rename and Eject alongside Switch. None manages a token: they
+> create, name or hand back profiles. The countdown chip surfaces an expiry
+> *date* but offers no action on it, which is the distinction DD-1 draws.
+
 ### Consequences
 
 - **No token is ever displayed.** Not truncated, not masked, not in a details
@@ -185,6 +199,10 @@ are never presented as things to manage, and there is no "refresh", "repair" or
 ---
 
 ## DD-4 — Provider facts are data; adapters are two thin orthogonal layers
+
+> **NOT IMPLEMENTED.** v1.0 supports Claude Code on Linux/WSL only, through a
+> single hardcoded path. Nothing below exists in the codebase. Retained as the
+> shape multi-provider support would take if it is ever built.
 
 **Status: Decided**
 

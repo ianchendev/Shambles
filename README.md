@@ -15,9 +15,16 @@ account, which is how Claude Code behaves on its own.
 
 Email verification is the *initial* OAuth grant only. What keeps you signed in
 afterwards is the **refresh token** in `.credentials.json`, valid for a rolling
-30 days and renewed on every use. Preserve that file per account and every
-later switch is instant — an account only returns to the email flow if it goes
-entirely unused for 30+ days.
+window that is re-minted on every use. Preserve that file per account and every
+later switch is instant — an account only returns to the email flow if it sits
+entirely unused long enough for that window to lapse.
+
+How wide is the window? **It varies, so Shambles reads it rather than assuming.**
+Measurements differ by an order of magnitude: ~28 days across three credential
+blobs on Linux/Team, ~4 days on a macOS/Max 5x sample
+([evidence](docs/token-storage.md)). The countdown chip shows whatever your own
+token says. What holds in every sample is the rolling behaviour — an account you
+use regularly never approaches its deadline.
 
 Rate limits are still enforced server-side per account. Switching gives you the
 target account's own bucket; it does not pool or extend any single account's
@@ -47,21 +54,30 @@ python3 shambles.py          # or: python3 -m shambles
 
 ### Before you install, check it applies to you
 
-| You run Claude Code in… | Use |
+| You run Claude Code in… | Status |
 |---|---|
-| Linux desktop | either the binary or pipx |
-| WSL (Ubuntu etc.) | the **Linux** build, run **inside WSL** — see below |
-| Windows natively | the Windows binary, **plus Developer Mode** |
-| macOS | **not supported** — see Platform notes |
+| Linux desktop | **Supported** — binary or pipx |
+| WSL (Ubuntu etc.) | **Supported** — the **Linux** build, run **inside WSL** |
+| Windows natively | **Unverified, probably not working** — see below |
+| macOS | **Not supported** — see Platform notes |
+
+**About Windows.** Claude Code does not use the same credential store on every
+platform. On Linux it writes `~/.claude/.credentials.json`, which is the file
+Shambles swaps. On Windows it appears to use the Credential Manager instead, in
+which case that file never exists and switching would quietly do nothing. A
+Windows binary is built and tested, but that only proves the app runs — nobody
+has confirmed an account switch actually takes effect there. Treat Windows as
+untested until someone does. The evidence is in
+[docs/token-storage.md](docs/token-storage.md).
 
 **WSL is the sharp edge.** A Windows `.exe` manages
 `C:\Users\<you>\.claude`, which is a *different* Claude Code installation from
 the one in your WSL home directory. If you use Claude Code inside WSL, install
 inside WSL.
 
-**Windows needs Developer Mode** (Settings → System → For developers) or
-Administrator only if you are migrating from a pre-1.0 layout, which used
-symlinks. Ordinary switching needs no special privileges.
+**Windows needs Developer Mode** (Settings → System → For developers) only when
+migrating from a pre-1.0 layout, which used symlinks. Ordinary switching needs
+no special privileges — but see the Windows caveat above before relying on it.
 
 ## CLI or VS Code extension — both
 
@@ -248,7 +264,7 @@ directories. A profile is about half a kilobyte.
   claudeAiOauth.accessToken             ~8 hour life, refreshed silently
   claudeAiOauth.refreshToken            the thing that saves you the email
   claudeAiOauth.expiresAt               epoch ms
-  claudeAiOauth.refreshTokenExpiresAt   epoch ms — rolling 30 days
+  claudeAiOauth.refreshTokenExpiresAt   epoch ms — rolling; width varies
   claudeAiOauth.scopes / subscriptionType / rateLimitTier
 ```
 
@@ -312,7 +328,7 @@ Two things worth understanding:
 - **Ignore the access token.** It expires within hours and is refreshed
   automatically. Only `refreshTokenExpiresAt` decides whether you face the
   email flow again — it is the one the UI counts down.
-- **The 30-day clock resets on use, not on the calendar.** Every refresh mints
+- **The clock resets on use, not on the calendar.** Every refresh mints
   a replacement with a fresh window. Rotating between accounts normally keeps
   all of them alive indefinitely; an account parked and untouched for 30+ days
   is the only one that needs a new `/login`.
@@ -444,3 +460,14 @@ Shambles to swap.
 Run Shambles inside whichever environment you actually use Claude Code in. A
 Windows build manages `C:\Users\<you>\.claude`, which is a different
 installation from the one in a WSL home directory.
+
+## Documentation
+
+| Document | What it is |
+|---|---|
+| [TECH_SPEC.md](TECH_SPEC.md) | **Definitive** architecture reference for shipped v1.0 — mechanism, concurrency, permissions, token lifecycle, test coverage |
+| [docs/token-storage.md](docs/token-storage.md) | Field research into how Claude and Codex store credentials across macOS, Windows and Linux. Covers platforms this tool does not yet support |
+| [docs/design-decisions.md](docs/design-decisions.md) | Recorded decisions and rationale. DD-1–DD-3 describe shipped behaviour; DD-4 is an unimplemented proposal |
+
+Where a document disagrees with TECH_SPEC about what the tool does today,
+TECH_SPEC wins.
