@@ -29,7 +29,7 @@ Profiles live in ~/.claude-profiles/. The active one is whichever
 #: Subcommands handled by the command line rather than by opening a window.
 #: Native shells consume `list --json`, so this is not merely a convenience --
 #: it is the interface a macOS menu bar or Windows tray app talks to.
-COMMANDS = ("list",)
+COMMANDS = ("list", "switch")
 
 TK_MISSING = """\
 Shambles needs Tkinter, which is not installed.

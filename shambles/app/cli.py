@@ -66,6 +66,55 @@ def cmd_list(args) -> int:
     return EXIT_OK
 
 
+def cmd_switch(args) -> int:
+    from .. import providers as registry
+    from . import actions
+
+    home = Path(getattr(args, "home", None) or Path.home()).expanduser()
+    try:
+        provider = registry.load(args.provider)
+    except KeyError as exc:
+        return _fail(args, "unknown_provider", str(exc).strip("'"))
+
+    try:
+        result = actions.switch(provider, args.account,
+                                home=home, platform=_platform())
+    except actions.SwitchRefused as exc:
+        return _fail(args, "refused", str(exc))
+    except actions.SwitchFailed as exc:
+        return _fail(args, "failed", str(exc))
+
+    if args.json:
+        json.dump({"version": snapshot_mod.CONTRACT_VERSION, "ok": True,
+                   "provider": result.provider,
+                   "switched_to": result.switched_to,
+                   "needs_login": result.needs_login,
+                   "warnings": result.warnings}, sys.stdout)
+        sys.stdout.write("\n")
+    else:
+        print(f"Switched {result.provider} to {result.switched_to}.")
+        if result.needs_login:
+            print(f"  {provider.login_hint()}")
+        for note in result.warnings:
+            print(f"  note: {note}")
+    return EXIT_OK
+
+
+def _fail(args, code: str, message: str) -> int:
+    """Report a failure on the channel the caller asked for.
+
+    Native shells read the exit code first and the payload second, so a
+    non-zero status has to accompany the JSON rather than replace it.
+    """
+    if getattr(args, "json", False):
+        json.dump({"version": snapshot_mod.CONTRACT_VERSION, "ok": False,
+                   "error": {"code": code, "message": message}}, sys.stdout)
+        sys.stdout.write("\n")
+    else:
+        sys.stderr.write(message.rstrip() + "\n")
+    return EXIT_FAILED
+
+
 def build_parser() -> argparse.ArgumentParser:
     # --home points the whole command at a synthetic home directory. Shared
     # through a parent parser so it is accepted on either side of the
@@ -91,6 +140,14 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--json", action="store_true",
                          help="emit the machine-readable contract")
     listing.set_defaults(func=cmd_list)
+
+    switching = sub.add_parser("switch", parents=[common],
+                               help="make an account the one every surface uses")
+    switching.add_argument("provider", help="claude or codex")
+    switching.add_argument("account", help="the profile name to switch to")
+    switching.add_argument("--json", action="store_true",
+                           help="emit the machine-readable result")
+    switching.set_defaults(func=cmd_switch)
 
     return parser
 

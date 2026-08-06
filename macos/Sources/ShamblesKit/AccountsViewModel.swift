@@ -42,6 +42,37 @@ public final class AccountsViewModel {
         return nil
     }
 
+    /// Perform a switch, then re-read.
+    ///
+    /// The refresh afterwards is not optional: a switch changes which account
+    /// every surface in that group uses, and a panel still showing the old
+    /// arrangement is worse than one that briefly shows nothing.
+    public func select(account: Account, in group: AccountGroup) async {
+        state = .loading
+        do {
+            let outcome = try await service.switchTo(
+                provider: group.provider, account: account.name)
+            if outcome.ok {
+                await refresh()
+                if outcome.needsLogin == true, let hint = account.loginHint {
+                    notice = hint
+                }
+            } else {
+                state = .failed(outcome.error?.message ?? "The switch failed.")
+            }
+        } catch let error as ShamblesError {
+            state = .failed(error.message)
+        } catch {
+            state = .failed("Couldn't reach the shambles command.")
+        }
+    }
+
+    /// A non-failure message worth showing once, such as the login command for
+    /// an account that has never been signed into.
+    public private(set) var notice: String?
+
+    public func clearNotice() { notice = nil }
+
     /// Re-read everything. Called when the menu is about to open, never on a
     /// timer: a resident process that polls would turn a race with a running
     /// Claude Code session into a permanent one, and there is no lock to wait

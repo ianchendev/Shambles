@@ -10,3 +10,10 @@ dist/
 # SwiftPM
 macos/.build/
 macos/.swiftpm/
+
+# Icon build products — regenerate with:
+#   swiftc -O macos/Tools/MakeIcon/main.swift -o /tmp/makeicon
+#   /tmp/makeicon macos/Resources/AppIcon.iconset
+#   iconutil -c icns macos/Resources/AppIcon.iconset -o macos/Resources/AppIcon.icns
+macos/Resources/AppIcon.iconset/
+macos/Resources/AppIcon.icns

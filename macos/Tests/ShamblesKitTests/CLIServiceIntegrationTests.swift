@@ -107,3 +107,42 @@ final class CLIServiceIntegrationTests: XCTestCase {
         }
     }
 }
+
+@available(macOS 14, *)
+extension CLIServiceIntegrationTests {
+
+    func testARealSwitchMovesTheLiveCredential() async throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        // A second profile to switch to.
+        let other = home.appendingPathComponent(".shambles/claude/Personal")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        let future = Int(Date().timeIntervalSince1970 * 1000) + 30 * 86_400_000
+        try #"{"claudeAiOauth":{"accessToken":"personal","refreshTokenExpiresAt":\#(future)}}"#
+            .write(to: other.appendingPathComponent("credential"),
+                   atomically: true, encoding: .utf8)
+
+        let service = try makeService(home: home)
+        let outcome = try await service.switchTo(provider: "claude", account: "Personal")
+        XCTAssertTrue(outcome.ok)
+        XCTAssertEqual(outcome.switchedTo, "Personal")
+
+        let after = try await service.list()
+        let claude = try XCTUnwrap(after.groups.first { $0.provider == "claude" })
+        XCTAssertEqual(claude.accounts.first { $0.active }?.name, "Personal")
+    }
+
+    func testARefusedSwitchCarriesItsReasonRatherThanAnExitCode() async throws {
+        // The CLI exits non-zero *and* prints JSON. The message is the useful
+        // half, so it must survive the non-zero status.
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let outcome = try await makeService(home: home)
+            .switchTo(provider: "claude", account: "Nonexistent")
+        XCTAssertFalse(outcome.ok)
+        XCTAssertEqual(outcome.error?.code, "refused")
+        XCTAssertTrue(outcome.error?.message.contains("Nonexistent") ?? false)
+    }
+}

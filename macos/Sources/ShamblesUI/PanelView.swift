@@ -37,7 +37,10 @@ public struct PanelView: View {
                     if group.id != snapshot.groups.first?.id {
                         Divider().padding(.vertical, 2)
                     }
-                    GroupSection(group: group) { onSelect(group, $0) }
+                    GroupSection(group: group) { account in
+                        onSelect(group, account)
+                        Task { await model.select(account: account, in: group) }
+                    }
                 }
             }
         }

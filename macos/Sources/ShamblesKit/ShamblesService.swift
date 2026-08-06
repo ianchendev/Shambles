@@ -34,6 +34,36 @@ public enum ShamblesError: Error, Equatable, Sendable {
 /// credentials. Everything above this line sees Swift values only.
 public protocol ShamblesService: Sendable {
     func list() async throws -> Snapshot
+    func switchTo(provider: String, account: String) async throws -> SwitchOutcome
+}
+
+/// What came back from a switch.
+///
+/// `needsLogin` is not a failure: a profile that has been added but never
+/// signed into is exactly how a new account starts, and the panel should show
+/// the vendor's command rather than an error.
+public struct SwitchOutcome: Decodable, Sendable, Equatable {
+    public let ok: Bool
+    public let provider: String?
+    public let switchedTo: String?
+    public let needsLogin: Bool?
+    public let warnings: [String]?
+    public let error: SwitchError?
+
+    public struct SwitchError: Decodable, Sendable, Equatable {
+        public let code: String
+        public let message: String
+    }
+
+    public init(ok: Bool, provider: String?, switchedTo: String?,
+                needsLogin: Bool?, warnings: [String]?, error: SwitchError?) {
+        self.ok = ok
+        self.provider = provider
+        self.switchedTo = switchedTo
+        self.needsLogin = needsLogin
+        self.warnings = warnings
+        self.error = error
+    }
 }
 
 /// Talks to the `shambles` command and decodes its contract.
@@ -77,12 +107,41 @@ public struct CLIService: ShamblesService {
         return snapshot
     }
 
+    public func switchTo(provider: String, account: String) async throws -> SwitchOutcome {
+        // A refused switch exits non-zero *and* prints its reason as JSON on
+        // stdout. Decode the payload before judging the status: the message
+        // explains what to do, the exit code only says something went wrong.
+        let (data, status, stderr) = try capture(
+            arguments + ["switch", provider, account, "--json"])
+        if let outcome = try? Snapshot.makeDecoder()
+            .decode(SwitchOutcome.self, from: data) {
+            return outcome
+        }
+        guard status == 0 else {
+            throw ShamblesError.commandFailed(exitCode: status, message: stderr)
+        }
+        throw ShamblesError.malformedOutput("switch produced no readable result")
+    }
+
     static func peekVersion(_ data: Data) -> Int? {
         let object = try? JSONSerialization.jsonObject(with: data)
         return (object as? [String: Any])?["version"] as? Int
     }
 
     private func run(_ arguments: [String]) throws -> Data {
+        let (data, status, stderr) = try capture(arguments)
+        guard status == 0 else {
+            throw ShamblesError.commandFailed(exitCode: status, message: stderr)
+        }
+        return data
+    }
+
+    /// Run the command and hand back everything, judging nothing.
+    ///
+    /// Separate from `run` because the two commands disagree about what a
+    /// non-zero exit means: for `list` it is simply a failure, but `switch`
+    /// pairs it with a JSON explanation worth reading.
+    private func capture(_ arguments: [String]) throws -> (Data, Int32, String) {
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             throw ShamblesError.executableNotFound(executableURL.path)
         }
@@ -107,13 +166,9 @@ public struct CLIService: ShamblesService {
         let stderr = err.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        guard process.terminationStatus == 0 else {
-            throw ShamblesError.commandFailed(
-                exitCode: process.terminationStatus,
-                message: String(data: stderr, encoding: .utf8)?
+        return (stdout, process.terminationStatus,
+                String(data: stderr, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
-        }
-        return stdout
     }
 }
 
@@ -126,5 +181,10 @@ public struct StubService: ShamblesService {
 
     public func list() async throws -> Snapshot {
         try result.get()
+    }
+
+    public func switchTo(provider: String, account: String) async throws -> SwitchOutcome {
+        SwitchOutcome(ok: true, provider: provider, switchedTo: account,
+                      needsLogin: false, warnings: [], error: nil)
     }
 }

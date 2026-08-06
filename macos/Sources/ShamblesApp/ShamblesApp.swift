@@ -22,12 +22,9 @@ struct ShamblesApp: App {
 
     var body: some Scene {
         MenuBarExtra("Shambles", systemImage: "person.2.circle") {
-            PanelView(model: model) { group, account in
-                // Switching lands here once the flow is designed. Wired as a
-                // closure so the view stays free of any knowledge of how a
-                // switch is performed.
-                print("switch \(group.provider) -> \(account.name)")
-            }
+            // The switch itself is the view model's job; this hook is only
+            // for anything the app shell wants to do alongside it.
+            PanelView(model: model)
         }
         .menuBarExtraStyle(.window)
     }
