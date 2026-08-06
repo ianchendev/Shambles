@@ -13,10 +13,22 @@ from pathlib import Path
 
 from .errors import ConfigUnreadableError
 
-#: Keys in ~/.claude.json that belong to the logged-in account rather than the
-#: machine. ``cachedUsageUtilization`` is keyed by accountUuid, so carrying one
-#: account's copy into another's session shows the wrong usage figures.
-ACCOUNT_KEYS = ("oauthAccount", "cachedUsageUtilization")
+#: Account identity, carried between profiles so the UI names the right person.
+ACCOUNT_KEYS = ("oauthAccount",)
+
+#: Account-scoped *caches*: cleared on every switch and never restored.
+#:
+#: ``cachedUsageUtilization`` is keyed by accountUuid, so leaving the outgoing
+#: account's copy behind would show the wrong person's figures. Restoring the
+#: incoming account's stashed copy is no better: the blob carries its own
+#: ``fetchedAtMs`` and the numbers are only true as of that moment, so a profile
+#: switched away from yesterday comes back reporting yesterday's usage. Neither
+#: the extension nor the user can tell a stale cache from a current one.
+#:
+#: Deleting satisfies the original requirement -- no foreign figures -- and
+#: leaves Claude Code to refetch from the server, which is the only source that
+#: knows the real number.
+STALE_ON_SWITCH = ("cachedUsageUtilization",)
 
 BACKUP_RETENTION = 10
 TMP_SUFFIX = ".shambles-tmp"
@@ -94,8 +106,9 @@ def load_for_write(path) -> dict:
 def apply_account_keys(path, account: dict) -> None:
     """Splice ``account`` into the config at ``path``.
 
-    Keys missing from ``account`` are deleted rather than left holding the
-    previous profile's identity -- Claude Code re-fetches them on next start.
+    Identity keys missing from ``account`` are deleted rather than left holding
+    the previous profile's -- Claude Code re-fetches them on next start. Cache
+    keys are always deleted; see :data:`STALE_ON_SWITCH`.
     """
     config = load_for_write(path)
     for key in ACCOUNT_KEYS:
@@ -103,6 +116,8 @@ def apply_account_keys(path, account: dict) -> None:
             config[key] = account[key]
         else:
             config.pop(key, None)
+    for key in STALE_ON_SWITCH:
+        config.pop(key, None)
     write_atomic(path, config)
 
 

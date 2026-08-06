@@ -23,10 +23,12 @@ def test_load_non_dict_returns_empty(tmp_path):
     assert configjson.load(arr) == {}
 
 
-def test_extract_pulls_only_account_keys(paths):
+def test_extract_pulls_only_the_identity(paths):
+    """Usage figures are deliberately not captured -- they are a cache with a
+    server-side truth, and a stashed copy is stale the moment it is written."""
     data = make_claude_json(paths)
     got = configjson.extract_account_keys(data)
-    assert set(got) == {"oauthAccount", "cachedUsageUtilization"}
+    assert set(got) == {"oauthAccount"}
 
 
 def test_apply_preserves_every_other_key_and_order(paths):
@@ -34,21 +36,19 @@ def test_apply_preserves_every_other_key_and_order(paths):
     before = json.loads(paths.claude_json.read_text(encoding="utf-8"))
 
     configjson.apply_account_keys(
-        paths.claude_json,
-        {"oauthAccount": account("new@example.com"),
-         "cachedUsageUtilization": {"accountUuid": "uuid-b"}},
-    )
+        paths.claude_json, {"oauthAccount": account("new@example.com")})
 
     after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
-    assert list(after.keys()) == list(before.keys())
+    # cachedUsageUtilization is dropped on purpose, so compare the rest
+    expected = [k for k in before if k != "cachedUsageUtilization"]
+    assert list(after.keys()) == expected
     assert after["numStartups"] == before["numStartups"]
     assert after["projects"] == before["projects"]
     assert after["machineID"] == before["machineID"]
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
-    assert after["cachedUsageUtilization"]["accountUuid"] == "uuid-b"
 
 
-def test_apply_with_empty_account_deletes_both_keys(paths):
+def test_apply_with_empty_account_deletes_identity_and_cache(paths):
     make_claude_json(paths)
     configjson.apply_account_keys(paths.claude_json, {})
     after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
@@ -153,3 +153,46 @@ def test_preserves_every_unrelated_key_when_splicing(paths):
     assert after["mcpServers"] == original["mcpServers"]
     assert after["userID"] == "abc123"
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
+
+
+# ---- usage figures are a cache, not identity ----------------------------
+# cachedUsageUtilization carries its own fetchedAtMs and is refetched from the
+# server. Restoring a profile's stashed copy re-displays whatever the numbers
+# were when that profile was last active -- hours or days out of date -- which
+# is worse than having none, because the UI cannot tell stale from current.
+
+def test_switching_clears_cached_usage_rather_than_restoring_it(paths):
+    stale = {"oauthAccount": account("work@example.com"),
+             "cachedUsageUtilization": {"fetchedAtMs": 1, "accountUuid": "uuid-a",
+                                        "utilization": {"five_hour": {"utilization": 11}}}}
+    write_json(paths.account("Work"), stale)
+    make_claude_json(paths, email="someone@example.com")
+
+    configjson.apply_account_keys(
+        paths.claude_json, configjson.read_sidecar(paths.account("Work")))
+
+    after = configjson.load(paths.claude_json)
+    assert after["oauthAccount"]["emailAddress"] == "work@example.com"
+    assert "cachedUsageUtilization" not in after, \
+        "restored a stale usage cache; Claude Code should refetch instead"
+
+
+def test_the_outgoing_accounts_usage_never_lingers(paths):
+    """The original reason this key was handled at all: leaving account A's
+    figures behind shows the wrong account's usage under account B."""
+    make_claude_json(paths, email="a@example.com")
+    assert "cachedUsageUtilization" in configjson.load(paths.claude_json)
+
+    configjson.apply_account_keys(
+        paths.claude_json, {"oauthAccount": account("b@example.com")})
+
+    assert "cachedUsageUtilization" not in configjson.load(paths.claude_json)
+
+
+def test_stashing_does_not_capture_usage(paths):
+    """No point stashing what is never restored."""
+    make_claude_json(paths, email="work@example.com")
+    captured = configjson.extract_account_keys(
+        configjson.load(paths.claude_json))
+    assert "oauthAccount" in captured
+    assert "cachedUsageUtilization" not in captured
