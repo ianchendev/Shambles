@@ -1,5 +1,14 @@
 # Token storage across Claude and Codex surfaces
 
+> **Status: research, not specification.** This is a field survey of how five
+> products store credentials, gathered to inform future work. It describes
+> platforms and providers Shambles does **not** currently support.
+>
+> For what Shambles actually does today, see [TECH_SPEC.md](../TECH_SPEC.md).
+> Where the two disagree about shipped behaviour, TECH_SPEC is authoritative.
+>
+> Findings here that changed the shipped tool are cross-referenced inline.
+
 Research for [#3](https://github.com/ianchendev/Shambles/issues/3). Prerequisite
 for the cross-platform switcher UI in [#2](https://github.com/ianchendev/Shambles/issues/2).
 
@@ -290,7 +299,11 @@ Two epoch-millisecond fields. `expiresAt` governs the access token and is
 refreshed silently; `refreshTokenExpiresAt` is the one that decides whether you
 face the verification email again.
 
-**The observed refresh window was about 4 days, not 30** [OBS]:
+> **Superseded in part — see the Linux measurement below.** The macOS sample
+> here is reproduced faithfully, but three credential blobs measured on a Linux
+> host show a ~28-day window. The window is not a constant. Read the field.
+
+**The window observed on the macOS test machine was about 4 days** [OBS]:
 
 ```
 expiresAt              1785997239903    2026-08-06 16:20:39.903
@@ -341,9 +354,11 @@ multi-account switcher is that while you use one account, the others sit idle.
 Two consequences:
 
 - [`profiles.EXPIRY_WARN_DAYS = 7`](../shambles/profiles.py) is larger than the
-  whole window, so every profile renders amber permanently. A threshold near 1–1.5
-  days, or wording like "touch this account within N days", would carry real
-  information.
+  whole window **on this sample**, so every profile would render amber
+  permanently. On the 28-day Linux sample the same threshold is comfortable and
+  chips render grey. **Do not change the constant on one measurement** — a
+  window-relative threshold (say, warn below a quarter of the observed window)
+  would serve both regimes, if this is worth solving at all.
 - Rotating three accounts on a weekly cadence means two of them lapse between
   uses. The countdown chip is therefore *more* load-bearing than the README
   assumes, not less — it is the only warning that a parked account is about to
@@ -353,6 +368,36 @@ This is a single sample, on client 2.1.220–2.1.222, from an account that is
 **Max 5x** — see the plan-label warning below for why the credential blob's own
 `subscriptionType` field says otherwise. A Free, Pro or Team account may well be
 issued a different window. **Sample several plan tiers before changing anything.**
+
+### Second measurement: ~28 days on Linux, two Team accounts [OBS]
+
+The instruction above was followed. Three credential blobs on a Linux/WSL2 host,
+client 2.1.222, two **Team** accounts in the same organisation, measured
+2026-08-06:
+
+| Blob | `refreshTokenExpiresAt` − `expiresAt` | Window remaining | Same mint ms |
+|---|---|---|---|
+| live `~/.claude` | 28.41 days | 28.52 days | yes |
+| profile `Admin` | 28.24 days | 28.36 days | yes |
+| profile `Ian-Work` | 28.41 days | 28.52 days | yes |
+
+The methodology above holds — both fields share a mint instant in every blob, so
+the gap plus the access-token lifetime is the window. The *result* does not
+generalise: **3.55 days on macOS/Max 5x, 28.3 days on Linux/Team.**
+
+What cannot be separated from these two samples is which variable moves it —
+plan tier, platform, or a server-side change between the measurements. What is
+settled is the shape of the answer:
+
+- **The window is not a fixed constant, and no code should assume one.**
+  `profiles.refresh_expiry_ms()` already reads `refreshTokenExpiresAt` from the
+  blob rather than deriving it, so the countdown chip is correct under either
+  regime with no change.
+- The **rolling** property is confirmed by both samples and is what actually
+  matters: an account in regular use never approaches its deadline.
+- The parked-account risk is real but its severity is plan- or
+  platform-dependent. On a 4-day window a switcher must warn loudly; on a 28-day
+  window the existing threshold is comfortable.
 
 ### The credential blob's `subscriptionType` is not a reliable plan label
 
@@ -675,9 +720,18 @@ constraint than anything Shambles handles today.
    Recommend explicitly out of scope for v1, and say so in the UI rather than
    silently doing nothing.
 7. **Prefer `claude auth status`** over parsing `~/.claude.json` for the "who is
-   live" check — it is read-only, JSON, and documented-ish.
-8. **Two corrections to the current README**: the refresh window is ~4 days, not
-   30; and MCP OAuth tokens are account-scoped, not shared.
+   live" check — it is read-only, JSON, and documented-ish. **Confirmed on Linux
+   2.1.222** [OBS]: returns `loggedIn`, `authMethod`, `apiProvider`, `email`,
+   `orgId`, `orgName`, `subscriptionType`. That covers everything
+   `state.live_email()` and `profiles.resolve_account()` currently parse out of
+   `~/.claude.json`, and it would work unchanged on macOS where the credential
+   file does not exist. Not yet adopted — it costs a subprocess per refresh and
+   requires `claude` on `PATH`.
+8. **One correction to the current README**: MCP OAuth tokens are
+   account-scoped, not shared. The refresh-window correction listed here
+   originally has itself been superseded — see the second measurement above;
+   ~30 days is right for the Linux/Team samples and ~4 days for the macOS/Max
+   sample, so the docs now say "read the field" rather than naming a number.
 9. **Codex refresh tokens rotate — never restore a stale `auth.json`.** Shambles'
    current model copies a credential file in and out and assumes the copy stays
    valid. That holds for Claude but not for Codex: once a newer refresh has run,

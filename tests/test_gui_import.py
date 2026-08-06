@@ -174,3 +174,12 @@ def test_window_is_quiet_when_config_dir_is_unset(paths, make_app, monkeypatch):
             walk(child)
     walk(app)
     assert "CLAUDE_CONFIG_DIR" not in " ".join(texts)
+
+
+def test_the_expiry_tooltip_does_not_name_a_fixed_window():
+    """Measured windows differ by an order of magnitude between platform/plan
+    samples (docs/token-storage.md). The tooltip sits next to a chip showing
+    the real number, so naming a different one contradicts what is on screen."""
+    from shambles import gui
+    assert "30-day" not in gui.EXPIRY_TOOLTIP
+    assert "30 day" not in gui.EXPIRY_TOOLTIP
