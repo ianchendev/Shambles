@@ -63,7 +63,7 @@ The central design decision, and the one the original implementation got wrong.
 |---|---|---|
 | `~/.claude/.credentials.json` | **account** | The OAuth grant itself |
 | `oauthAccount` in `~/.claude.json` | **account** | Identity: email, org, `accountUuid` |
-| `cachedUsageUtilization` | **account** | Keyed by `accountUuid`; foreign copies show wrong figures |
+| `cachedUsageUtilization` | **account cache** | Keyed by `accountUuid`. Cleared on every switch, never restored — see §1.12 |
 | `~/.claude/projects/` | machine | Keyed by **project path**, not by account |
 | `~/.claude/plugins/`, `file-history/`, `todos/`, `shell-snapshots/`, `session-env/`, `plans/` | machine | Workspace state |
 | `~/.claude/settings.json`, `history.jsonl` | machine | User preferences, prompt history |
@@ -99,7 +99,8 @@ replaced, renamed or deleted. A switch performs exactly three writes:
 
 ```
 1.  ~/.claude/.credentials.json          <- copied from the target profile
-2.  oauthAccount + cachedUsageUtilization in ~/.claude.json   <- spliced
+2.  oauthAccount in ~/.claude.json       <- spliced
+    cachedUsageUtilization               <- deleted, never restored
 3.  ~/.claude-profiles/active            <- marker updated
 ```
 
@@ -225,6 +226,42 @@ Idempotent, and refuses on the legacy layout — ejecting a symlinked
 `~/.claude` would leave a dangling link.
 
 Nothing in eject deletes a credentials file.
+
+### 1.12 Usage figures are a cache, not identity
+
+`cachedUsageUtilization` in `~/.claude.json` is what the VS Code extension reads
+to render the usage meter. It is keyed by `accountUuid` and carries its own
+`fetchedAtMs`.
+
+Shambles originally treated it as identity: stash it with the outgoing profile,
+restore it with the incoming one. That is wrong in a way that only shows up
+after a few switches, and was reported as "the usage display looks a bit off".
+
+Measured on a live installation:
+
+| Source | Fetched at | five_hour / seven_day | Age at switch |
+|---|---|---|---|
+| live `~/.claude.json` | 2026-08-07 09:15 | 22% / 87% | current |
+| stash `Admin` | 2026-08-06 09:39 | 11% / 57% | ~7.5 h |
+| stash `Ian-Work` | 2026-08-06 15:56 | 98% / 92% | — |
+
+Switching to `Admin` at 17:12 restored a blob fetched at 09:39, so the meter
+reported **11% / 57%** — Admin's figures from seven and a half hours earlier —
+until the extension happened to refetch. A running VS Code window makes this
+worse, because nothing forces a refetch at startup.
+
+The original requirement was only that the *outgoing* account's figures must
+not linger under the incoming account. Deleting satisfies that and cannot go
+stale:
+
+```python
+ACCOUNT_KEYS    = ("oauthAccount",)          # identity: carried
+STALE_ON_SWITCH = ("cachedUsageUtilization",)  # cache: always deleted
+```
+
+Nothing stashes the key any more either — there is no point storing a value
+that is wrong by the time it is read back. Claude Code refetches from the
+server, which is the only source that knows the real number.
 
 ### 1.11 Platform reach is narrower than the build matrix suggests
 

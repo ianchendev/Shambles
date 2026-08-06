@@ -258,7 +258,7 @@ machine-scoped and stays shared, which is how Claude Code behaves on its own.
 | Path | Treatment |
 |---|---|
 | `~/.claude/.credentials.json` | swapped — this is the only file that moves |
-| `~/.claude.json` | only `oauthAccount` and `cachedUsageUtilization` spliced |
+| `~/.claude.json` | `oauthAccount` spliced; `cachedUsageUtilization` cleared so the usage meter refetches |
 | `~/.claude/projects/`, `plugins/`, `file-history/`, `settings.json` | **never touched** |
 | `~/.claude-profiles/<Name>/credentials.json` | that account's tokens |
 | `~/.claude-profiles/<Name>/account.json` | that account's identity |
