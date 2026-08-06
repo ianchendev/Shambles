@@ -185,6 +185,14 @@ def test_the_expiry_tooltip_does_not_name_a_fixed_window():
     assert "30 day" not in gui.EXPIRY_TOOLTIP
 
 
+def _all_widgets(widget, found=None):
+    found = [] if found is None else found
+    for child in widget.winfo_children():
+        found.append(child)
+        _all_widgets(child, found)
+    return found
+
+
 def _buttons(widget, found=None):
     found = [] if found is None else found
     for child in widget.winfo_children():
@@ -410,3 +418,62 @@ def test_no_usage_row_when_there_is_nothing_to_show(paths, make_app):
 
     text = " ".join(_buttons(app))
     assert "session" not in text and "week" not in text
+
+
+def test_bars_go_red_at_eighty_percent(paths, make_app):
+    """Matches the extension's own meter, so the two never disagree."""
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import switcher, usage
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com",
+                     extra={"cachedUsageUtilization":
+                            _usage_blob(43, 89, switcher.now_ms())})
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    bars = [w for w in _all_widgets(app) if isinstance(w, tk.Canvas)]
+    assert len(bars) == 2, "expected one canvas per bucket"
+    fills = [b.itemcget(b.find_all()[0], "fill") for b in bars]
+    assert fills[0] == app.theme["accent"], "43% should not be red"
+    assert fills[1] == app.theme["chip_gone_fg"], "89% should be red"
+
+
+def test_a_bar_never_overflows_its_track(paths, make_app):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import gui, switcher
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com",
+                     extra={"cachedUsageUtilization":
+                            _usage_blob(140, 100, switcher.now_ms())})
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    for canvas in [w for w in _all_widgets(app) if isinstance(w, tk.Canvas)]:
+        x0, _y0, x1, _y1 = canvas.coords(canvas.find_all()[0])
+        assert x1 - x0 <= gui.BAR_WIDTH, "over-quota bar drew past its track"
+
+
+def test_bars_sit_in_the_right_hand_column(paths, make_app):
+    """Right-aligned so they line up across cards whatever the name length."""
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import switcher
+
+    make_profile(paths, "A", email="a@example.com", active=True)
+    make_claude_json(paths, email="a@example.com",
+                     extra={"cachedUsageUtilization":
+                            _usage_blob(10, 20, switcher.now_ms())})
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    canvas = [w for w in _all_widgets(app) if isinstance(w, tk.Canvas)][0]
+    email = [w for w in _all_widgets(app)
+             if isinstance(w, tk.Label) and "a@example.com" in str(w.cget("text"))][0]
+    assert canvas.winfo_rootx() > email.winfo_rootx(), "bar is not to the right"

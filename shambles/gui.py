@@ -41,6 +41,14 @@ USAGE_STYLES = {
 
 USAGE_LABELS = {"session": "session", "week": "week"}
 
+#: Track geometry for a usage bar, in pixels before DPI scaling.
+BAR_WIDTH, BAR_HEIGHT = 104, 7
+
+#: Fill colour per display severity. Red past usage.RED_AT, matching the
+#: extension's meter; amber only when Claude Code itself flags something below
+#: that; otherwise the ordinary accent.
+BAR_FILL = {"ok": "accent", "soon": "chip_soon_fg", "gone": "chip_gone_fg"}
+
 USAGE_TOOLTIP = (
     "{label} usage: {percent}%{resets}\n\n"
     "Read from the figures Claude Code caches for this account. {freshness}"
@@ -406,12 +414,12 @@ class ShamblesApp(tk.Tk):
                        "CLI."),
                  ).pack(fill="x", pady=(GAP_XS, 0))
 
-    def _render_usage(self, card, bg, profile):
-        """Session and weekly figures, or nothing at all.
+    def _render_usage(self, parent, bg, profile):
+        """Session and weekly bars, right-aligned under the card's controls.
 
         Nothing is the honest answer more often than it looks: a switch clears
         the cache so Claude Code refetches, and a profile that has never been
-        active has none stashed. An empty row beats a number that might be
+        active has none stashed. An empty column beats a number that might be
         wrong.
         """
         if not profile.usage:
@@ -421,22 +429,30 @@ class ShamblesApp(tk.Tk):
         stale = profile.usage.is_stale(now)
         age = profile.usage.age_label(now)
 
-        row = tk.Frame(card, bg=bg)
-        row.pack(fill="x", pady=(GAP_XS + 2, 0))
-
         for bar in profile.usage.bars:
-            fg_key, bg_key = USAGE_STYLES.get(bar.severity, USAGE_STYLES["gone"])
-            # A stale figure loses its colour: an amber chip that is a day old
-            # says "act now" about a number nobody has checked since.
-            fg = t["muted"] if stale else t[fg_key]
-            chip_bg = t["card"] if stale else t[bg_key]
-            label = f" {USAGE_LABELS.get(bar.label, bar.label)} {bar.percent}% "
-            chip = tk.Label(row, text=label, font=t.chip, bg=chip_bg, fg=fg,
-                            padx=GAP_XS, pady=1)
-            chip.pack(side="left", padx=(0, GAP_XS))
+            row = tk.Frame(parent, bg=bg)
+            row.pack(anchor="e", pady=(GAP_XS, 0))
+
+            tk.Label(row, text=USAGE_LABELS.get(bar.label, bar.label),
+                     font=t.chip, bg=bg,
+                     fg=t["faint"] if stale else t["muted"],
+                     width=7, anchor="w").pack(side="left")
+
+            track = tk.Canvas(row, width=BAR_WIDTH, height=BAR_HEIGHT,
+                              bg=t["border"], highlightthickness=0, bd=0)
+            track.pack(side="left", padx=(0, GAP_XS))
+            fill = t["faint"] if stale else t[BAR_FILL[bar.display_severity]]
+            width = round(BAR_WIDTH * bar.fill)
+            if width:
+                track.create_rectangle(0, 0, width, BAR_HEIGHT,
+                                       fill=fill, width=0)
+
+            tk.Label(row, text=f"{bar.percent}%", font=t.chip, bg=bg,
+                     fg=t["faint"] if stale else t["text"],
+                     width=5, anchor="e").pack(side="left")
 
             resets = bar.resets_label()
-            Tooltip(chip, USAGE_TOOLTIP.format(
+            Tooltip(row, USAGE_TOOLTIP.format(
                 label=USAGE_LABELS.get(bar.label, bar.label).capitalize(),
                 percent=bar.percent,
                 resets=f", resets {resets}" if resets else "",
@@ -444,8 +460,8 @@ class ShamblesApp(tk.Tk):
             ), t)
 
         if stale and age:
-            tk.Label(row, text=age, font=t.chip, bg=bg,
-                     fg=t["faint"]).pack(side="left")
+            tk.Label(parent, text=age, font=t.chip, bg=bg,
+                     fg=t["faint"]).pack(anchor="e", pady=(GAP_XS - 2, 0))
 
     def _render_card(self, profile):
         """One profile as a bordered card, accented when it is the active one."""
@@ -464,7 +480,15 @@ class ShamblesApp(tk.Tk):
         card = tk.Frame(shell, bg=bg, padx=GAP_M, pady=GAP_M)
         card.pack(side="left", fill="both", expand=True)
 
-        top = tk.Frame(card, bg=bg)
+        # Two columns. Identity reads down the left; controls and the usage
+        # bars stack down the right, so the bars line up across every card
+        # regardless of how long a profile name or email happens to be.
+        right = tk.Frame(card, bg=bg)
+        right.pack(side="right", anchor="ne")
+        left = tk.Frame(card, bg=bg)
+        left.pack(side="left", fill="both", expand=True)
+
+        top = tk.Frame(left, bg=bg)
         top.pack(fill="x")
 
         name = tk.Label(top, text=profile.name, font=t.name, bg=bg,
@@ -477,11 +501,13 @@ class ShamblesApp(tk.Tk):
             tk.Label(top, text="ACTIVE", font=t.caption, bg=bg,
                      fg=t["accent"]).pack(side="left", padx=(GAP_S, 0))
         else:
-            ttk.Button(top, text="Switch", style="Switch.TButton",
+            controls = tk.Frame(right, bg=bg)
+            controls.pack(anchor="e")
+            ttk.Button(controls, text="Switch", style="Switch.TButton",
                        command=lambda p=profile: self.on_switch(p.name)).pack(side="right")
             # Inactive profiles only. The active one has no ✕ at all, so the
             # login you are currently using cannot be deleted by a misclick.
-            remove = ttk.Button(top, text="✕", style="Danger.TButton", width=2,
+            remove = ttk.Button(controls, text="✕", style="Danger.TButton", width=2,
                                 command=lambda p=profile: self.on_remove(p.name))
             # Sits inboard of Switch: the rightmost slot is the easiest to hit,
             # and that should belong to the action used constantly rather than
@@ -490,12 +516,12 @@ class ShamblesApp(tk.Tk):
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
                             "deleted and that account needs a new /login.", t)
 
-        bottom = tk.Frame(card, bg=bg)
+        bottom = tk.Frame(left, bg=bg)
         bottom.pack(fill="x", pady=(GAP_XS, 0))
         tk.Label(bottom, text=profile.email or "unknown", font=t.body,
                  bg=bg, fg=t["muted"]).pack(side="left")
 
-        self._render_usage(card, bg, profile)
+        self._render_usage(right, bg, profile)
 
         label = profiles.expiry_label(profile)
         if label:

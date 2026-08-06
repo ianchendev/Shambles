@@ -29,14 +29,58 @@ SEVERITY_FALLBACK = "gone"
 #: Beyond this a stashed figure is too old to show without qualification.
 STALE_AFTER_MS = 60 * 60 * 1000
 
+#: A bar goes red at or above this percentage, matching the VS Code
+#: extension's own meter so the two never disagree on screen. This is a floor,
+#: not a replacement for Claude Code's severity: a bucket it flags below the
+#: threshold still renders amber rather than being painted normal.
+RED_AT = 80
+
+
+def bar_severity(percent, claude_severity) -> str:
+    """Colour key for a bar, from its value and Claude Code's own verdict.
+
+    ``claude_severity`` is the raw string out of the cache -- "normal",
+    "warning" -- not an already-mapped colour key.
+    """
+    try:
+        if float(percent) >= RED_AT:
+            return "gone"
+    except (TypeError, ValueError):
+        return SEVERITY_FALLBACK
+    return SEVERITY.get(claude_severity, SEVERITY_FALLBACK)
+
+
+def fill_fraction(percent) -> float:
+    """How much of the track to fill, clamped to 0..1.
+
+    Usage can exceed 100 once an account is over quota; the bar saturates
+    rather than drawing past its own width.
+    """
+    try:
+        return max(0.0, min(1.0, float(percent) / 100.0))
+    except (TypeError, ValueError):
+        return 0.0
+
 
 @dataclass(frozen=True)
 class Bar:
-    """One usage bucket, ready to render."""
+    """One usage bucket, ready to render.
+
+    ``severity`` is Claude Code's own raw verdict. The colour actually drawn
+    comes from :attr:`display_severity`, which applies the 80% floor on top.
+    """
     label: str
     percent: int
-    severity: str
+    severity: str | None = None
     resets_at: str | None = None
+
+    @property
+    def display_severity(self) -> str:
+        return bar_severity(self.percent, self.severity)
+
+    @property
+    def fill(self) -> float:
+        return fill_fraction(self.percent)
 
     def resets_label(self) -> str | None:
         """``resets_at`` as something a person can read, or None."""
@@ -111,7 +155,7 @@ def parse(blob) -> Usage:
         found[label] = Bar(
             label=label,
             percent=int(percent),
-            severity=SEVERITY.get(entry.get("severity"), SEVERITY_FALLBACK),
+            severity=entry.get("severity"),
             resets_at=entry.get("resets_at"),
         )
 
@@ -125,8 +169,9 @@ def parse(blob) -> Usage:
         percent = bucket.get("utilization")
         if not isinstance(percent, (int, float)):
             continue
-        found[label] = Bar(label=label, percent=int(percent),
-                           severity=SEVERITY_FALLBACK,
+        # No `limits` entry means no severity to trust, so the value alone
+        # decides: red past the threshold, otherwise unremarkable.
+        found[label] = Bar(label=label, percent=int(percent), severity="normal",
                            resets_at=bucket.get("resets_at"))
 
     order = [lbl for lbl in ("session", "week") if lbl in found]
