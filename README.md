@@ -63,6 +63,35 @@ inside WSL.
 Administrator only if you are migrating from a pre-1.0 layout, which used
 symlinks. Ordinary switching needs no special privileges.
 
+## CLI or VS Code extension — both
+
+Shambles works below either one. The `claude` CLI and the VS Code extension are
+the same product reading the same two paths, so swapping the login swaps it for
+both at once:
+
+```
+~/.claude/.credentials.json      the login
+~/.claude.json                   oauthAccount, projects, MCP servers
+```
+
+Verified by running the standalone CLI and watching it read and write the same
+`~/.claude` the extension uses.
+
+A **running** session is unaffected either way — it holds the token it loaded at
+startup. After switching, start a new `claude` session, or run *Developer:
+Reload Window* in VS Code.
+
+### Why not just use `CLAUDE_CONFIG_DIR`?
+
+Claude Code honours `CLAUDE_CONFIG_DIR`, and pointing it somewhere per account
+looks like it would do the same job without any of this. It does not: it moves
+the **entire** config tree, so each account gets its own `projects/` directory
+and your session history splits per account. That is precisely the bug this
+tool used to have and no longer does.
+
+It also does not help inside VS Code, where the extension host does not see
+shell environment variables.
+
 ## Using it
 
 ### First run
