@@ -3,7 +3,8 @@
 ``~/.claude`` stays exactly where it is. Only two things move:
 
 * ``~/.claude/.credentials.json`` -- the OAuth tokens
-* ``oauthAccount`` and ``cachedUsageUtilization`` in ``~/.claude.json``
+* ``oauthAccount`` in ``~/.claude.json``; ``cachedUsageUtilization`` is
+  cleared rather than carried, since it is a cache that goes stale
 
 Everything else in ``~/.claude`` -- session history, plugins, file history,
 todos, settings -- is machine-scoped and shared across accounts, which is how
@@ -60,8 +61,14 @@ def stash_live_login(paths, name: str, *, now_ms_fn=now_ms, sleep=time.sleep) ->
     paths.ensure_profile(name)
     if paths.live_credentials.exists():
         copy_secret(paths.live_credentials, paths.credentials(name), sleep=sleep)
-    account = configjson.extract_account_keys(
-        configjson.load(paths.claude_json))
+    config = configjson.load(paths.claude_json)
+    account = configjson.extract_account_keys(config)
+    # Kept for this profile's card only, under a key of our own so it can never
+    # be mistaken for something to splice back. configjson.STALE_ON_SWITCH
+    # explains why a cached figure must not return to ~/.claude.json.
+    cached = config.get("cachedUsageUtilization")
+    if isinstance(cached, dict):
+        account["usage"] = cached
     configjson.write_sidecar(paths.account(name), account, now_ms_fn())
 
 

@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import configjson
+from . import configjson, usage as usage_mod
 from .errors import ProfileNameError
 
 CREDENTIALS_NAME = "credentials.json"
@@ -48,6 +48,9 @@ class Profile:
     #: Whole days until that moment, negative once past. Computed against the
     #: clock passed to :func:`discover`, never read from the system here.
     days_left: int | None = None
+    #: Session and weekly figures for the card. Live for the active profile,
+    #: stashed-and-aged for the rest; empty when neither is available.
+    usage: "usage_mod.Usage" = usage_mod.EMPTY
 
     @property
     def warning(self) -> str | None:
@@ -103,6 +106,22 @@ def token_state(profile_dir, now_ms: int) -> str:
     return TOKEN_OK
 
 
+def resolve_usage(paths, name: str, active_name: str | None):
+    """Usage for one profile.
+
+    The active profile reads ``~/.claude.json``, which Claude Code keeps
+    current. Everyone else reads what was stashed when they were last active,
+    which the UI renders with its age attached -- see
+    :mod:`shambles.usage` for why a stashed figure is never trusted silently.
+    """
+    if active_name is not None and name == active_name:
+        live = usage_mod.parse(
+            configjson.load(paths.claude_json).get("cachedUsageUtilization"))
+        if live:
+            return live
+    return usage_mod.parse(configjson.load(paths.account(name)).get("usage"))
+
+
 def resolve_account(paths, name: str, active_name: str | None) -> dict:
     """Best-known ``oauthAccount`` blob for a profile; ``{}`` if unknown.
 
@@ -149,6 +168,7 @@ def discover(paths, active_name: str | None, now_ms: int) -> list[Profile]:
                 token_state=token_state(directory, now_ms),
                 refresh_expires_ms=expires,
                 days_left=days,
+                usage=resolve_usage(paths, name, active_name),
             )
         )
     return found

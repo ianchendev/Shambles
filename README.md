@@ -291,6 +291,36 @@ created `700`, and every credentials file is written `600`. On Windows `chmod`
 cannot express either, so there the files rely on the user profile's own ACLs —
 the same protection Claude Code's own `.credentials.json` gets.
 
+## Usage at a glance
+
+Each card carries the two figures that decide which account to reach for:
+
+```
+Admin                    ACTIVE
+admin@example.com   28d   session 22%   week 87%
+
+Ian-Work           [✕] [Switch]
+me@example.com      27d   session 98%   week 92%   17h ago
+```
+
+Colour follows Claude Code's own severity — it decides what counts as a
+warning, not Shambles.
+
+**The active account's figures are live**, read from the cache Claude Code
+keeps current as you work. **Every other account shows what it last reported**,
+greyed out with its age beside it, because nothing has signed in as that
+account since. A number with `17h ago` next to it is a hint, not a reading.
+
+Two cases show no figures at all, both deliberate:
+
+- **Just after a switch.** Shambles clears the usage cache so Claude Code
+  refetches for the account you moved to. Figures reappear once it does.
+- **An account never used since you saved it.** Nothing has been reported yet.
+
+Showing nothing is the honest answer there. An earlier version restored each
+profile's stashed figures into `~/.claude.json` on switch, which made the VS
+Code meter display hours-old numbers as though they were current.
+
 ## Checking token health
 
 Each row shows a countdown chip beside the email:

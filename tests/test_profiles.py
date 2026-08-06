@@ -189,3 +189,68 @@ def test_validate_rejects_duplicates_case_insensitively():
 def test_validate_rejects_none():
     with pytest.raises(ProfileNameError):
         profiles.validate_profile_name(None, [])
+
+
+# ---- usage figures on each card -----------------------------------------
+
+def test_the_active_profile_shows_live_usage(paths):
+    """Read from ~/.claude.json, which Claude Code keeps current."""
+    make_profile(paths, "Work", email="work@example.com")
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": {
+            "fetchedAtMs": NOW, "accountUuid": "uuid-a",
+            "utilization": {"limits": [
+                {"kind": "session", "percent": 22, "severity": "normal"},
+                {"kind": "weekly_all", "percent": 87, "severity": "warning"}]}}})
+
+    p = profiles.discover(paths, active_name="Work", now_ms=NOW)[0]
+
+    assert [(b.label, b.percent) for b in p.usage.bars] == [
+        ("session", 22), ("week", 87)]
+    assert not p.usage.is_stale(NOW)
+
+
+def test_an_inactive_profile_shows_what_it_stashed(paths):
+    """So you can see which account has headroom before switching to it."""
+    d = make_profile(paths, "Other", email="other@example.com")
+    write_json(paths.account("Other"), {
+        "oauthAccount": account("other@example.com"),
+        "usage": {"fetchedAtMs": NOW - 7 * 3_600_000,
+                  "utilization": {"limits": [
+                      {"kind": "weekly_all", "percent": 92,
+                       "severity": "warning"}]}},
+        "stashed_at": NOW})
+
+    p = [x for x in profiles.discover(paths, active_name="Work", now_ms=NOW)
+         if x.name == "Other"][0]
+
+    assert [(b.label, b.percent) for b in p.usage.bars] == [("week", 92)]
+    assert p.usage.is_stale(NOW), "a 7h-old figure must not read as current"
+    assert p.usage.age_label(NOW) == "7h ago"
+
+
+def test_a_profile_with_no_stashed_usage_shows_none(paths):
+    """Right after a switch the cache is cleared, so there is nothing to show
+    until Claude Code refetches. Showing nothing beats showing something wrong."""
+    make_profile(paths, "Fresh", email="fresh@example.com")
+    p = profiles.discover(paths, active_name=None, now_ms=NOW)[0]
+    assert not p.usage
+
+
+def test_the_active_profile_prefers_live_over_its_own_stash(paths):
+    make_profile(paths, "Work", email="work@example.com")
+    write_json(paths.account("Work"), {
+        "oauthAccount": account("work@example.com"),
+        "usage": {"fetchedAtMs": NOW - 99 * 3_600_000,
+                  "utilization": {"limits": [
+                      {"kind": "session", "percent": 3, "severity": "normal"}]}},
+        "stashed_at": NOW})
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": {
+            "fetchedAtMs": NOW,
+            "utilization": {"limits": [
+                {"kind": "session", "percent": 44, "severity": "normal"}]}}})
+
+    p = profiles.discover(paths, active_name="Work", now_ms=NOW)[0]
+
+    assert p.usage.bars[0].percent == 44, "showed a stale stash over live data"

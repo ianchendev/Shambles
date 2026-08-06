@@ -398,3 +398,48 @@ def test_switching_still_works_after_a_removal(paths):
 
     assert state.inspect(paths).profile == "Third"
     assert state.live_email(paths) == "third@example.com"
+
+
+# ---- usage is stashed for display, never for restoring ------------------
+
+def test_switching_away_stashes_the_usage_figures(paths):
+    """So an idle profile's card can still say what it looked like."""
+    _two_profiles(paths)
+    configjson.write_atomic(paths.claude_json, {
+        **configjson.load(paths.claude_json),
+        "cachedUsageUtilization": {
+            "fetchedAtMs": NOW, "utilization": {"limits": [
+                {"kind": "weekly_all", "percent": 92, "severity": "warning"}]}}})
+
+    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+
+    stashed = configjson.load(paths.account("Work")).get("usage")
+    assert stashed, "Work's figures were not kept for its card"
+    assert stashed["utilization"]["limits"][0]["percent"] == 92
+
+
+def test_the_stashed_usage_is_never_spliced_back(paths):
+    """The whole point of the split: a card may show a stale number with its
+    age attached, but ~/.claude.json must never receive one."""
+    _two_profiles(paths)
+    configjson.write_atomic(paths.account("Personal"), {
+        "oauthAccount": {"emailAddress": "me@example.com"},
+        "usage": {"fetchedAtMs": 1, "utilization": {"limits": [
+            {"kind": "session", "percent": 3, "severity": "normal"}]}}})
+
+    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+
+    assert "cachedUsageUtilization" not in configjson.load(paths.claude_json)
+
+
+def test_stashing_with_no_usage_present_is_fine(paths):
+    """Right after a previous switch the cache is gone, so there is nothing to
+    capture. That must not fail the switch."""
+    _two_profiles(paths)
+    cfg = configjson.load(paths.claude_json)
+    cfg.pop("cachedUsageUtilization", None)
+    configjson.write_atomic(paths.claude_json, cfg)
+
+    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+
+    assert configjson.load(paths.account("Work")).get("usage") in (None, {})

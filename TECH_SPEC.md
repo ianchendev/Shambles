@@ -259,9 +259,17 @@ ACCOUNT_KEYS    = ("oauthAccount",)          # identity: carried
 STALE_ON_SWITCH = ("cachedUsageUtilization",)  # cache: always deleted
 ```
 
-Nothing stashes the key any more either — there is no point storing a value
-that is wrong by the time it is read back. Claude Code refetches from the
-server, which is the only source that knows the real number.
+The key is still captured per profile, but under Shambles' own `usage` name in
+`account.json` and **only for display**. `configjson.read_sidecar` returns
+`ACCOUNT_KEYS` alone, so nothing under `usage` can reach `~/.claude.json` even
+by accident, and `STALE_ON_SWITCH` clears the config key regardless.
+
+`shambles.usage` parses that blob into at most two bars, preferring the cache's
+`limits` array because it carries Claude Code's own `severity` — Shambles
+derives no thresholds of its own, and an unrecognised severity renders as the
+worst case rather than guessing. The active profile reads the live config; the
+rest read their stash and render greyed out with an age label, so a figure
+nobody has refreshed cannot pass for a current one.
 
 ### 1.11 Platform reach is narrower than the build matrix suggests
 

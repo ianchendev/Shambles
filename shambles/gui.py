@@ -5,7 +5,7 @@ import signal
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from . import configjson, eject, migrate, profiles, state, switcher
+from . import configjson, eject, migrate, profiles, state, switcher, usage
 from .errors import ShamblesError
 from .paths import Paths
 from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
@@ -30,6 +30,28 @@ EXPIRY_TOOLTIP = (
 )
 
 RENAME_HINT = "Double-click to rename"
+
+#: Usage chips reuse the expiry palette: Claude Code's "normal" is grey,
+#: "warning" amber, anything else red.
+USAGE_STYLES = {
+    "ok": ("chip_ok_fg", "chip_ok_bg"),
+    "soon": ("chip_soon_fg", "chip_soon_bg"),
+    "gone": ("chip_gone_fg", "chip_gone_bg"),
+}
+
+USAGE_LABELS = {"session": "session", "week": "week"}
+
+USAGE_TOOLTIP = (
+    "{label} usage: {percent}%{resets}\n\n"
+    "Read from the figures Claude Code caches for this account. {freshness}"
+)
+
+FRESH_NOTE = "Updated by Claude Code as you work."
+STALE_NOTE = (
+    "Last updated {age}, while this account was active — it has not been "
+    "signed in since, so the real figure may have moved on. Switch to it to "
+    "see a current number."
+)
 
 #: Gap between a widget and its tooltip, and the margin kept from screen edges.
 TOOLTIP_OFFSET = 12
@@ -384,6 +406,47 @@ class ShamblesApp(tk.Tk):
                        "CLI."),
                  ).pack(fill="x", pady=(GAP_XS, 0))
 
+    def _render_usage(self, card, bg, profile):
+        """Session and weekly figures, or nothing at all.
+
+        Nothing is the honest answer more often than it looks: a switch clears
+        the cache so Claude Code refetches, and a profile that has never been
+        active has none stashed. An empty row beats a number that might be
+        wrong.
+        """
+        if not profile.usage:
+            return
+        t = self.theme
+        now = switcher.now_ms()
+        stale = profile.usage.is_stale(now)
+        age = profile.usage.age_label(now)
+
+        row = tk.Frame(card, bg=bg)
+        row.pack(fill="x", pady=(GAP_XS + 2, 0))
+
+        for bar in profile.usage.bars:
+            fg_key, bg_key = USAGE_STYLES.get(bar.severity, USAGE_STYLES["gone"])
+            # A stale figure loses its colour: an amber chip that is a day old
+            # says "act now" about a number nobody has checked since.
+            fg = t["muted"] if stale else t[fg_key]
+            chip_bg = t["card"] if stale else t[bg_key]
+            label = f" {USAGE_LABELS.get(bar.label, bar.label)} {bar.percent}% "
+            chip = tk.Label(row, text=label, font=t.chip, bg=chip_bg, fg=fg,
+                            padx=GAP_XS, pady=1)
+            chip.pack(side="left", padx=(0, GAP_XS))
+
+            resets = bar.resets_label()
+            Tooltip(chip, USAGE_TOOLTIP.format(
+                label=USAGE_LABELS.get(bar.label, bar.label).capitalize(),
+                percent=bar.percent,
+                resets=f", resets {resets}" if resets else "",
+                freshness=STALE_NOTE.format(age=age) if stale else FRESH_NOTE,
+            ), t)
+
+        if stale and age:
+            tk.Label(row, text=age, font=t.chip, bg=bg,
+                     fg=t["faint"]).pack(side="left")
+
     def _render_card(self, profile):
         """One profile as a bordered card, accented when it is the active one."""
         t = self.theme
@@ -431,6 +494,8 @@ class ShamblesApp(tk.Tk):
         bottom.pack(fill="x", pady=(GAP_XS, 0))
         tk.Label(bottom, text=profile.email or "unknown", font=t.body,
                  bg=bg, fg=t["muted"]).pack(side="left")
+
+        self._render_usage(card, bg, profile)
 
         label = profiles.expiry_label(profile)
         if label:

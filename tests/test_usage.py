@@ -1,0 +1,122 @@
+"""Reading the usage figures Claude Code caches.
+
+Shapes here are taken from a live ~/.claude.json on client 2.1.222.
+"""
+
+from helpers import NOW
+from shambles import usage
+
+LIVE = {
+    "fetchedAtMs": NOW,
+    "accountUuid": "uuid-a",
+    "utilization": {
+        "five_hour": {"utilization": 22,
+                      "resets_at": "2026-08-07T04:00:00.355981+00:00"},
+        "seven_day": {"utilization": 87,
+                      "resets_at": "2026-08-10T14:00:00.356000+00:00"},
+        "limits": [
+            {"kind": "session", "group": "session", "percent": 22,
+             "severity": "normal",
+             "resets_at": "2026-08-07T04:00:00.355981+00:00"},
+            {"kind": "weekly_all", "group": "weekly", "percent": 87,
+             "severity": "warning",
+             "resets_at": "2026-08-10T14:00:00.356000+00:00"},
+        ],
+    },
+}
+
+
+def test_reads_both_buckets_in_order():
+    u = usage.parse(LIVE)
+    assert [b.label for b in u.bars] == ["session", "week"]
+    assert [b.percent for b in u.bars] == [22, 87]
+
+
+def test_uses_claude_codes_own_severity():
+    """Not a threshold of our own -- the extension already decided."""
+    u = usage.parse(LIVE)
+    assert u.bars[0].severity == "ok"      # "normal"
+    assert u.bars[1].severity == "soon"    # "warning"
+
+
+def test_an_unknown_severity_renders_as_the_worst_case():
+    blob = {"utilization": {"limits": [
+        {"kind": "session", "percent": 5, "severity": "some_new_thing"}]}}
+    assert usage.parse(blob).bars[0].severity == "gone"
+
+
+def test_falls_back_to_the_utilization_buckets_without_limits():
+    blob = {"fetchedAtMs": NOW, "utilization": {
+        "five_hour": {"utilization": 40},
+        "seven_day": {"utilization": 60},
+    }}
+    u = usage.parse(blob)
+    assert [(b.label, b.percent) for b in u.bars] == [("session", 40), ("week", 60)]
+
+
+def test_per_model_buckets_are_ignored():
+    """A card has room for two numbers, not six."""
+    blob = {"utilization": {"limits": [
+        {"kind": "session", "percent": 1, "severity": "normal"},
+        {"kind": "weekly_all", "percent": 2, "severity": "normal"},
+        {"kind": "weekly_opus", "percent": 99, "severity": "warning"},
+        {"kind": "weekly_sonnet", "percent": 98, "severity": "warning"},
+    ]}}
+    assert [b.label for b in usage.parse(blob).bars] == ["session", "week"]
+
+
+def test_missing_or_junk_input_is_empty_not_an_error():
+    for blob in (None, {}, [], "nope", {"utilization": None},
+                 {"utilization": {"limits": "not a list"}}):
+        assert not usage.parse(blob), blob
+
+
+def test_a_partial_bucket_is_skipped_rather_than_shown_as_zero():
+    blob = {"utilization": {"limits": [
+        {"kind": "session", "percent": None, "severity": "normal"},
+        {"kind": "weekly_all", "percent": 87, "severity": "warning"}]}}
+    bars = usage.parse(blob).bars
+    assert [b.label for b in bars] == ["week"]
+
+
+# ---- age, which is what makes a stashed figure safe to show --------------
+
+def test_age_label_reads_naturally():
+    HOUR = 3_600_000
+    cases = [(0, "just now"), (10 * 60_000, "10m ago"),
+             (3 * HOUR, "3h ago"), (50 * HOUR, "2d ago")]
+    for age, expected in cases:
+        u = usage.Usage(bars=(), fetched_at_ms=NOW - age)
+        assert u.age_label(NOW) == expected, age
+
+
+def test_freshly_fetched_is_not_stale():
+    u = usage.parse({**LIVE, "fetchedAtMs": NOW - 60_000})
+    assert not u.is_stale(NOW)
+
+
+def test_an_hours_old_figure_is_stale():
+    """The reported bug: a switch restored a 7h-old cache and it read as
+    current. Anything shown from a stash has to say how old it is."""
+    u = usage.parse({**LIVE, "fetchedAtMs": NOW - 7 * 3_600_000})
+    assert u.is_stale(NOW)
+    assert u.age_label(NOW) == "7h ago"
+
+
+def test_no_timestamp_means_no_age_claim():
+    u = usage.parse({"utilization": LIVE["utilization"]})
+    assert u.age_ms(NOW) is None
+    assert u.age_label(NOW) is None
+    assert not u.is_stale(NOW)
+
+
+def test_resets_label_is_human_readable():
+    u = usage.parse(LIVE)
+    assert "Aug" in u.bars[0].resets_label()
+
+
+def test_a_broken_resets_timestamp_does_not_raise():
+    blob = {"utilization": {"limits": [
+        {"kind": "session", "percent": 1, "severity": "normal",
+         "resets_at": "not a date"}]}}
+    assert usage.parse(blob).bars[0].resets_label() is None
