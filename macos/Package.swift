@@ -10,9 +10,14 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "ShamblesKit", targets: ["ShamblesKit"]),
+        .library(name: "ShamblesUI", targets: ["ShamblesUI"]),
+        .executable(name: "ShamblesApp", targets: ["ShamblesApp"]),
     ],
     targets: [
         .target(name: "ShamblesKit"),
+        .target(name: "ShamblesUI", dependencies: ["ShamblesKit"]),
+        .executableTarget(name: "ShamblesApp",
+                          dependencies: ["ShamblesKit", "ShamblesUI"]),
         .testTarget(
             name: "ShamblesKitTests",
             dependencies: ["ShamblesKit"],

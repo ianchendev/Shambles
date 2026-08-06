@@ -256,3 +256,41 @@ def test_a_parked_profile_shows_its_own_email_not_the_active_one(tmp_path):
         g for g in build(tmp_path).groups if g.provider == "claude").accounts}
     assert by_name["Work"].email == "work@example.com"
     assert by_name["Personal"].email == "personal@example.com"
+
+
+# -- command line dispatch ----------------------------------------------------
+
+
+def test_a_subcommand_after_a_global_flag_still_reaches_the_cli(tmp_path, capsys):
+    """Regression: dispatching on argv[0] alone sent `--home X list` to the
+    window, which then failed on a machine without Tkinter. Native shells pass
+    flags in exactly this order."""
+    from shambles.__main__ import main
+    make_profile(tmp_path, "claude", "Work", blob=claude_blob(), active=True)
+
+    assert main(["--home", str(tmp_path), "list", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["version"] == snap.CONTRACT_VERSION
+
+
+def test_the_json_flag_emits_one_line_for_easy_piping(tmp_path, capsys):
+    from shambles.__main__ import main
+    main(["--home", str(tmp_path), "list", "--json"])
+    assert len(capsys.readouterr().out.strip().splitlines()) == 1
+
+
+@pytest.mark.parametrize("argv", [
+    ["--home", "{home}", "list", "--json"],   # flag before the subcommand
+    ["list", "--home", "{home}", "--json"],   # and after
+])
+def test_home_is_honoured_from_either_position(argv, tmp_path, capsys):
+    """A shared argparse argument defined on both the parent and the subparser
+    is written twice, and the subparser's default wins. Suppressing the default
+    is what keeps both orders working — native shells use the first."""
+    from shambles.__main__ import main
+    make_profile(tmp_path, "claude", "Work", blob=claude_blob(), active=True)
+
+    assert main([a.format(home=str(tmp_path)) for a in argv]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    claude = next(g for g in payload["groups"] if g["provider"] == "claude")
+    assert [a["name"] for a in claude["accounts"]] == ["Work"]

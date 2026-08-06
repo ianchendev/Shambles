@@ -33,7 +33,8 @@ def _now_ms() -> int:
 
 
 def cmd_list(args) -> int:
-    home = Path(args.home).expanduser() if args.home else Path.home()
+    override = getattr(args, "home", None)
+    home = Path(override).expanduser() if override else Path.home()
     snap = snapshot_mod.build(home=home, platform=_platform(),
                               now_ms=_now_ms())
     payload = snapshot_mod.to_dict(snap)
@@ -71,7 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
     # subcommand; the test suite passes it to keep every run off the real
     # ~/.claude, and it is the only way to exercise the CLI safely.
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--home", help=argparse.SUPPRESS)
+    # default=SUPPRESS is load-bearing, not tidiness. A shared argument defined
+    # on both the parent and the subparser is written twice during parsing, and
+    # the subparser's default overwrites whatever the top level captured -- so
+    # `shambles --home X list` silently lost X while `shambles list --home X`
+    # worked. Suppressing the default means the name only appears once it has
+    # actually been supplied, from either position.
+    common.add_argument("--home", default=argparse.SUPPRESS,
+                        help=argparse.SUPPRESS)
 
     parser = argparse.ArgumentParser(
         prog="shambles", parents=[common],

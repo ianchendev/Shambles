@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class AccountsViewModelTests: XCTestCase {
 
-    func snapshot(groups: [Group] = []) throws -> Snapshot {
+    func snapshot(groups: [AccountGroup] = []) throws -> Snapshot {
         try Snapshot.makeDecoder().decode(Snapshot.self, from: ContractTests.sample)
     }
 

@@ -32,7 +32,7 @@ public final class AccountsViewModel {
     }
 
     /// Every group in the current snapshot, or nothing while loading or failed.
-    public var groups: [Group] {
+    public var groups: [AccountGroup] {
         if case .loaded(let snapshot) = state { return snapshot.groups }
         return []
     }

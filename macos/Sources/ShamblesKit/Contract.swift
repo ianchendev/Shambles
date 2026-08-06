@@ -9,9 +9,9 @@ import Foundation
 /// only one of them is tested.
 public struct Snapshot: Decodable, Sendable, Equatable {
     public let version: Int
-    public let groups: [Group]
+    public let groups: [AccountGroup]
 
-    public init(version: Int, groups: [Group]) {
+    public init(version: Int, groups: [AccountGroup]) {
         self.version = version
         self.groups = groups
     }
@@ -22,7 +22,7 @@ public struct Snapshot: Decodable, Sendable, Equatable {
 /// Terminal and VS Code share one store, so they arrive as one group carrying
 /// two surfaces. The panel shows those surfaces as pills rather than
 /// explaining the coupling in prose.
-public struct Group: Decodable, Sendable, Equatable, Identifiable {
+public struct AccountGroup: Decodable, Sendable, Equatable, Identifiable {
     public let provider: String
     public let displayName: String
     public let surfaces: [Surface]

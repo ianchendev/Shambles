@@ -56,7 +56,11 @@ def main(argv=None) -> int:
     # A subcommand means the caller wants an answer on stdout, not a window.
     # Checked before Tkinter is imported so the CLI works on a headless box,
     # over SSH, and inside WSL -- the one place a Windows tray app cannot help.
-    if argv and argv[0] in COMMANDS:
+    #
+    # Scans every token rather than only the first: global flags may precede
+    # the subcommand, as in `shambles --home /tmp/x list --json`. Testing
+    # argv[0] alone sent that to the window and failed on missing Tkinter.
+    if any(token in COMMANDS for token in argv):
         from shambles.app.cli import main as cli_main
         return cli_main(argv)
 
