@@ -544,8 +544,8 @@ Implementing real Windows ACLs would require `pywin32` or shelling out to
   and test `accessToken` for presence.
 - **Profile names are validated** against `/ \ : * ? " < > |`, the union of
   POSIX and Windows illegal characters, preventing path traversal via a name.
-- **Deletion is minimal and exhaustively enumerable.** Five `unlink` calls exist
-  in the entire codebase; there is no `rmtree` and no delete-profile button:
+- **Deletion is minimal and exhaustively enumerable.** Five `unlink` calls plus
+  one `rmtree`, the latter reachable only from an explicit confirmed removal:
 
   | Site | Target | When |
   |---|---|---|
@@ -554,9 +554,14 @@ Implementing real Windows ACLs would require `pywin32` or shelling out to
   | `state.py:51` | `active` marker | *Forget that profile* |
   | `migrate.py:196` | the legacy `~/.claude` symlink | Migration, restored on failure |
   | `migrate.py:207` | stale `.shambles.json` | Migration |
+  | `switcher.py` `remove_profile` | one profile directory | User confirms the ✕ |
 
-  None targets session history, and a lapsed credentials file is never removed —
-  see §4.1.
+  None targets session history, and no automatic path removes a credentials
+  file — a lapsed one is never cleaned up (§4.1). `remove_profile` is the sole
+  destructive action in the tool and requires a typed confirmation naming the
+  profile. It refuses the active profile at the function level, not only in the
+  UI, and re-resolves the target to verify it is a direct child of the store
+  before deleting a tree.
 
 ---
 

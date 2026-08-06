@@ -387,6 +387,13 @@ class ShamblesApp(tk.Tk):
         else:
             ttk.Button(top, text="Switch", style="Switch.TButton",
                        command=lambda p=profile: self.on_switch(p.name)).pack(side="right")
+            # Inactive profiles only. The active one has no ✕ at all, so the
+            # login you are currently using cannot be deleted by a misclick.
+            remove = ttk.Button(top, text="✕", style="Switch.TButton", width=2,
+                                command=lambda p=profile: self.on_remove(p.name))
+            remove.pack(side="right", padx=(0, GAP_XS))
+            Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
+                            "deleted and that account needs a new /login.", t)
 
         bottom = tk.Frame(card, bg=bg)
         bottom.pack(fill="x", pady=(GAP_XS, 0))
@@ -430,6 +437,15 @@ class ShamblesApp(tk.Tk):
 
     def on_forget_marker(self):
         self._guarded(lambda: switcher.forget_active_marker(self.paths))
+
+    def on_remove(self, name):
+        if not messagebox.askyesno(
+                "Remove Profile",
+                f"Are you sure you want to delete the profile '{name}'? "
+                "This will permanently destroy its stored login token.",
+                parent=self):
+            return
+        self._guarded(lambda: switcher.remove_profile(self.paths, name))
 
     def on_eject(self):
         """Hand the machine back as a stock Claude Code install."""

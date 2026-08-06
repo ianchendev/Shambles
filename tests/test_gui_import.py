@@ -183,3 +183,106 @@ def test_the_expiry_tooltip_does_not_name_a_fixed_window():
     from shambles import gui
     assert "30-day" not in gui.EXPIRY_TOOLTIP
     assert "30 day" not in gui.EXPIRY_TOOLTIP
+
+
+def _buttons(widget, found=None):
+    found = [] if found is None else found
+    for child in widget.winfo_children():
+        try:
+            found.append(str(child.cget("text")))
+        except tk.TclError:
+            pass
+        _buttons(child, found)
+    return found
+
+
+def test_only_inactive_profiles_offer_removal(paths, make_app):
+    """The active profile must have no ✕ — the login in use cannot be deleted
+    by a misclick."""
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Personal", email="me@example.com")
+    make_profile(paths, "Third", email="third@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    labels = _buttons(app)
+    # two inactive profiles -> two ✕ and two Switch, never three
+    assert labels.count("✕") == 2
+    assert labels.count("Switch") == 2
+
+
+def test_a_lone_active_profile_offers_no_removal(paths, make_app):
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert "✕" not in _buttons(app)
+
+
+def test_declining_the_confirmation_removes_nothing(paths, make_app, monkeypatch):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import gui, state
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Personal", email="me@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *a, **k: False)
+    app = make_app(paths)
+    app.on_remove("Personal")
+
+    assert paths.credentials("Personal").exists()
+    assert sorted(state.profile_names(paths)) == ["Personal", "Work"]
+
+
+def test_confirming_removes_the_profile_and_refreshes(paths, make_app, monkeypatch):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import gui, state
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Personal", email="me@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *a, **k: True)
+    app = make_app(paths)
+    app.on_remove("Personal")
+    app.update()
+
+    assert state.profile_names(paths) == ["Work"]
+    assert "Personal" not in " ".join(_buttons(app)), "still listed after removal"
+
+
+def test_the_confirmation_names_the_profile_and_the_cost(paths, make_app,
+                                                         monkeypatch):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import gui
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Personal", email="me@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    seen = {}
+    def capture(title, message, **k):
+        seen["title"], seen["message"] = title, message
+        return False
+    monkeypatch.setattr(gui.messagebox, "askyesno", capture)
+
+    app = make_app(paths)
+    app.on_remove("Personal")
+
+    assert seen["title"] == "Remove Profile"
+    assert "'Personal'" in seen["message"]
+    assert "permanently destroy its stored login token" in seen["message"]
