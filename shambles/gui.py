@@ -39,8 +39,9 @@ def header_text(paths, current) -> str:
     which the header renders at different weights.
     """
     if current.kind == state.LEGACY_LAYOUT:
-        return ("⚠ Your session history is split across profiles — "
-                "run the migration below.")
+        # Startup repairs this automatically, so reaching here means the
+        # merge failed and the reason was already shown in a dialog.
+        return "⚠ Could not merge your split session history — see the error."
     if current.kind == state.UNMANAGED:
         return "No accounts saved yet — use Save Current Account."
     if current.kind == state.UNKNOWN:
@@ -116,7 +117,7 @@ class Tooltip:
 
 
 class AddAccountDialog(tk.Toplevel):
-    """Name plus the seed-settings checkbox. Returns (name, seed) or None."""
+    """Asks for a profile name. Returns the name, or None if cancelled."""
 
     def __init__(self, parent, active_name, theme):
         super().__init__(parent)
@@ -139,18 +140,12 @@ class AddAccountDialog(tk.Toplevel):
                          bg=theme["card"], fg=theme["text"], insertwidth=2)
         entry.pack(fill="x", pady=(GAP_XS, GAP_M), ipady=GAP_XS + 2)
 
-        self.seed_var = tk.BooleanVar(value=bool(active_name))
-        if active_name:
-            tk.Checkbutton(
-                body, variable=self.seed_var, font=theme.body,
-                text=f"Copy settings from '{active_name}'",
-                bg=theme["window"], fg=theme["text"],
-                activebackground=theme["window"], selectcolor=theme["card"],
-                highlightthickness=0, anchor="w",
-            ).pack(fill="x")
-            tk.Label(body, font=theme.body, bg=theme["window"], fg=theme["muted"],
-                     text="plugins, permissions, model prefs — not credentials",
-                     ).pack(anchor="w", padx=(GAP_L, 0))
+        tk.Label(body, font=theme.body, bg=theme["window"], fg=theme["muted"],
+                 anchor="w", justify="left",
+                 wraplength=260,
+                 text=("Your settings, plugins and session history are shared "
+                       "with every account — only the login differs."),
+                 ).pack(fill="x")
 
         buttons = tk.Frame(body, bg=theme["window"])
         buttons.pack(fill="x", pady=(GAP_M, 0))
@@ -166,7 +161,7 @@ class AddAccountDialog(tk.Toplevel):
         self.wait_window(self)
 
     def _accept(self):
-        self.result = (self.name_var.get(), self.seed_var.get())
+        self.result = self.name_var.get()
         self.destroy()
 
 
@@ -215,7 +210,38 @@ class ShamblesApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._install_signal_handlers()
         self._pump_signals()
+        self._repair_legacy_layout()
         self.refresh()
+
+    def _repair_legacy_layout(self):
+        """Convert the pre-1.0 layout on sight.
+
+        Deliberately not a choice. That layout gave every account its own copy
+        of ~/.claude, so switching hid your session history -- there is no
+        version of that anyone wants, and offering it as an option would only
+        leave people running the broken arrangement for longer. The merge is
+        additive, so there is nothing to undo if it turns out to be unwanted.
+        """
+        if not migrate.needed(self.paths):
+            return
+        try:
+            plan = migrate.run(self.paths, now_ms=switcher.now_ms())
+        except ShamblesError as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
+            return
+
+        others = ", ".join(plan.others) or "the other profiles"
+        messagebox.showinfo(
+            WINDOW_TITLE,
+            "Your session history was split across accounts and has been "
+            "merged.\n\n"
+            f"{plan.merged_files} files brought over from {others} into one "
+            f"shared ~/.claude. Every account can now see every session, and "
+            f"switching will not hide them again.\n\n"
+            f"Nothing was deleted. The old copies are still in "
+            f"~/.claude-profiles/ if you want to check them, and you can "
+            f"delete those folders once you are satisfied.",
+            parent=self)
 
     # -- shutdown ---------------------------------------------------------
 
@@ -279,10 +305,6 @@ class ShamblesApp(tk.Tk):
         for child in self.rows.winfo_children():
             child.destroy()
 
-        if current.kind == state.LEGACY_LAYOUT:
-            self._render_migration_offer()
-            return
-
         found = profiles.discover(self.paths, current.profile, switcher.now_ms())
         if not found:
             tk.Label(self.rows, text="No profiles yet.", font=t.body,
@@ -296,24 +318,6 @@ class ShamblesApp(tk.Tk):
             ttk.Button(self.rows, text="Forget that profile",
                        style="Shambles.TButton",
                        command=self.on_forget_marker).pack(anchor="w", pady=(GAP_S, 0))
-
-    def _render_migration_offer(self):
-        """Shown while ~/.claude is still a symlink from the old layout."""
-        t = self.theme
-        card = tk.Frame(self.rows, bg=t["chip_soon_bg"], padx=GAP_M, pady=GAP_M)
-        card.pack(fill="x", pady=(0, GAP_S))
-        tk.Label(card, text="Session history is split per account", font=t.name,
-                 bg=t["chip_soon_bg"], fg=t["chip_soon_fg"], anchor="w",
-                 justify="left").pack(fill="x")
-        tk.Label(card, bg=t["chip_soon_bg"], fg=t["chip_soon_fg"], font=t.body,
-                 anchor="w", justify="left",
-                 wraplength=WINDOW_WIDTH - 4 * GAP_L,
-                 text=("An older version gave every account its own copy of "
-                       "~/.claude, so switching hid your transcripts. Merging "
-                       "them restores one shared history. Nothing is deleted."),
-                 ).pack(fill="x", pady=(GAP_XS, GAP_M))
-        ttk.Button(card, text="Merge my history", style="Accent.TButton",
-                   command=self.on_migrate).pack(anchor="w")
 
     def _render_card(self, profile):
         """One profile as a bordered card, accented when it is the active one."""
@@ -391,38 +395,7 @@ class ShamblesApp(tk.Tk):
     def on_forget_marker(self):
         self._guarded(lambda: switcher.forget_active_marker(self.paths))
 
-    def on_migrate(self):
-        plan = migrate.survey(self.paths)
-        mb = plan.bytes_to_copy / 1048576
-        proceed = messagebox.askokcancel(
-            WINDOW_TITLE,
-            "Older versions of Shambles gave every account its own copy of "
-            "~/.claude, so each had a separate session history.\n\n"
-            f"This merges them into one shared directory, keeping '{plan.base}' "
-            f"as the base and copying in {plan.merged_files} files "
-            f"({mb:.0f} MB) from the others.\n\n"
-            "Nothing is deleted. The old profile folders stay on disk for you "
-            "to remove once you are happy.\n\nContinue?",
-            parent=self)
-        if not proceed:
-            return
-        self._guarded(lambda: migrate.run(self.paths, now_ms=switcher.now_ms()))
-        messagebox.showinfo(
-            WINDOW_TITLE,
-            "Migration complete. Your session history is now shared across "
-            "every account, and switching will not hide it again.",
-            parent=self)
-
     def on_save(self):
-        if switcher.crosses_filesystem(self.paths):
-            proceed = messagebox.askokcancel(
-                WINDOW_TITLE,
-                "~/.claude is on a different filesystem from your home "
-                "directory, so this will be a slow copy rather than an "
-                "instant move.\n\nContinue?",
-                parent=self)
-            if not proceed:
-                return
         name = simpledialog.askstring("Save Current Account", "Profile name:",
                                       initialvalue="Default", parent=self)
         if name is not None:
@@ -433,9 +406,8 @@ class ShamblesApp(tk.Tk):
         dialog = AddAccountDialog(self, current.profile, self.theme)
         if dialog.result is None:
             return
-        name, seed = dialog.result
         self._guarded(
-            lambda: switcher.add_empty_account(self.paths, name, seed_settings=seed))
+            lambda: switcher.add_empty_account(self.paths, dialog.result))
         messagebox.showinfo(
             WINDOW_TITLE,
             "Profile created and activated.\n\n"

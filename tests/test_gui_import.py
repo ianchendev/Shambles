@@ -49,7 +49,9 @@ def test_header_reports_drift_after_a_manual_login(paths):
     assert "someone-else@example.com" in text
 
 
-def test_header_offers_migration_for_the_legacy_layout(paths):
+def test_header_reports_a_failed_merge(paths):
+    """Startup repairs the old layout automatically, so seeing this state at
+    all means the merge failed."""
     import os
 
     from helpers import make_claude_json, make_profile
@@ -59,7 +61,8 @@ def test_header_offers_migration_for_the_legacy_layout(paths):
     make_claude_json(paths, email="work@example.com")
     os.symlink(str(paths.profile_dir("Work")), str(paths.claude_dir),
                target_is_directory=True)
-    assert "migration" in gui.header_text(paths, state.inspect(paths)).lower()
+    text = gui.header_text(paths, state.inspect(paths)).lower()
+    assert "could not merge" in text
 
 
 def test_window_renders_every_profile_state(paths, make_app):
