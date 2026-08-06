@@ -1,7 +1,17 @@
-# Shambles — Design
+# Shambles — Design (superseded)
 
 **Date:** 2026-08-05
-**Status:** Approved for planning
+**Status:** SUPERSEDED — historical record only
+
+> This is the original design, kept because the reasoning behind several
+> decisions is still useful. **It describes an architecture that no longer
+> exists.** It symlinks the whole of `~/.claude` between profile directories,
+> which gave every account its own `projects/` folder and made session history
+> vanish on a switch. v1.0 swaps only the credentials file and leaves
+> `~/.claude` alone.
+>
+> For the shipped architecture, see [TECH_SPEC.md](../../../TECH_SPEC.md);
+> §1.4 explains what this design got wrong and why.
 
 A lightweight Tkinter utility that switches the active `claude-code` account by
 swapping an OS-level symlink at `~/.claude`, so both the CLI and the VS Code
@@ -103,7 +113,7 @@ allowance.
 
 ```
 pid               int    extension host process id
-workspaceFolders  list   e.g. ['/home/ianchen/tools/Shambles']
+workspaceFolders  list   e.g. ['/home/you/tools/Shambles']
 ideName           str    'Visual Studio Code'
 transport         str    'ws'
 runningInWindows  bool
@@ -295,10 +305,10 @@ A single non-resizable window, roughly 420×360.
 ```
 ┌─ Shambles ──────────────────────────────┐
 │ ACTIVE  Work                            │
-│ admin@cognitivo.com.au · Cognitivo      │
+│ you@example.com · Cognitivo      │
 ├─────────────────────────────────────────┤
 │ ● Work                                  │
-│   admin@cognitivo.com.au                │
+│   you@example.com                │
 │                                         │
 │ ○ Personal              [   Switch   ]  │
 │   ian@example.com                       │

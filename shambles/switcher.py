@@ -36,7 +36,7 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _copy_secret(source: Path, dest: Path, *, sleep=time.sleep) -> None:
+def copy_secret(source: Path, dest: Path, *, sleep=time.sleep) -> None:
     """Copy a credentials file, atomically and readable only by its owner.
 
     Retried: a running Claude Code, an antivirus scan or the Windows indexer
@@ -59,7 +59,7 @@ def stash_live_login(paths, name: str, *, now_ms_fn=now_ms, sleep=time.sleep) ->
     """Capture whatever is logged in right now into profile ``name``."""
     paths.ensure_profile(name)
     if paths.live_credentials.exists():
-        _copy_secret(paths.live_credentials, paths.credentials(name), sleep=sleep)
+        copy_secret(paths.live_credentials, paths.credentials(name), sleep=sleep)
     account = configjson.extract_account_keys(
         configjson.load(paths.claude_json))
     configjson.write_sidecar(paths.account(name), account, now_ms_fn())
@@ -106,7 +106,7 @@ def switch(paths, target_name: str, *, now_ms_fn=now_ms, sleep=time.sleep):
 
         paths.claude_dir.mkdir(parents=True, exist_ok=True)
         if incoming.exists():
-            _copy_secret(incoming, paths.live_credentials, sleep=sleep)
+            copy_secret(incoming, paths.live_credentials, sleep=sleep)
         else:
             # A profile that has never been signed into: clear the login so
             # Claude Code prompts for one rather than reusing the last account.
