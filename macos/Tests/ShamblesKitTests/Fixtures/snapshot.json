@@ -1,0 +1,92 @@
+{
+    "version": 1,
+    "groups": [
+        {
+            "provider": "claude",
+            "display_name": "Claude Code",
+            "surfaces": [
+                {
+                    "id": "terminal",
+                    "label": "Terminal",
+                    "detail": "Claude Code CLI"
+                },
+                {
+                    "id": "vscode",
+                    "label": "VS Code",
+                    "detail": "anthropic.claude-code"
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "Personal",
+                    "email": "personal@example.com",
+                    "display_name": null,
+                    "plan": "default_claude_pro",
+                    "active": false,
+                    "state": "closed",
+                    "needs_login": true,
+                    "login_hint": "Run 'claude' in a terminal, then /login. Use a terminal rather than VS Code \u2014 the extension may still hold a handle on the profile.",
+                    "usage": []
+                },
+                {
+                    "name": "Work",
+                    "email": "work@example.com",
+                    "display_name": "Example User",
+                    "plan": "default_claude_max_5x",
+                    "active": true,
+                    "state": "live",
+                    "needs_login": false,
+                    "login_hint": null,
+                    "usage": [
+                        {
+                            "label": "5h",
+                            "used_percent": 21,
+                            "resets_at_ms": 4070908800000,
+                            "stale": false
+                        },
+                        {
+                            "label": "7d",
+                            "used_percent": 9,
+                            "resets_at_ms": 4070908800000,
+                            "stale": false
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "provider": "codex",
+            "display_name": "Codex",
+            "surfaces": [
+                {
+                    "id": "terminal",
+                    "label": "Terminal",
+                    "detail": "Codex CLI"
+                },
+                {
+                    "id": "vscode",
+                    "label": "VS Code",
+                    "detail": "openai.chatgpt"
+                },
+                {
+                    "id": "chatgpt",
+                    "label": "ChatGPT",
+                    "detail": "Codex inside ChatGPT.app"
+                }
+            ],
+            "accounts": [
+                {
+                    "name": "Personal",
+                    "email": null,
+                    "display_name": null,
+                    "plan": null,
+                    "active": false,
+                    "state": "absent",
+                    "needs_login": true,
+                    "login_hint": "Run 'codex login' in a terminal.",
+                    "usage": []
+                }
+            ]
+        }
+    ]
+}

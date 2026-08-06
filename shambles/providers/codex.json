@@ -2,10 +2,11 @@
   "id": "codex",
   "display_name": "Codex",
   "surfaces": [
-    "Codex CLI",
-    "VS Code extension openai.chatgpt",
-    "Codex Desktop (ships inside ChatGPT.app)"
+    {"id": "terminal", "label": "Terminal", "detail": "Codex CLI"},
+    {"id": "vscode", "label": "VS Code", "detail": "openai.chatgpt"},
+    {"id": "chatgpt", "label": "ChatGPT", "detail": "Codex inside ChatGPT.app"}
   ],
+  "surfaces_note": "all three share one auth.json — desktop sharing is strong inference, not documented: ChatGPT.app bundles the identical binary and keeps its non-credential state in ~/.codex",
 
   "config_dir": {
     "env": "CODEX_HOME",

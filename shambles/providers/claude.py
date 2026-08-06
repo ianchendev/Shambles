@@ -161,14 +161,24 @@ class ClaudeProvider:
             state = LIVE
         return Liveness(state, expires_at_ms=expires, days_left=days)
 
-    def identity(self, blob: bytes | None, *, home) -> Identity:
-        """Read identity from the sidecar, not from the credential.
+    def identity(self, blob: bytes | None, *, home, profile_dir=None,
+                 active: bool = False) -> Identity:
+        """Read identity from a file, never from the credential.
 
-        The credential is opaque, so it carries no identity at all. ``blob`` is
-        accepted to satisfy the protocol and deliberately unused.
+        Claude's tokens are opaque, so they carry no identity at all -- ``blob``
+        is accepted to satisfy the protocol and deliberately unused.
+
+        Which file depends on whether this profile is the live one.
+        ``~/.claude.json`` describes only the account signed in right now, so
+        reading it for a parked profile labels every row with the active
+        account's email. Parked profiles come from the copy stashed beside
+        their credential.
         """
         block = self.spec["identity"]
-        data = _read_json(specmod.expand(block["path"], home=home))
+        if active or profile_dir is None:
+            data = _read_json(specmod.expand(block["path"], home=home))
+        else:
+            data = _read_json(Path(profile_dir) / "account.json")
         return Identity(
             email=specmod.pointer(data, block["email"]),
             display_name=specmod.pointer(data, block["display_name"]),

@@ -2,9 +2,10 @@
   "id": "claude",
   "display_name": "Claude Code",
   "surfaces": [
-    "Claude Code CLI",
-    "VS Code extension anthropic.claude-code"
+    {"id": "terminal", "label": "Terminal", "detail": "Claude Code CLI"},
+    {"id": "vscode", "label": "VS Code", "detail": "anthropic.claude-code"}
   ],
+  "surfaces_note": "one switch moves all of these at once — they share one credential store, so the UI must show them together",
 
   "config_dir": {
     "env": "CLAUDE_CONFIG_DIR",

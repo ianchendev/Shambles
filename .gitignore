@@ -6,3 +6,7 @@ build/
 dist/
 *.egg-info/
 *.spec
+
+# SwiftPM
+macos/.build/
+macos/.swiftpm/

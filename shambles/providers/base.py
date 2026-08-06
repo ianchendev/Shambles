@@ -99,8 +99,17 @@ class Provider(Protocol):
     def store(self, *, home, platform: str):
         """The :class:`~shambles.stores.base.CredentialStore` for this platform."""
 
-    def identity(self, blob: bytes | None, *, home) -> Identity:
-        """Who this credential belongs to."""
+    def identity(self, blob: bytes | None, *, home, profile_dir=None,
+                 active: bool = False) -> Identity:
+        """Who this credential belongs to.
+
+        ``profile_dir`` and ``active`` exist for providers whose identity lives
+        outside the credential. Claude's does: the live ``~/.claude.json`` is
+        authoritative only for the account signed in right now, so a parked
+        profile must be read from its own stashed sidecar or every row shows
+        the active account's email. Codex ignores both -- its identity is
+        inside the token.
+        """
 
     def liveness(self, blob: bytes | None, *, now_ms: int) -> Liveness:
         """Whether it still works."""
