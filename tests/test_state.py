@@ -2,6 +2,8 @@
 
 import os
 
+from pathlib import Path
+
 from helpers import make_claude_json, make_live_login, make_profile
 from shambles import state
 
@@ -89,10 +91,11 @@ def test_an_override_pointing_elsewhere_is_reported(paths, monkeypatch):
     """Shambles swaps the login inside ~/.claude. If the CLI is pointed at a
     different tree by the environment, it reads a config Shambles never
     touches -- so switches appear to do nothing there."""
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/somewhere/else")
+    elsewhere = paths.home / "somewhere-else"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(elsewhere))
     override = state.config_dir_override(paths)
     assert override is not None
-    assert "/somewhere/else" in override
+    assert Path(override) == elsewhere.resolve()
 
 
 def test_an_override_pointing_at_claude_dir_is_harmless(paths, monkeypatch):

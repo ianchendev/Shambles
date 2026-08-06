@@ -133,7 +133,8 @@ def test_window_warns_when_config_dir_is_overridden(paths, make_app, monkeypatch
     make_profile(paths, "Work", email="work@example.com", active=True)
     make_claude_json(paths, email="work@example.com")
     make_live_login(paths)
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/elsewhere/config")
+    elsewhere = paths.home / "elsewhere-config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(elsewhere))
 
     app = make_app(paths)
     app.update()
@@ -149,7 +150,7 @@ def test_window_warns_when_config_dir_is_overridden(paths, make_app, monkeypatch
     walk(app)
     joined = " ".join(texts)
     assert "CLAUDE_CONFIG_DIR" in joined
-    assert "/elsewhere/config" in joined
+    assert "elsewhere-config" in joined
 
 
 def test_window_is_quiet_when_config_dir_is_unset(paths, make_app, monkeypatch):

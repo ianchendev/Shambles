@@ -69,21 +69,11 @@ def test_help_flag_exits_zero_without_a_display():
 
 # ---- no stray console window on Windows ---------------------------------
 
-def _pyproject():
-    import tomllib
-    with open("pyproject.toml", "rb") as fh:
-        return tomllib.load(fh)
-
-
-def test_a_windowed_entry_point_exists(_toml_or_skip=None):
+def test_a_windowed_entry_point_exists():
     """[project.scripts] produces a console launcher on Windows, which flashes
     a blank terminal behind the GUI. A gui-scripts entry uses pythonw.exe and
     does not, so shortcuts have something quiet to target."""
-    import sys
-    if sys.version_info < (3, 11):
-        pytest.skip("tomllib needs Python 3.11+")
-    data = _pyproject()
-    gui = data["project"].get("gui-scripts", {})
+    gui = _pyproject()["project"].get("gui-scripts", {})
     assert gui, "no gui-scripts entry point; Windows shortcuts get a console"
     assert any("shambles" in target for target in gui.values())
 
@@ -91,16 +81,12 @@ def test_a_windowed_entry_point_exists(_toml_or_skip=None):
 def test_the_console_entry_point_is_kept_too():
     """--version and --help must stay usable; a gui-scripts binary on Windows
     has nowhere to print."""
-    import sys
-    if sys.version_info < (3, 11):
-        pytest.skip("tomllib needs Python 3.11+")
-    data = _pyproject()
-    assert "shambles" in data["project"].get("scripts", {})
+    assert "shambles" in _pyproject()["project"].get("scripts", {})
 
 
 def test_the_spec_file_does_not_hardcode_a_console():
     """The spec is what someone building by hand uses. console=True there
     contradicts the --windowed flag the release workflow passes."""
-    spec = open("shambles.spec").read()
+    spec = open(os.path.join(REPO, "shambles.spec"), encoding="utf-8").read()
     assert "console=True" not in spec, \
         "shambles.spec forces a console window on Windows"
