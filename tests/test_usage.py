@@ -32,17 +32,18 @@ def test_reads_both_buckets_in_order():
     assert [b.percent for b in u.bars] == [22, 87]
 
 
-def test_uses_claude_codes_own_severity():
-    """Not a threshold of our own -- the extension already decided."""
+def test_keeps_claude_codes_raw_severity_and_maps_it_for_display():
     u = usage.parse(LIVE)
-    assert u.bars[0].severity == "ok"      # "normal"
-    assert u.bars[1].severity == "soon"    # "warning"
+    assert u.bars[0].severity == "normal"
+    assert u.bars[0].display_severity == "ok"      # 22%, normal
+    assert u.bars[1].severity == "warning"
+    assert u.bars[1].display_severity == "gone"    # 87% -> past the 80% floor
 
 
 def test_an_unknown_severity_renders_as_the_worst_case():
     blob = {"utilization": {"limits": [
         {"kind": "session", "percent": 5, "severity": "some_new_thing"}]}}
-    assert usage.parse(blob).bars[0].severity == "gone"
+    assert usage.parse(blob).bars[0].display_severity == "gone"
 
 
 def test_falls_back_to_the_utilization_buckets_without_limits():
@@ -52,6 +53,8 @@ def test_falls_back_to_the_utilization_buckets_without_limits():
     }}
     u = usage.parse(blob)
     assert [(b.label, b.percent) for b in u.bars] == [("session", 40), ("week", 60)]
+    # no severity to trust, so the value alone decides
+    assert [b.display_severity for b in u.bars] == ["ok", "ok"]
 
 
 def test_per_model_buckets_are_ignored():
@@ -120,3 +123,39 @@ def test_a_broken_resets_timestamp_does_not_raise():
         {"kind": "session", "percent": 1, "severity": "normal",
          "resets_at": "not a date"}]}}
     assert usage.parse(blob).bars[0].resets_label() is None
+
+
+# ---- bar colour: an explicit threshold, matching the extension ----------
+
+def test_eighty_percent_and_above_is_red():
+    for pct in (80, 87, 99, 100):
+        assert usage.bar_severity(pct, "normal") == "gone", pct
+
+
+def test_below_eighty_is_not_red():
+    for pct in (0, 43, 79):
+        assert usage.bar_severity(pct, "normal") != "gone", pct
+
+
+def test_claude_codes_warning_still_shows_below_the_threshold():
+    """Our 80% rule is a floor, not a replacement. If Claude Code flags
+    something at 60% we surface it rather than painting it normal."""
+    assert usage.bar_severity(60, "warning") == "soon"
+    assert usage.bar_severity(60, "normal") == "ok"
+
+
+def test_an_unknown_severity_below_the_threshold_still_escalates():
+    assert usage.bar_severity(10, "some_new_thing") == "gone"
+
+
+def test_the_threshold_is_inclusive_at_exactly_eighty():
+    assert usage.bar_severity(79, "normal") == "ok"
+    assert usage.bar_severity(80, "normal") == "gone"
+
+
+def test_fill_fraction_is_clamped():
+    assert usage.fill_fraction(0) == 0.0
+    assert usage.fill_fraction(50) == 0.5
+    assert usage.fill_fraction(100) == 1.0
+    assert usage.fill_fraction(140) == 1.0, "over-quota must not overflow the bar"
+    assert usage.fill_fraction(-5) == 0.0

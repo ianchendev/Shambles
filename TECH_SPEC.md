@@ -265,9 +265,13 @@ The key is still captured per profile, but under Shambles' own `usage` name in
 by accident, and `STALE_ON_SWITCH` clears the config key regardless.
 
 `shambles.usage` parses that blob into at most two bars, preferring the cache's
-`limits` array because it carries Claude Code's own `severity` — Shambles
-derives no thresholds of its own, and an unrecognised severity renders as the
-worst case rather than guessing. The active profile reads the live config; the
+`limits` array because it carries Claude Code's own `severity`. `Bar.severity`
+holds that raw verdict; `Bar.display_severity` applies a **red floor at
+`RED_AT = 80`**, matching the extension's meter so the two cannot disagree on
+screen. The floor never *downgrades* — a bucket Claude Code flags below 80%
+still renders amber — and an unrecognised severity renders as the worst case
+rather than guessing. `fill_fraction` clamps to 0..1 so an over-quota account
+saturates the track instead of drawing past it. The active profile reads the live config; the
 rest read their stash and render greyed out with an age label, so a figure
 nobody has refreshed cannot pass for a current one.
 

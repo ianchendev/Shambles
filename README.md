@@ -296,15 +296,20 @@ the same protection Claude Code's own `.credentials.json` gets.
 Each card carries the two figures that decide which account to reach for:
 
 ```
-Admin                    ACTIVE
-admin@example.com   28d   session 22%   week 87%
+Admin  ACTIVE                    session ▇▇▇▇▇░░░░░░░  43%
+admin@example.com          28d   week    ▇▇▇▇▇▇▇▇▇▇▇░  89%
 
-Ian-Work           [✕] [Switch]
-me@example.com      27d   session 98%   week 92%   17h ago
+Ian-Work                                    [✕] [Switch]
+me@example.com             27d   session ▇░░░░░░░░░░░  12%
+                                 week    ▇▇▇▇▇▇▇▇▇▇▇░  92%
+                                                17h ago
 ```
 
-Colour follows Claude Code's own severity — it decides what counts as a
-warning, not Shambles.
+Bars sit in a right-hand column so they line up across cards whatever a name or
+address happens to be. **A bar turns red at 80%**, the same threshold the VS
+Code extension uses, so the two never disagree on screen. Below that it is the
+ordinary accent — unless Claude Code itself flags the bucket, in which case its
+warning shows through rather than being painted over.
 
 **The active account's figures are live**, read from the cache Claude Code
 keeps current as you work. **Every other account shows what it last reported**,
