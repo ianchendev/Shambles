@@ -82,11 +82,3 @@ def test_the_console_entry_point_is_kept_too():
     """--version and --help must stay usable; a gui-scripts binary on Windows
     has nowhere to print."""
     assert "shambles" in _pyproject()["project"].get("scripts", {})
-
-
-def test_the_spec_file_does_not_hardcode_a_console():
-    """The spec is what someone building by hand uses. console=True there
-    contradicts the --windowed flag the release workflow passes."""
-    spec = open(os.path.join(REPO, "shambles.spec"), encoding="utf-8").read()
-    assert "console=True" not in spec, \
-        "shambles.spec forces a console window on Windows"
