@@ -46,7 +46,7 @@ def read_active(paths) -> str | None:
 
 
 def write_active(paths, name: str | None) -> None:
-    paths.profiles_dir.mkdir(parents=True, exist_ok=True)
+    paths.ensure_store()
     if name is None:
         paths.active_marker.unlink(missing_ok=True)
         return

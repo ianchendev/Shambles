@@ -16,7 +16,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import configjson, profiles, state
+from . import configjson, profiles, retry, state
 from .errors import (AlreadyManagedError, ProfileNotFoundError,
                      SwitchFailedError)
 
@@ -36,20 +36,30 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _copy_secret(source: Path, dest: Path) -> None:
-    """Copy a credentials file, atomically and readable only by its owner."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".shambles-tmp")
-    shutil.copyfile(source, tmp)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, dest)
+def _copy_secret(source: Path, dest: Path, *, sleep=time.sleep) -> None:
+    """Copy a credentials file, atomically and readable only by its owner.
+
+    Retried: a running Claude Code, an antivirus scan or the Windows indexer
+    can hold either file for a moment, and a single refusal is not a reason to
+    fail the whole switch. Exhausting the retries raises SwitchFailedError,
+    which the GUI knows how to display -- a bare OSError would reach the user
+    as a silent stderr traceback.
+    """
+    def once():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".shambles-tmp")
+        shutil.copyfile(source, tmp)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, dest)
+
+    retry.with_retry(once, f"write {dest.name}", sleep=sleep)
 
 
-def stash_live_login(paths, name: str, *, now_ms_fn=now_ms) -> None:
+def stash_live_login(paths, name: str, *, now_ms_fn=now_ms, sleep=time.sleep) -> None:
     """Capture whatever is logged in right now into profile ``name``."""
-    paths.profile_dir(name).mkdir(parents=True, exist_ok=True)
+    paths.ensure_profile(name)
     if paths.live_credentials.exists():
-        _copy_secret(paths.live_credentials, paths.credentials(name))
+        _copy_secret(paths.live_credentials, paths.credentials(name), sleep=sleep)
     account = configjson.extract_account_keys(
         configjson.load(paths.claude_json))
     configjson.write_sidecar(paths.account(name), account, now_ms_fn())
@@ -75,25 +85,36 @@ def switch(paths, target_name: str, *, now_ms_fn=now_ms, sleep=time.sleep):
     configjson.load_for_write(paths.claude_json)
 
     stamp = now_ms_fn()
-    configjson.backup(paths.claude_json, paths.backup_dir, stamp)
 
-    # Stash the outgoing login so switching away is never lossy. Skipped when
-    # the marker points at a profile that is already gone.
-    if current.profile and paths.profile_dir(current.profile).is_dir():
-        stash_live_login(paths, current.profile, now_ms_fn=lambda: stamp)
-
+    # Everything that touches the filesystem lives inside one guard, so no
+    # path out of here raises a bare OSError. The GUI renders ShamblesError
+    # only; anything else would reach the user as a stderr traceback and look
+    # like the switch silently did nothing.
     incoming = paths.credentials(target_name)
-    paths.claude_dir.mkdir(parents=True, exist_ok=True)
     try:
+        # Claude Code rewrites ~/.claude.json on its own schedule, so copying
+        # it can collide with a write in progress. Retried like the rest.
+        retry.with_retry(
+            lambda: configjson.backup(paths.claude_json, paths.backup_dir, stamp),
+            "back up ~/.claude.json", sleep=sleep)
+
+        # Stash the outgoing login so switching away is never lossy. Skipped
+        # when the marker points at a profile that is already gone.
+        if current.profile and paths.profile_dir(current.profile).is_dir():
+            stash_live_login(paths, current.profile, now_ms_fn=lambda: stamp,
+                             sleep=sleep)
+
+        paths.claude_dir.mkdir(parents=True, exist_ok=True)
         if incoming.exists():
-            _copy_secret(incoming, paths.live_credentials)
+            _copy_secret(incoming, paths.live_credentials, sleep=sleep)
         else:
             # A profile that has never been signed into: clear the login so
             # Claude Code prompts for one rather than reusing the last account.
             paths.live_credentials.unlink(missing_ok=True)
     except OSError as exc:
         raise SwitchFailedError(
-            f"Could not update the login in ~/.claude:\n{exc}") from exc
+            f"Could not update the login in ~/.claude:\n{exc}\n\n"
+            "Close any running Claude Code sessions and try again.") from exc
 
     configjson.apply_account_keys(
         paths.claude_json, configjson.read_sidecar(paths.account(target_name)))
@@ -120,7 +141,7 @@ def save_current_account(paths, name, *, now_ms_fn=now_ms, sleep=time.sleep) -> 
         raise AlreadyManagedError(NOTHING_TO_SAVE)
 
     name = profiles.validate_profile_name(name, state.profile_names(paths))
-    stash_live_login(paths, name, now_ms_fn=now_ms_fn)
+    stash_live_login(paths, name, now_ms_fn=now_ms_fn, sleep=sleep)
     state.write_active(paths, name)
     return name
 
@@ -139,7 +160,7 @@ def add_empty_account(paths, name, *, seed_settings: bool = True,
         raise AlreadyManagedError(SAVE_FIRST)
 
     name = profiles.validate_profile_name(name, state.profile_names(paths))
-    paths.profile_dir(name).mkdir(parents=True, exist_ok=True)
+    paths.ensure_profile(name)
     return switch(paths, name, now_ms_fn=now_ms_fn, sleep=sleep).profile or name
 
 

@@ -8,7 +8,7 @@ from helpers import (DAY_MS, NOW, make_claude_json, make_live_login,
                      make_profile)
 from shambles import configjson, state, switcher
 from shambles.errors import (AlreadyManagedError, ConfigUnreadableError,
-                             ProfileNotFoundError)
+                             ProfileNotFoundError, ShamblesError)
 
 
 def _fixed(ms=NOW):
@@ -232,3 +232,94 @@ def test_rename_moves_the_marker_too(paths):
     assert state.read_active(paths) == "Day Job"
     assert paths.credentials("Day Job").exists()
     assert not paths.profile_dir("Work").exists()
+
+
+# ---- transient locks, the Windows antivirus/indexer case ----------------
+
+def _flaky_copyfile(monkeypatch, failures):
+    """Make shutil.copyfile fail `failures` times, then work."""
+    import shutil
+    real = shutil.copyfile
+    state_ = {"n": 0}
+
+    def flaky(src, dst, *a, **k):
+        state_["n"] += 1
+        if state_["n"] <= failures:
+            raise PermissionError(13, "The process cannot access the file")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(shutil, "copyfile", flaky)
+    return state_
+
+
+def _two_profiles(paths):
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Personal", email="me@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+
+def test_a_briefly_locked_credentials_file_is_retried(paths, monkeypatch):
+    """A running Claude Code, an antivirus scan or the Windows indexer can hold
+    the file for a moment. Giving up on the first refusal turns a hiccup into a
+    failed switch."""
+    _two_profiles(paths)
+    calls = _flaky_copyfile(monkeypatch, failures=2)
+
+    switcher.switch(paths, "Personal", now_ms_fn=_fixed(), sleep=lambda _s: None)
+
+    assert calls["n"] > 2, "did not retry"
+    assert state.inspect(paths).profile == "Personal"
+
+
+def test_a_permanently_locked_file_reports_cleanly(paths, monkeypatch):
+    """Never a raw OSError: the GUI only renders ShamblesError, so anything
+    else reaches the user as a silent stderr traceback."""
+    _two_profiles(paths)
+    _flaky_copyfile(monkeypatch, failures=99)
+
+    with pytest.raises(ShamblesError):
+        switcher.switch(paths, "Personal", now_ms_fn=_fixed(),
+                        sleep=lambda _s: None)
+
+
+def test_a_lock_while_stashing_the_outgoing_login_is_caught(paths, monkeypatch):
+    """The outgoing stash runs before the incoming copy and was outside the
+    error handling, so a lock there escaped as a bare PermissionError."""
+    _two_profiles(paths)
+    _flaky_copyfile(monkeypatch, failures=99)
+
+    with pytest.raises(ShamblesError):
+        switcher.switch(paths, "Personal", now_ms_fn=_fixed(),
+                        sleep=lambda _s: None)
+
+
+def test_a_failed_switch_leaves_the_marker_alone(paths, monkeypatch):
+    """If the login could not be installed, the app must not claim otherwise."""
+    _two_profiles(paths)
+    _flaky_copyfile(monkeypatch, failures=99)
+
+    with pytest.raises(ShamblesError):
+        switcher.switch(paths, "Personal", now_ms_fn=_fixed(),
+                        sleep=lambda _s: None)
+
+    assert state.read_active(paths) == "Work"
+
+
+def test_save_current_account_survives_a_transient_lock(paths, monkeypatch):
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+    _flaky_copyfile(monkeypatch, failures=2)
+
+    switcher.save_current_account(paths, "Work", now_ms_fn=_fixed(),
+                                  sleep=lambda _s: None)
+
+    assert paths.credentials("Work").exists()
+
+
+def test_switching_keeps_the_store_owner_only(paths):
+    import stat
+    _two_profiles(paths)
+    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+    for d in (paths.profiles_dir, paths.profile_dir("Personal")):
+        assert stat.S_IMODE(d.stat().st_mode) == 0o700, f"{d} is {oct(d.stat().st_mode)}"

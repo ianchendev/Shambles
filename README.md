@@ -164,8 +164,10 @@ The **email is not in that file**. It lives in `~/.claude.json` under
 one key on every switch. Without it you would swap the token but keep
 displaying the previous account's name.
 
-Directory permissions: `~/.claude-profiles/` is created `700`, so no other
-local user can traverse into it, and each `.credentials.json` stays `600`.
+Directory permissions: `~/.claude-profiles/` and each profile inside it are
+created `700`, and every credentials file is written `600`. On Windows `chmod`
+cannot express either, so there the files rely on the user profile's own ACLs —
+the same protection Claude Code's own `.credentials.json` gets.
 
 ## Checking token health
 
