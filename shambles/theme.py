@@ -117,6 +117,23 @@ class Theme:
             background=[("pressed", c["border"]), ("active", c["border"])],
         )
 
+        # The ✕ on a profile card. Grey at rest so a destructive control does
+        # not compete with Switch, which sits beside it and gets clicked
+        # constantly; red once the pointer is on it, to say what it does before
+        # the click rather than only in the dialog afterwards.
+        style.configure(
+            "Danger.TButton", font=self.button, padding=(GAP_S, GAP_XS + 2),
+            relief="flat", borderwidth=0,
+            background=c["window"], foreground=c["faint"],
+        )
+        style.map(
+            "Danger.TButton",
+            background=[("pressed", c["chip_gone_bg"]),
+                        ("active", c["chip_gone_bg"])],
+            foreground=[("pressed", c["chip_gone_fg"]),
+                        ("active", c["chip_gone_fg"])],
+        )
+
 
 def scale_for_display(root, minimum: float = 1.35) -> float:
     """Nudge Tk's point-to-pixel ratio up on dense displays.

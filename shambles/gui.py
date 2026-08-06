@@ -31,6 +31,28 @@ EXPIRY_TOOLTIP = (
 
 RENAME_HINT = "Double-click to rename"
 
+#: Gap between a widget and its tooltip, and the margin kept from screen edges.
+TOOLTIP_OFFSET = 12
+TOOLTIP_MARGIN = 8
+
+
+def tooltip_position(widget_x, widget_y, widget_height, tip_width,
+                     screen_width, screen_height, tip_height=0):
+    """Where to put a tooltip so it stays on screen.
+
+    Placed below-right of the widget by default. A tooltip anchored to a
+    control near the right edge -- the ✕ on a profile card is exactly that --
+    would otherwise render partly off the display and clip mid-word.
+    """
+    x = widget_x + TOOLTIP_OFFSET
+    if x + tip_width > screen_width - TOOLTIP_MARGIN:
+        x = max(TOOLTIP_MARGIN, screen_width - TOOLTIP_MARGIN - tip_width)
+
+    y = widget_y + widget_height + 6
+    if tip_height and y + tip_height > screen_height - TOOLTIP_MARGIN:
+        y = max(TOOLTIP_MARGIN, widget_y - tip_height - 6)
+    return x, y
+
 #: How often to hand control back to Python so pending signals get dispatched.
 SIGNAL_POLL_MS = 150
 
@@ -92,16 +114,23 @@ class Tooltip:
     def _show(self, _event=None):
         if self.tip or not self.text:
             return
-        x = self.widget.winfo_rootx() + 12
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
         self.tip = tk.Toplevel(self.widget)
         self.tip.wm_overrideredirect(True)
-        self.tip.wm_geometry(f"+{x}+{y}")
         opts = {}
         if self.theme:
             opts = {"font": self.theme.body, "bg": "#22242a", "fg": "#f4f5f7"}
         tk.Label(self.tip, text=self.text, justify="left", relief="flat",
                  wraplength=340, padx=GAP_S, pady=GAP_XS + 2, **opts).pack()
+
+        # Measure before placing: the clamp needs the rendered size, and a
+        # tooltip on a right-edge control would otherwise hang off the display.
+        self.tip.update_idletasks()
+        x, y = tooltip_position(
+            self.widget.winfo_rootx(), self.widget.winfo_rooty(),
+            self.widget.winfo_height(), self.tip.winfo_reqwidth(),
+            self.widget.winfo_screenwidth(), self.widget.winfo_screenheight(),
+            self.tip.winfo_reqheight())
+        self.tip.wm_geometry(f"+{x}+{y}")
         Tooltip._open.add(self)
 
     def _hide(self, _event=None):
@@ -389,9 +418,12 @@ class ShamblesApp(tk.Tk):
                        command=lambda p=profile: self.on_switch(p.name)).pack(side="right")
             # Inactive profiles only. The active one has no ✕ at all, so the
             # login you are currently using cannot be deleted by a misclick.
-            remove = ttk.Button(top, text="✕", style="Switch.TButton", width=2,
+            remove = ttk.Button(top, text="✕", style="Danger.TButton", width=2,
                                 command=lambda p=profile: self.on_remove(p.name))
-            remove.pack(side="right", padx=(0, GAP_XS))
+            # Sits inboard of Switch: the rightmost slot is the easiest to hit,
+            # and that should belong to the action used constantly rather than
+            # the one that destroys a login. The gap is deliberate too.
+            remove.pack(side="right", padx=(0, GAP_M))
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
                             "deleted and that account needs a new /login.", t)
 
