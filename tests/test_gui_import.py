@@ -286,3 +286,57 @@ def test_the_confirmation_names_the_profile_and_the_cost(paths, make_app,
     assert seen["title"] == "Remove Profile"
     assert "'Personal'" in seen["message"]
     assert "permanently destroy its stored login token" in seen["message"]
+
+
+def test_tooltip_position_is_clamped_to_the_screen():
+    """The ✕ sits at the right of a card, so its tooltip is the one that runs
+    off the display — the screenshot showed it clipped mid-word."""
+    from shambles.gui import tooltip_position
+
+    # a button near the right edge, tooltip wider than the space left
+    x, _y = tooltip_position(widget_x=1850, widget_y=100, widget_height=24,
+                             tip_width=360, screen_width=1920, screen_height=1080)
+    assert x + 360 <= 1920, f"tooltip runs to {x + 360} on a 1920 screen"
+    assert x >= 0
+
+
+def test_tooltip_position_is_unchanged_when_it_already_fits():
+    from shambles.gui import tooltip_position
+
+    x, y = tooltip_position(widget_x=100, widget_y=200, widget_height=24,
+                            tip_width=360, screen_width=1920, screen_height=1080)
+    assert (x, y) == (112, 230)
+
+
+def test_tooltip_flips_above_when_it_would_fall_off_the_bottom():
+    from shambles.gui import tooltip_position
+
+    _x, y = tooltip_position(widget_x=100, widget_y=1050, widget_height=24,
+                             tip_width=360, screen_width=1920, screen_height=1080,
+                             tip_height=80)
+    assert y + 80 <= 1080, "tooltip runs past the bottom of the screen"
+
+
+def test_the_remove_button_is_not_styled_as_a_peer_of_switch(paths, make_app):
+    """✕ and Switch shared a style, so a destructive control rendered in the
+    same accent blue as the one you click constantly."""
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Personal", email="me@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+    app = make_app(paths)
+    app.update()
+
+    styles = {}
+    def walk(w):
+        for c in w.winfo_children():
+            try:
+                styles[str(c.cget("text"))] = str(c.cget("style"))
+            except tk.TclError:
+                pass
+            walk(c)
+    walk(app)
+    assert styles.get("✕") != styles.get("Switch"), \
+        "the destructive control looks identical to the primary one"
