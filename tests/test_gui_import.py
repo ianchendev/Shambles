@@ -340,3 +340,73 @@ def test_the_remove_button_is_not_styled_as_a_peer_of_switch(paths, make_app):
     walk(app)
     assert styles.get("✕") != styles.get("Switch"), \
         "the destructive control looks identical to the primary one"
+
+
+def _usage_blob(session=None, week=None, fetched=None):
+    limits = []
+    if session is not None:
+        limits.append({"kind": "session", "percent": session, "severity": "normal"})
+    if week is not None:
+        limits.append({"kind": "weekly_all", "percent": week, "severity": "warning"})
+    return {"fetchedAtMs": fetched, "utilization": {"limits": limits}}
+
+
+def test_the_active_card_shows_live_usage_chips(paths, make_app):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import switcher
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com",
+                     extra={"cachedUsageUtilization":
+                            _usage_blob(22, 87, switcher.now_ms())})
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    text = " ".join(_buttons(app))
+    assert "session 22%" in text
+    assert "week 87%" in text
+
+
+def test_a_stale_stashed_figure_is_labelled_with_its_age(paths, make_app):
+    """The number is still worth showing — it says which account has headroom —
+    but it must not pass for current."""
+    from helpers import make_claude_json, make_live_login, make_profile, write_json
+    from helpers import account as acct
+    from shambles import switcher
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Other", email="other@example.com")
+    write_json(paths.account("Other"), {
+        "oauthAccount": acct("other@example.com"),
+        "usage": _usage_blob(week=92,
+                             fetched=switcher.now_ms() - 7 * 3_600_000)})
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    text = " ".join(_buttons(app))
+    assert "week 92%" in text
+    assert "7h ago" in text, "a 7h-old figure rendered without its age"
+
+
+def test_no_usage_row_when_there_is_nothing_to_show(paths, make_app):
+    """Right after a switch the cache is cleared on purpose."""
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    cfg = paths.claude_json.read_text()
+    import json as _json
+    d = _json.loads(cfg); d.pop("cachedUsageUtilization", None)
+    paths.claude_json.write_text(_json.dumps(d))
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    text = " ".join(_buttons(app))
+    assert "session" not in text and "week" not in text
