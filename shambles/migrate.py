@@ -25,9 +25,20 @@ from . import configjson, state
 from .errors import ShamblesError
 
 #: Directories inside a profile that hold machine-scoped state and must be
-#: merged rather than picked from one profile.
+#: merged rather than picked from one profile. ``plugins`` belongs here for the
+#: same reason ``projects`` does: a plugin installed while the second account
+#: was active would otherwise be stranded in a directory nothing reads.
 MERGE_DIRS = ("projects", "file-history", "todos", "shell-snapshots",
-              "session-env", "plans")
+              "session-env", "plans", "plugins", "statsig", "sessions")
+
+#: Line-oriented files where both profiles hold real entries, so picking one
+#: copy would silently drop the other's. Merged by line, deduplicated.
+MERGE_JSONL = ("history.jsonl",)
+
+#: Shambles' own sidecar from the old layout. The identity it held moves into
+#: the profile store during migration, after which it is redundant -- and
+#: ~/.claude should look exactly like a stock install.
+LEGACY_SIDECAR = ".shambles.json"
 
 
 class MigrationError(ShamblesError):
@@ -107,6 +118,27 @@ def _merge_tree(src: Path, dest: Path) -> tuple[int, int]:
     return merged, skipped
 
 
+def _merge_jsonl(src: Path, dest: Path) -> int:
+    """Fold ``src``'s lines into ``dest``, keeping order and dropping repeats.
+
+    Prompt history is append-only and each line stands alone, so concatenating
+    the two and removing exact duplicates is faithful. Unparseable lines are
+    carried across verbatim rather than dropped.
+    """
+    if not src.is_file():
+        return 0
+    existing = dest.read_text(encoding="utf-8").splitlines() if dest.is_file() else []
+    seen = {line for line in existing if line.strip()}
+    added = [line for line in src.read_text(encoding="utf-8").splitlines()
+             if line.strip() and line not in seen]
+    if not added:
+        return 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text("\n".join(existing + added).rstrip("\n") + "\n",
+                    encoding="utf-8")
+    return len(added)
+
+
 def run(paths, *, now_ms: int) -> Plan:
     """Perform the migration. Additive: nothing is deleted."""
     if not needed(paths):
@@ -127,6 +159,8 @@ def run(paths, *, now_ms: int) -> Plan:
                 got, missed = _merge_tree(src, base_dir / sub)
                 merged += got
                 skipped += missed
+        for name_jsonl in MERGE_JSONL:
+            merged += _merge_jsonl(src_root / name_jsonl, base_dir / name_jsonl)
     plan.merged_files, plan.skipped_files = merged, skipped
 
     # 2. Stash each profile's identity into the slim store, reading the old
@@ -168,7 +202,11 @@ def run(paths, *, now_ms: int) -> Plan:
             f"Could not move '{plan.base}' into place, so nothing was "
             f"changed and ~/.claude was restored:\n{exc}") from exc
 
-    # 4. Write the slim profile store.
+    # 4. Leave ~/.claude looking like a stock install: the sidecar's contents
+    #    are already captured in `identities` above.
+    (paths.claude_dir / LEGACY_SIDECAR).unlink(missing_ok=True)
+
+    # 5. Write the slim profile store.
     for name, (creds, account) in identities.items():
         paths.profile_dir(name).mkdir(parents=True, exist_ok=True)
         if creds is not None:

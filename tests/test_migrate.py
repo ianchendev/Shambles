@@ -205,3 +205,61 @@ def test_startup_is_untouched_when_no_migration_is_needed(paths, make_app,
     app.update()
 
     assert not shown, "showed a migration dialog with nothing to migrate"
+
+
+# ---- everything machine-scoped comes across, not just projects/ ---------
+
+def test_plugins_installed_under_another_profile_survive(paths):
+    """Ian's second profile only ever held PID lock files, so nothing real was
+    stranded. Someone who installed a plugin under their second account would
+    lose it, which is the same class of bug as the split history."""
+    _legacy_setup(paths)
+    only_there = (paths.profile_dir("Work") / "plugins" / "repos" / "acme")
+    only_there.mkdir(parents=True)
+    (only_there / "plugin.js").write_text("installed under Work")
+
+    migrate.run(paths, now_ms=NOW)
+
+    assert (paths.claude_dir / "plugins" / "repos" / "acme" /
+            "plugin.js").read_text() == "installed under Work"
+
+
+def test_prompt_history_from_both_profiles_is_merged(paths):
+    _legacy_setup(paths)
+    (paths.profile_dir("Admin") / "history.jsonl").write_text(
+        '{"display": "from admin", "timestamp": 100}\n')
+    (paths.profile_dir("Work") / "history.jsonl").write_text(
+        '{"display": "from work", "timestamp": 200}\n')
+
+    migrate.run(paths, now_ms=NOW)
+
+    lines = [json.loads(l) for l in
+             (paths.claude_dir / "history.jsonl").read_text().splitlines() if l]
+    assert [e["display"] for e in lines] == ["from admin", "from work"]
+
+
+def test_duplicate_prompt_history_is_not_doubled(paths):
+    _legacy_setup(paths)
+    entry = '{"display": "same command", "timestamp": 100}\n'
+    (paths.profile_dir("Admin") / "history.jsonl").write_text(entry)
+    (paths.profile_dir("Work") / "history.jsonl").write_text(entry)
+
+    migrate.run(paths, now_ms=NOW)
+
+    lines = [l for l in
+             (paths.claude_dir / "history.jsonl").read_text().splitlines() if l]
+    assert len(lines) == 1
+
+
+def test_the_stale_shambles_sidecar_is_cleared_from_claude(paths):
+    """The old layout left Shambles' own sidecar inside ~/.claude. Once the
+    identity lives in the profile store it is redundant, and ~/.claude should
+    look exactly like a stock install."""
+    _legacy_setup(paths)
+    assert (paths.profile_dir("Admin") / ".shambles.json").exists()
+
+    migrate.run(paths, now_ms=NOW)
+
+    assert not (paths.claude_dir / ".shambles.json").exists()
+    # but the identity it carried is not lost
+    assert configjson.read_sidecar(paths.account("Admin")).get("oauthAccount")
