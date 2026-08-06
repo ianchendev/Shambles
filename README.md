@@ -125,23 +125,22 @@ which reintroduce the console.
 Target:      %USERPROFILE%\.local\bin\shamblesw.exe
 ```
 
-**Building the binary yourself.** The spec mirrors the release workflow, so
-both produce the same thing:
+**Building the binary yourself.** These are the exact commands the release
+workflow runs. PyInstaller writes a `shambles.spec` as it goes; that file is a
+generated artefact and is not tracked, so build from the flags rather than from
+a spec:
 
 ```bash
 pip install pyinstaller
-pyinstaller shambles.spec
-```
 
-Or explicitly, which is what CI runs:
-
-```bash
-# Windows — --windowed is what suppresses the console
+# Windows — --windowed is what suppresses the console window
 pyinstaller --onefile --windowed --name shambles shambles/__main__.py
 
-# Linux — no --windowed, or it swallows --version and --help
+# Linux — no --windowed, or it swallows --version and --help output
 pyinstaller --onefile --name shambles shambles/__main__.py
 ```
+
+The binary lands in `dist/`. On Windows it launches with no console attached.
 
 **Linux desktop entry** — `~/.local/share/applications/shambles.desktop`:
 
