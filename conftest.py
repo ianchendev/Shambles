@@ -1,6 +1,18 @@
+import os
+
 import pytest
 
 from shambles.paths import Paths
+
+#: POSIX mode assertions. Windows has no chmod that can express 0700/0600 --
+#: CPython maps os.chmod to the read-only attribute alone, so a directory
+#: reports 0o777 and a file 0o666 no matter what was requested. Shambles skips
+#: the chmod there by design (see TECH_SPEC 3.3); the files rely on the user
+#: profile's ACLs, the same protection Claude Code's own credentials get.
+posix_modes_only = pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows cannot express POSIX modes; credentials rely on ACLs there",
+)
 
 
 @pytest.fixture

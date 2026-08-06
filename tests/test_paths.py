@@ -2,6 +2,7 @@ from pathlib import Path
 
 from shambles.errors import ShamblesError, SymlinkPermissionError
 from shambles.paths import Paths
+from conftest import posix_modes_only
 
 
 def test_paths_derive_from_home(tmp_path):
@@ -37,6 +38,7 @@ def test_every_error_is_a_shambles_error():
     assert issubclass(SymlinkPermissionError, ShamblesError)
 
 
+@posix_modes_only
 def test_the_profile_store_is_owner_only(tmp_path):
     """It holds OAuth refresh tokens. The files are 600, but the directory
     should not be traversable either -- defence in depth, and the old layout
@@ -48,6 +50,7 @@ def test_the_profile_store_is_owner_only(tmp_path):
     assert mode == 0o700, oct(mode)
 
 
+@posix_modes_only
 def test_ensure_store_is_idempotent_and_repairs_loose_modes(tmp_path):
     import os
     import stat

@@ -6,7 +6,9 @@ present in ``~/.claude.json``, so a ``/login`` performed outside Shambles is
 detected rather than silently mistrusted.
 """
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import configjson
 
@@ -35,6 +37,33 @@ class State:
     live_email: str | None = None
     #: Email the marked profile expects, when that differs from live_email.
     expected_email: str | None = None
+
+
+#: Claude Code honours this, and it moves the *entire* config tree -- config,
+#: credentials and projects/ alike. Shambles swaps the login inside ~/.claude,
+#: so anything reading a different tree never sees the switch.
+CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
+
+
+def config_dir_override(paths) -> str | None:
+    """The foreign config directory the environment points at, if any.
+
+    Returns ``None`` when unset, empty, or pointing at the very directory
+    Shambles manages -- setting it explicitly to ``~/.claude`` changes nothing
+    and must not raise a false alarm.
+
+    Only the CLI is affected: the VS Code extension host does not inherit
+    shell environment variables, which is why this tool exists at all.
+    """
+    raw = os.environ.get(CONFIG_DIR_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        target = Path(raw).expanduser().resolve()
+        managed = paths.claude_dir.resolve()
+    except OSError:
+        return raw
+    return None if target == managed else str(target)
 
 
 def read_active(paths) -> str | None:

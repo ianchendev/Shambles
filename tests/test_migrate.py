@@ -13,6 +13,7 @@ import pytest
 from helpers import NOW, make_claude_json, make_legacy_profile
 from shambles import configjson, migrate, state, switcher
 from shambles.errors import ShamblesError
+from conftest import posix_modes_only
 
 
 def _legacy_setup(paths, active="Admin"):
@@ -75,6 +76,7 @@ def test_credentials_move_into_the_slim_store(paths):
         assert json.loads(paths.credentials(name).read_text())["claudeAiOauth"]
 
 
+@posix_modes_only
 def test_credentials_stay_owner_only(paths):
     import stat
     _legacy_setup(paths)

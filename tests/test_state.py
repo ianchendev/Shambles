@@ -76,3 +76,40 @@ def test_active_marker_round_trips(paths):
     assert state.read_active(paths) == "Work"
     state.write_active(paths, None)
     assert state.read_active(paths) is None
+
+
+# ---- CLAUDE_CONFIG_DIR silently redirects the CLI -----------------------
+
+def test_no_warning_when_the_override_is_unset(paths, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    assert state.config_dir_override(paths) is None
+
+
+def test_an_override_pointing_elsewhere_is_reported(paths, monkeypatch):
+    """Shambles swaps the login inside ~/.claude. If the CLI is pointed at a
+    different tree by the environment, it reads a config Shambles never
+    touches -- so switches appear to do nothing there."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/somewhere/else")
+    override = state.config_dir_override(paths)
+    assert override is not None
+    assert "/somewhere/else" in override
+
+
+def test_an_override_pointing_at_claude_dir_is_harmless(paths, monkeypatch):
+    """Explicitly setting it to the directory Shambles already manages changes
+    nothing, so it must not raise a false alarm."""
+    paths.claude_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(paths.claude_dir))
+    assert state.config_dir_override(paths) is None
+
+
+def test_a_relative_or_untidy_override_still_resolves(paths, monkeypatch):
+    """~ and trailing slashes must not turn a harmless setting into a warning."""
+    paths.claude_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(paths.claude_dir) + "/")
+    assert state.config_dir_override(paths) is None
+
+
+def test_an_empty_override_is_ignored(paths, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "")
+    assert state.config_dir_override(paths) is None
