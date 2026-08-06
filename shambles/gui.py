@@ -5,7 +5,7 @@ import signal
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from . import configjson, migrate, profiles, state, switcher
+from . import configjson, eject, migrate, profiles, state, switcher
 from .errors import ShamblesError
 from .paths import Paths
 from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
@@ -203,6 +203,13 @@ class ShamblesApp(tk.Tk):
         self.save_button.pack(side="left")
         ttk.Button(footer, text="＋  Add Account", style="Accent.TButton",
                    command=self.on_add).pack(side="right")
+        self.eject_button = ttk.Button(footer, text="Eject",
+                                       style="Shambles.TButton",
+                                       command=self.on_eject)
+        self.eject_button.pack(side="right", padx=(0, GAP_S))
+        Tooltip(self.eject_button,
+                "Stop using Shambles and hand ~/.claude back as a stock "
+                "Claude Code install. Nothing is deleted.", t)
 
         self.minsize(WINDOW_WIDTH, 0)
 
@@ -314,10 +321,36 @@ class ShamblesApp(tk.Tk):
         for profile in found:
             self._render_card(profile)
 
+        override = state.config_dir_override(self.paths)
+        if override:
+            self._render_override_banner(override)
+
         if current.kind == state.MISSING_PROFILE:
             ttk.Button(self.rows, text="Forget that profile",
                        style="Shambles.TButton",
                        command=self.on_forget_marker).pack(anchor="w", pady=(GAP_S, 0))
+
+    def _render_override_banner(self, target: str):
+        """CLAUDE_CONFIG_DIR is set, so the CLI reads a tree Shambles never
+        touches. Switches still work in VS Code -- the extension host does not
+        inherit shell environment variables -- but a terminal `claude` would
+        silently ignore them, which looks like Shambles doing nothing."""
+        t = self.theme
+        card = tk.Frame(self.rows, bg=t["chip_gone_bg"], padx=GAP_M, pady=GAP_M)
+        card.pack(fill="x", pady=(0, GAP_S))
+        tk.Label(card, text="⚠  CLAUDE_CONFIG_DIR is set", font=t.name,
+                 bg=t["chip_gone_bg"], fg=t["chip_gone_fg"], anchor="w",
+                 justify="left").pack(fill="x")
+        tk.Label(card, bg=t["chip_gone_bg"], fg=t["chip_gone_fg"], font=t.body,
+                 anchor="w", justify="left",
+                 wraplength=WINDOW_WIDTH - 4 * GAP_L,
+                 text=(f"Your environment points the claude CLI at:\n{target}\n\n"
+                       "Shambles swaps the login inside ~/.claude, so switches "
+                       "will not affect that terminal. VS Code is unaffected — "
+                       "the extension host does not read shell variables.\n\n"
+                       "Unset it in your shell profile to use Shambles from the "
+                       "CLI."),
+                 ).pack(fill="x", pady=(GAP_XS, 0))
 
     def _render_card(self, profile):
         """One profile as a bordered card, accented when it is the active one."""
@@ -394,6 +427,29 @@ class ShamblesApp(tk.Tk):
 
     def on_forget_marker(self):
         self._guarded(lambda: switcher.forget_active_marker(self.paths))
+
+    def on_eject(self):
+        """Hand the machine back as a stock Claude Code install."""
+        plan = eject.survey(self.paths)
+        others = (f"\n\nLogins for {', '.join(plan.other_profiles)} stay on "
+                  f"disk — they are only recoverable through a new "
+                  f"verification email, so removing them is your call."
+                  if plan.other_profiles else "")
+        if not messagebox.askokcancel(
+                WINDOW_TITLE,
+                "Stop using Shambles?\n\n"
+                "~/.claude keeps its current login, history, plugins and "
+                "settings, and goes back to being an ordinary Claude Code "
+                f"install. Nothing is deleted.{others}\n\nContinue?",
+                parent=self):
+            return
+        try:
+            done = eject.run(self.paths)
+        except ShamblesError as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
+            return
+        messagebox.showinfo(WINDOW_TITLE, eject.summary(done), parent=self)
+        self.refresh()
 
     def on_save(self):
         name = simpledialog.askstring("Save Current Account", "Profile name:",

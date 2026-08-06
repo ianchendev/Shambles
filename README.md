@@ -92,6 +92,72 @@ tool used to have and no longer does.
 It also does not help inside VS Code, where the extension host does not see
 shell environment variables.
 
+## Desktop shortcuts without a console window
+
+Tkinter apps launched through `python.exe` drag a blank terminal along behind
+the GUI. Each install route has a quiet path:
+
+| Route | Quiet launcher |
+|---|---|
+| Release binary | Already quiet — built with `--windowed` on Windows |
+| pipx / pip | `shamblesw` (the `gui-scripts` entry, backed by `pythonw.exe`) |
+| From a checkout | `pythonw.exe` on Windows, `python3` on Linux |
+
+`shambles` (console) stays available everywhere so `--version` and `--help`
+still print. On Windows a `gui-scripts` binary has nowhere to write, which is
+exactly why both exist.
+
+**Windows shortcut, from a checkout.** Right-click → New → Shortcut:
+
+```
+Target:      C:\Path\To\python\pythonw.exe C:\Path\To\Shambles\shambles.py
+Start in:    C:\Path\To\Shambles
+Run:         Normal window
+```
+
+`pythonw.exe` sits next to `python.exe` in the same install. Confirm with
+`where pythonw`. Nothing else is required — no `cmd /c`, no `start`, both of
+which reintroduce the console.
+
+**Windows shortcut, pipx install:**
+
+```
+Target:      %USERPROFILE%\.local\bin\shamblesw.exe
+```
+
+**Building the binary yourself.** The spec mirrors the release workflow, so
+both produce the same thing:
+
+```bash
+pip install pyinstaller
+pyinstaller shambles.spec
+```
+
+Or explicitly, which is what CI runs:
+
+```bash
+# Windows — --windowed is what suppresses the console
+pyinstaller --onefile --windowed --name shambles shambles/__main__.py
+
+# Linux — no --windowed, or it swallows --version and --help
+pyinstaller --onefile --name shambles shambles/__main__.py
+```
+
+**Linux desktop entry** — `~/.local/share/applications/shambles.desktop`:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Shambles
+Comment=Switch Claude Code accounts
+Exec=/home/you/.local/bin/shambles
+Terminal=false
+Categories=Development;Utility;
+```
+
+`Terminal=false` is the equivalent setting. Run `update-desktop-database
+~/.local/share/applications` afterwards if it does not appear.
+
 ## Using it
 
 ### First run
@@ -127,6 +193,34 @@ does not pick it up, run *Developer: Reload Window*.
 
 An already-running session keeps the token it loaded at startup — the switch is
 a change on disk, not a change inside a live process.
+
+## If CLAUDE_CONFIG_DIR is set
+
+Claude Code honours `CLAUDE_CONFIG_DIR`, and it relocates the **whole** config
+tree — config, credentials and `projects/` together. Shambles swaps the login
+inside `~/.claude`, so a shell with that variable set reads a tree Shambles
+never touches and every switch appears to do nothing there.
+
+Shambles detects this on startup and shows a warning naming the directory. The
+warning is CLI-only in effect: the VS Code extension host does not inherit
+shell environment variables, which is the reason this tool exists.
+
+To use Shambles from the terminal, remove the variable from your shell profile.
+
+## Leaving cleanly
+
+Do **not** uninstall by deleting `~/.claude-profiles/`. That folder holds the
+refresh tokens for every account you saved, and each one is only recoverable
+through a fresh verification email.
+
+Click **Eject** instead. It leaves `~/.claude` exactly as a stock Claude Code
+install expects — still signed in as the current account, with history, plugins
+and settings untouched — and removes only Shambles' own bookkeeping (the
+`active` marker, and the legacy `.shambles.json` if present).
+
+Eject never deletes a credentials file. Profiles stay on disk and the dialog
+tells you where, so removing them is a decision you make deliberately rather
+than a side effect of uninstalling.
 
 ## What it touches
 

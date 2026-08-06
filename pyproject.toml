@@ -32,7 +32,15 @@ dependencies = []
 dev = ["pytest>=8"]
 
 [project.scripts]
+# Console launcher. Keeps --version and --help usable on every platform.
 shambles = "shambles.__main__:main"
+
+[project.gui-scripts]
+# Windowed launcher, mirroring the python/pythonw convention. pip generates a
+# pythonw.exe-backed .exe for gui-scripts, so a desktop shortcut pointing here
+# opens no console window behind the GUI. Nothing is printed from it on
+# Windows -- that is the trade, and why the console entry above stays.
+shamblesw = "shambles.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/ianchendev/Shambles"

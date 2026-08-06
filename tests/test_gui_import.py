@@ -124,3 +124,52 @@ def _all_text(widget):
             found.append(str(text))
         found.extend(_all_text(child))
     return found
+
+
+def test_window_warns_when_config_dir_is_overridden(paths, make_app, monkeypatch):
+    """A globally-set CLAUDE_CONFIG_DIR makes the CLI ignore every swap."""
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/elsewhere/config")
+
+    app = make_app(paths)
+    app.update()
+
+    texts = []
+    def walk(w):
+        for child in w.winfo_children():
+            try:
+                texts.append(str(child.cget("text")))
+            except tk.TclError:
+                pass
+            walk(child)
+    walk(app)
+    joined = " ".join(texts)
+    assert "CLAUDE_CONFIG_DIR" in joined
+    assert "/elsewhere/config" in joined
+
+
+def test_window_is_quiet_when_config_dir_is_unset(paths, make_app, monkeypatch):
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+    app = make_app(paths)
+    app.update()
+
+    texts = []
+    def walk(w):
+        for child in w.winfo_children():
+            try:
+                texts.append(str(child.cget("text")))
+            except tk.TclError:
+                pass
+            walk(child)
+    walk(app)
+    assert "CLAUDE_CONFIG_DIR" not in " ".join(texts)

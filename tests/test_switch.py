@@ -10,6 +10,8 @@ from shambles import configjson, state, switcher
 from shambles.errors import (AlreadyManagedError, ConfigUnreadableError,
                              ProfileNotFoundError, ShamblesError)
 
+from conftest import posix_modes_only
+
 
 def _fixed(ms=NOW):
     return lambda: ms
@@ -111,6 +113,7 @@ def test_switching_to_a_profile_with_no_login_clears_credentials(paths):
     assert not paths.live_credentials.exists()
 
 
+@posix_modes_only
 def test_credentials_are_owner_only(paths):
     make_profile(paths, "Work", email="work@example.com", active=True)
     make_profile(paths, "Personal", email="me@example.com")
@@ -317,6 +320,7 @@ def test_save_current_account_survives_a_transient_lock(paths, monkeypatch):
     assert paths.credentials("Work").exists()
 
 
+@posix_modes_only
 def test_switching_keeps_the_store_owner_only(paths):
     import stat
     _two_profiles(paths)

@@ -8,8 +8,8 @@ Architectural reference for the Claude Code account switcher.
 | **Target** | Claude Code 2.1.x — CLI and VS Code extension |
 | **Platforms** | Linux, WSL2, Windows. macOS unsupported |
 | **Runtime** | Python 3.10+, Tkinter. No third-party dependencies |
-| **Source** | 1,658 lines across 12 modules |
-| **Tests** | 147 cases from 122 functions, all passing |
+| **Source** | ~1,800 lines across 13 modules |
+| **Tests** | 169 cases, all passing on Linux and Windows |
 
 ---
 
@@ -183,7 +183,41 @@ discrepancy is strictly better than displaying a confidently wrong account name.
 A profile that has never been logged into carries no stored identity, so it has
 no expectation to violate and is not treated as drift.
 
-### 1.8 Migration from the legacy layout
+### 1.8 Environment override
+
+`CLAUDE_CONFIG_DIR` relocates Claude Code's entire config tree — config,
+credentials and `projects/` alike. A shell exporting it reads a tree Shambles
+never touches, so switches silently have no effect there.
+
+`state.config_dir_override()` resolves the variable and compares it against the
+managed directory, returning `None` when unset, empty, or pointing at
+`~/.claude` itself. A non-`None` result renders a persistent banner naming the
+target.
+
+The effect is CLI-only. The VS Code extension host does not inherit shell
+environment variables — the same fact that makes this tool necessary.
+
+### 1.9 Eject
+
+The failure mode being prevented: a user removes Shambles by deleting
+`~/.claude-profiles/`, destroying every stashed refresh token. Each is
+recoverable only through a new verification email.
+
+`eject.run()`:
+
+1. Ensures `~/.claude` is signed in — if the live credentials are absent but
+   the active profile has a copy, restores it via the same atomic
+   temp-then-`os.replace` used elsewhere.
+2. Removes only Shambles' bookkeeping: the `active` marker and any legacy
+   `.shambles.json`.
+3. Leaves every profile directory intact and reports where they are.
+
+Idempotent, and refuses on the legacy layout — ejecting a symlinked
+`~/.claude` would leave a dangling link.
+
+Nothing in eject deletes a credentials file.
+
+### 1.10 Migration from the legacy layout
 
 Repair is **automatic on startup**, not offered as a choice. The old layout hid
 session history; there is no configuration of that anyone wants, and presenting
@@ -652,7 +686,10 @@ marker after failures    : unchanged
 transcripts still present: 314
 ```
 
-**Test 5 — Pathing.** *Pass, with the §3.3 Windows caveat.* All paths built via
+**Test 5 — Pathing.** *Pass, with the §3.3 Windows caveat.* Note that the
+POSIX-mode assertions in §3.1 are marked `posix_modes_only` and skip on
+Windows; asserting them there failed CI for six consecutive commits until the
+marker was added. All paths built via
 `pathlib` operators; no hardcoded separators; `os.replace` atomic on both
 platforms; Windows-illegal characters rejected in profile names. Shambles manages
 whichever environment it runs in and deliberately does not bridge Windows↔WSL —
