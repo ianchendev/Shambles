@@ -258,13 +258,14 @@ every session, exactly as it does without Shambles installed.
 
 **Versions before 1.0 got this wrong.** They swapped the whole `~/.claude`
 directory, so each account had its own `projects/` folder and switching
-appeared to erase weeks of history. If you used one of those, Shambles detects
-the old layout on startup and offers to merge everything back into one shared
-directory. Nothing is deleted; the old profile folders are left for you to
-remove once you are satisfied.
+appeared to erase weeks of history. If you used one of those, Shambles repairs
+it the next time you open the window — automatically, with nothing to click.
+There is no version of split history anyone wants, so it is not offered as a
+choice. The merge is additive: nothing is deleted, and the old profile folders
+stay on disk for you to remove once you are satisfied.
 
-Run that migration with **no Claude Code sessions open**. It briefly replaces
-`~/.claude`, and a running session writes there continuously.
+Open Shambles with **no Claude Code sessions running**. The repair briefly
+replaces `~/.claude`, and a live session writes there continuously.
 
 Unrelated but worth knowing: Claude Code prunes sessions older than 30 days on
 its own. Raise `cleanupPeriodDays` in `~/.claude/settings.json` if you want to
