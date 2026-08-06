@@ -183,6 +183,50 @@ def rename_profile(paths, old_name: str, new_name: str, *, sleep=time.sleep) -> 
     return new_name
 
 
+REMOVE_ACTIVE = (
+    "'{name}' is the account you are signed in as.\n\n"
+    "Switch to another profile first, then remove this one."
+)
+
+
+def remove_profile(paths, name: str) -> None:
+    """Delete a profile directory and the login inside it.
+
+    Irreversible in the sense that matters: the refresh token goes with it, so
+    that account needs a fresh ``/login`` and its verification email to come
+    back. Session history is untouched -- it does not live here.
+
+    Refuses the active profile even though the UI hides the control for it.
+    Hiding a button is not a safety property.
+    """
+    current = state.inspect(paths)
+    if current.kind == state.LEGACY_LAYOUT:
+        raise SwitchFailedError(MIGRATION_REQUIRED)
+    if name == current.profile:
+        raise AlreadyManagedError(REMOVE_ACTIVE.format(name=name))
+
+    target = paths.profile_dir(name)
+    # A name like ".." resolves outside the store. validate_profile_name blocks
+    # separators on the way in, but this deletes a tree, so it re-checks rather
+    # than trusting how the name arrived.
+    try:
+        resolved = target.resolve()
+        store = paths.profiles_dir.resolve()
+    except OSError as exc:
+        raise SwitchFailedError(f"Could not resolve '{name}':\n{exc}") from exc
+    if resolved.parent != store or resolved == store:
+        raise ProfileNotFoundError(f"'{name}' is not a profile.")
+    if not target.is_dir():
+        raise ProfileNotFoundError(f"Profile '{name}' does not exist.")
+
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        raise SwitchFailedError(
+            f"Could not remove '{name}':\n{exc}\n\n"
+            "Close any running Claude Code sessions and try again.") from exc
+
+
 def forget_active_marker(paths) -> None:
     """Clear a marker pointing at a profile that no longer exists."""
     state.write_active(paths, None)

@@ -327,3 +327,74 @@ def test_switching_keeps_the_store_owner_only(paths):
     switcher.switch(paths, "Personal", now_ms_fn=_fixed())
     for d in (paths.profiles_dir, paths.profile_dir("Personal")):
         assert stat.S_IMODE(d.stat().st_mode) == 0o700, f"{d} is {oct(d.stat().st_mode)}"
+
+
+# ---- removing a profile -------------------------------------------------
+
+def test_remove_deletes_the_profile_directory(paths):
+    _two_profiles(paths)
+    assert paths.credentials("Personal").exists()
+
+    switcher.remove_profile(paths, "Personal")
+
+    assert not paths.profile_dir("Personal").exists()
+    assert state.profile_names(paths) == ["Work"]
+
+
+def test_remove_refuses_the_active_profile(paths):
+    """The UI hides the button, but the guard belongs here too -- hiding a
+    control is not a safety property."""
+    _two_profiles(paths)
+    with pytest.raises(ShamblesError):
+        switcher.remove_profile(paths, "Work")
+    assert paths.credentials("Work").exists()
+
+
+def test_remove_refuses_an_unknown_profile(paths):
+    _two_profiles(paths)
+    with pytest.raises(ProfileNotFoundError):
+        switcher.remove_profile(paths, "Nope")
+
+
+def test_remove_refuses_a_name_that_escapes_the_store(paths):
+    """Defence against a name that resolves outside ~/.claude-profiles."""
+    _two_profiles(paths)
+    for hostile in ("..", "../..", "Personal/../..", "/etc"):
+        with pytest.raises(ShamblesError):
+            switcher.remove_profile(paths, hostile)
+    assert paths.claude_dir.exists()
+
+
+def test_remove_leaves_everything_else_alone(paths):
+    _two_profiles(paths)
+    sessions = paths.claude_dir / "projects" / "-repo"
+    sessions.mkdir(parents=True)
+    (sessions / "a.jsonl").write_text("keep me")
+
+    switcher.remove_profile(paths, "Personal")
+
+    assert (sessions / "a.jsonl").read_text() == "keep me"
+    assert paths.live_credentials.exists()
+    assert state.inspect(paths).kind == state.MANAGED
+    assert state.read_active(paths) == "Work"
+
+
+def test_remove_does_not_disturb_the_config(paths):
+    _two_profiles(paths)
+    before = configjson.load(paths.claude_json)
+    switcher.remove_profile(paths, "Personal")
+    assert configjson.load(paths.claude_json) == before
+
+
+def test_switching_still_works_after_a_removal(paths):
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Personal", email="me@example.com")
+    make_profile(paths, "Third", email="third@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    switcher.remove_profile(paths, "Personal")
+    switcher.switch(paths, "Third", now_ms_fn=_fixed())
+
+    assert state.inspect(paths).profile == "Third"
+    assert state.live_email(paths) == "third@example.com"

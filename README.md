@@ -237,6 +237,19 @@ Eject never deletes a credentials file. Profiles stay on disk and the dialog
 tells you where, so removing them is a decision you make deliberately rather
 than a side effect of uninstalling.
 
+### Removing an account
+
+Each inactive profile carries a **✕** beside its Switch button. The active
+profile has none — the login you are signed in as cannot be deleted by a
+misclick, and the same rule is enforced in the code rather than only in the UI.
+
+Confirming deletes that profile's directory and the refresh token in it. That
+account then needs a fresh `/login` and its verification email to come back.
+Nothing else is affected: session history, plugins and settings are shared and
+live elsewhere.
+
+To stop using Shambles entirely without deleting anything, use **Eject** below.
+
 ## What it touches
 
 Only your **login** is account-scoped. Everything else in `~/.claude` is
@@ -357,9 +370,10 @@ What protects your data:
 - If the live login belongs to an account other than the one Shambles thinks is
   active — someone ran `/login` by hand — the UI says so rather than
   mislabelling it.
-- There is no delete-profile button. The only deletions in the entire codebase
-  are pruning backups past ten and clearing the live credentials file when you
-  switch to a profile that has never been logged in.
+- The only automatic deletions are pruning backups past ten and clearing the
+  live credentials file when you switch to a profile that has never been logged
+  in. Removing a profile is possible but never automatic: the ✕ appears only on
+  inactive profiles and asks for confirmation naming the account first.
 - `~/.claude` is never moved, replaced or deleted. Session history, plugins and
   settings are simply not part of what switching touches.
 
