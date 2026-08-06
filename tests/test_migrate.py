@@ -146,3 +146,62 @@ def test_switch_refuses_while_the_legacy_layout_is_present(paths):
     _legacy_setup(paths)
     with pytest.raises(ShamblesError):
         switcher.switch(paths, "Work", now_ms_fn=lambda: NOW)
+
+
+# ---- migration happens on sight, not on request -------------------------
+
+def test_app_migrates_on_startup_without_asking(paths, make_app, monkeypatch):
+    """The old layout hid session history. There is no version of that anyone
+    wants, so opening the window fixes it rather than offering to."""
+    from shambles import gui
+
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda *a, **k: shown.append(a))
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **k: shown.append(a))
+
+    _legacy_setup(paths)
+    assert migrate.needed(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert not migrate.needed(paths), "startup left the broken layout in place"
+    assert paths.claude_dir.is_dir() and not paths.claude_dir.is_symlink()
+    sessions = sorted(p.name for p in
+                      (paths.claude_dir / "projects").rglob("*.jsonl"))
+    assert len(sessions) == 7, "history was not merged"
+    assert state.inspect(paths).kind == state.MANAGED
+
+
+def test_startup_migration_reports_what_it_did(paths, make_app, monkeypatch):
+    from shambles import gui
+
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda *a, **k: shown.append(" ".join(str(x) for x in a)))
+    _legacy_setup(paths)
+    app = make_app(paths)
+    app.update()
+
+    assert shown, "migration happened silently"
+    assert "2" in shown[0], "did not say how many sessions it merged"
+
+
+def test_startup_is_untouched_when_no_migration_is_needed(paths, make_app,
+                                                          monkeypatch):
+    from shambles import gui
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda *a, **k: shown.append(a))
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert not shown, "showed a migration dialog with nothing to migrate"
