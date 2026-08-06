@@ -38,8 +38,7 @@ def make_profile(paths, name, *, email=None, token=True,
                  refresh_expires_ms=NOW + 30 * DAY_MS, settings=None,
                  active=False):
     """Create a slim profile: credentials and a stashed identity, nothing else."""
-    d = paths.profile_dir(name)
-    d.mkdir(parents=True, exist_ok=True)
+    d = paths.ensure_profile(name)
     if token:
         write_json(paths.credentials(name), credentials(refresh_expires_ms))
     if email:

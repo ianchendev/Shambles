@@ -208,7 +208,7 @@ def run(paths, *, now_ms: int) -> Plan:
 
     # 5. Write the slim profile store.
     for name, (creds, account) in identities.items():
-        paths.profile_dir(name).mkdir(parents=True, exist_ok=True)
+        paths.ensure_profile(name)
         if creds is not None:
             paths.credentials(name).write_bytes(creds)
             os.chmod(paths.credentials(name), 0o600)

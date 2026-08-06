@@ -35,3 +35,24 @@ def test_real_uses_home(monkeypatch, tmp_path):
 
 def test_every_error_is_a_shambles_error():
     assert issubclass(SymlinkPermissionError, ShamblesError)
+
+
+def test_the_profile_store_is_owner_only(tmp_path):
+    """It holds OAuth refresh tokens. The files are 600, but the directory
+    should not be traversable either -- defence in depth, and the old layout
+    guaranteed it."""
+    import stat
+    p = Paths.for_home(tmp_path)
+    p.ensure_store()
+    mode = stat.S_IMODE((tmp_path / ".claude-profiles").stat().st_mode)
+    assert mode == 0o700, oct(mode)
+
+
+def test_ensure_store_is_idempotent_and_repairs_loose_modes(tmp_path):
+    import os
+    import stat
+    p = Paths.for_home(tmp_path)
+    p.ensure_store()
+    os.chmod(p.profiles_dir, 0o755)          # as a stray mkdir would leave it
+    p.ensure_store()
+    assert stat.S_IMODE(p.profiles_dir.stat().st_mode) == 0o700
