@@ -13,11 +13,11 @@ this tool's.
 """
 
 import os
-import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import state
+from . import state, switcher
 from .errors import ShamblesError
 
 #: Shambles' own artefacts inside ~/.claude. Only ever the sidecar left by the
@@ -65,7 +65,7 @@ def survey(paths) -> Plan:
     )
 
 
-def run(paths) -> Plan:
+def run(paths, *, sleep=time.sleep) -> Plan:
     """Restore a stock installation. Never deletes a credentials file.
 
     Idempotent: running it on an already-stock install is a no-op that still
@@ -84,11 +84,12 @@ def run(paths) -> Plan:
         if stored.exists():
             try:
                 paths.claude_dir.mkdir(parents=True, exist_ok=True)
-                tmp = paths.live_credentials.with_name(
-                    paths.live_credentials.name + ".shambles-tmp")
-                shutil.copyfile(stored, tmp)
-                os.chmod(tmp, 0o600)
-                os.replace(tmp, paths.live_credentials)
+                # Same helper the switch path uses: one place owns the
+                # chmod-600-then-atomic-replace sequence, and the retry that
+                # makes it survive a momentarily locked file.
+                switcher.copy_secret(stored, paths.live_credentials, sleep=sleep)
+            except ShamblesError:
+                raise
             except OSError as exc:
                 raise EjectError(
                     f"Could not restore the login into ~/.claude:\n{exc}"

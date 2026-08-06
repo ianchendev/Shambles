@@ -140,3 +140,25 @@ def test_eject_with_no_active_profile_still_tidies_up(paths):
     assert plan.active is None
     assert paths.live_credentials.exists()
     assert not paths.active_marker.exists()
+
+
+def test_restoring_a_login_retries_a_transient_lock(paths, monkeypatch):
+    """Eject re-installs the credentials file, so it needs the same retry the
+    switch path has -- otherwise a momentary lock aborts an uninstall."""
+    import shutil as _shutil
+    _managed(paths)
+    paths.live_credentials.unlink()
+
+    real, calls = _shutil.copyfile, {"n": 0}
+
+    def flaky(src, dst, *a, **k):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError(13, "The process cannot access the file")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(_shutil, "copyfile", flaky)
+    eject.run(paths, sleep=lambda _s: None)
+
+    assert calls["n"] > 2, "gave up on the first refusal"
+    assert paths.live_credentials.exists()
