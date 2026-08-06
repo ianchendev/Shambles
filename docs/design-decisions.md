@@ -227,9 +227,14 @@ Provider            what bytes mean — provider-shaped, platform-blind
 ```
 
 The declarative half of each Provider lives in
-[`docs/providers/<id>.json`](providers/) — paths, service-name templates, JSON
-pointers, expiry semantics, login commands. The code half is only what cannot be
-data: JWT decoding, Windows chunk reassembly, the `~/.claude.json` splice.
+[`shambles/providers/<id>.json`](../shambles/providers/) — paths, service-name
+templates, JSON pointers, expiry semantics, login commands. The code half is only
+what cannot be data: JWT decoding, Windows chunk reassembly, the
+`~/.claude.json` splice.
+
+Those specs ship **inside the package**, not under `docs/`, because they are read
+at runtime and there must be exactly one copy. A documentation copy would be a
+second source of truth, which is the drift this design exists to prevent.
 
 **The core never learns a provider's name.** `switcher`, `state` and `gui` talk
 only to the `Provider` interface.
@@ -265,8 +270,8 @@ A layer diagram does not make a system swappable. Two things do:
    passing a suite that already exists.**
 2. **The spec file is the same file the documentation renders from.** Facts cannot
    drift from docs because there is one copy. A JSON Schema in
-   `docs/providers/schema.json`, validated in CI, catches typos in the one place
-   that now matters.
+   `tests/test_spec.py`, run in CI, catches a spec that is malformed or fails to
+   ship as package data — the latter being invisible until runtime.
 
 The research already proved these facts drift: the Keychain service name became
 computed rather than constant, and `refreshTokenExpiresAt` is absent from the VS

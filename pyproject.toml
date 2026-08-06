@@ -39,7 +39,12 @@ Homepage = "https://github.com/ianchendev/Shambles"
 Issues = "https://github.com/ianchendev/Shambles/issues"
 
 [tool.setuptools]
-packages = ["shambles"]
+packages = ["shambles", "shambles.providers", "shambles.stores"]
+
+# Provider specs are data, not code, so they need declaring explicitly or they
+# ship missing and every provider fails to load at runtime.
+[tool.setuptools.package-data]
+"shambles.providers" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
