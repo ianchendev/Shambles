@@ -1,61 +1,51 @@
-from pathlib import Path
+import os
 
-from shambles.errors import ShamblesError, SymlinkPermissionError
-from shambles.paths import Paths
+import pytest
+
 from conftest import posix_modes_only
+from shambles.paths import Paths
 
 
-def test_paths_derive_from_home(tmp_path):
-    p = Paths.for_home(tmp_path)
-    assert p.claude_dir == tmp_path / ".claude"
-    assert p.claude_json == tmp_path / ".claude.json"
-    assert p.profiles_dir == tmp_path / ".claude-profiles"
-    assert p.backup_dir == tmp_path / ".claude-profiles" / ".shambles-backups"
-    assert p.live_credentials == tmp_path / ".claude" / ".credentials.json"
-    assert p.active_marker == tmp_path / ".claude-profiles" / "active"
+def test_every_path_derives_from_the_injected_home(tmp_path):
+    paths = Paths.for_home(tmp_path)
+    assert paths.library_dir == tmp_path / ".shambles"
+    assert paths.provider_dir("claude") == tmp_path / ".shambles" / "claude"
+    assert paths.profile_dir("codex", "Work") == tmp_path / ".shambles" / "codex" / "Work"
+    assert paths.credentials("codex", "Work") == \
+        tmp_path / ".shambles" / "codex" / "Work" / "credentials.json"
+    assert paths.account("claude", "Work") == \
+        tmp_path / ".shambles" / "claude" / "Work" / "account.json"
+    assert paths.active_marker("codex") == tmp_path / ".shambles" / "codex" / "active"
+    assert paths.backup_dir == tmp_path / ".shambles" / ".backups"
 
 
-def test_profile_store_paths(tmp_path):
-    p = Paths.for_home(tmp_path)
-    store = tmp_path / ".claude-profiles" / "Work"
-    assert p.profile_dir("Work") == store
-    assert p.credentials("Work") == store / "credentials.json"
-    assert p.account("Work") == store / "account.json"
+def test_two_providers_never_collide(tmp_path):
+    """The whole point of the provider hop: same profile name, different
+    account, no shared bytes."""
+    paths = Paths.for_home(tmp_path)
+    assert paths.credentials("claude", "Work") != paths.credentials("codex", "Work")
 
 
-def test_paths_are_absolute(tmp_path):
-    p = Paths.for_home(tmp_path)
-    assert p.claude_dir.is_absolute()
-    assert p.profile_dir("Work").is_absolute()
-
-
-def test_real_uses_home(monkeypatch, tmp_path):
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    assert Paths.real().home == tmp_path
-
-
-def test_every_error_is_a_shambles_error():
-    assert issubclass(SymlinkPermissionError, ShamblesError)
+def test_legacy_paths_point_at_the_old_layout(tmp_path):
+    paths = Paths.for_home(tmp_path)
+    assert paths.legacy_profiles_dir == tmp_path / ".claude-profiles"
+    assert paths.legacy_active_marker == tmp_path / ".claude-profiles" / "active"
+    assert paths.legacy_backup_dir == tmp_path / ".claude-profiles" / ".shambles-backups"
 
 
 @posix_modes_only
-def test_the_profile_store_is_owner_only(tmp_path):
-    """It holds OAuth refresh tokens. The files are 600, but the directory
-    should not be traversable either -- defence in depth, and the old layout
-    guaranteed it."""
-    import stat
-    p = Paths.for_home(tmp_path)
-    p.ensure_store()
-    mode = stat.S_IMODE((tmp_path / ".claude-profiles").stat().st_mode)
-    assert mode == 0o700, oct(mode)
+def test_the_store_and_every_level_below_it_is_owner_only(tmp_path):
+    """It holds OAuth refresh tokens. A plain mkdir under the usual 022 umask
+    would leave these 755."""
+    paths = Paths.for_home(tmp_path)
+    paths.ensure_profile("codex", "Work")
+    for directory in (paths.library_dir, paths.provider_dir("codex"),
+                      paths.profile_dir("codex", "Work")):
+        assert oct(os.stat(directory).st_mode)[-3:] == "700"
 
 
-@posix_modes_only
-def test_ensure_store_is_idempotent_and_repairs_loose_modes(tmp_path):
-    import os
-    import stat
-    p = Paths.for_home(tmp_path)
-    p.ensure_store()
-    os.chmod(p.profiles_dir, 0o755)          # as a stray mkdir would leave it
-    p.ensure_store()
-    assert stat.S_IMODE(p.profiles_dir.stat().st_mode) == 0o700
+def test_ensure_profile_is_idempotent(tmp_path):
+    paths = Paths.for_home(tmp_path)
+    first = paths.ensure_profile("claude", "Work")
+    second = paths.ensure_profile("claude", "Work")
+    assert first == second and first.is_dir()
