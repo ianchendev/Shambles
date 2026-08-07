@@ -5,6 +5,7 @@ layout logic. Tk gives no cascading stylesheet, so every value here has to be
 applied per widget -- collecting them in one place is what keeps that bearable.
 """
 
+import os
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
@@ -15,11 +16,19 @@ FONT_STACK = ("Ubuntu", "Segoe UI", "Noto Sans", "DejaVu Sans")
 
 # Type scale. Bumped well above Tk's 10pt default, which is unreadable on a
 # high-resolution display.
-SIZE_TITLE = 18
-SIZE_NAME = 13
-SIZE_BODY = 11
-SIZE_CHIP = 10
-SIZE_CAPTION = 9
+# Type scale, in points. Tk converts points to pixels with the `tk scaling`
+# factor, so the rendered size is `size * scaling`.
+#
+# 16px is the floor every current accessibility guideline lands on for body
+# text -- WCAG itself sets no minimum, requiring instead that text survive a
+# 200% resize, but 16px is the practical consensus. At BASE_SCALING that means
+# a 12pt body. The previous 11pt rendered 14.9px, which is why the window read
+# as cramped.
+SIZE_TITLE = 20      # 27px
+SIZE_NAME = 15       # 20px
+SIZE_BODY = 12       # 16px -- the floor
+SIZE_CHIP = 11       # 15px, secondary
+SIZE_CAPTION = 10    # 13.5px, uppercase labels only
 
 PALETTE = {
     "window": "#f4f5f7",
@@ -39,11 +48,14 @@ PALETTE = {
     "warn": "#b45309",
 }
 
-# Spacing scale, so padding is consistent instead of ad hoc.
-GAP_XS, GAP_S, GAP_M, GAP_L = 4, 8, 14, 20
+# Spacing scale, so padding is consistent instead of ad hoc. These are pixels
+# and Tk does not scale them, so they are sized alongside the type rather than
+# left behind it -- larger text in unchanged padding is what makes a window
+# feel tight.
+GAP_XS, GAP_S, GAP_M, GAP_L = 6, 10, 16, 24
 
-WINDOW_WIDTH = 600
-ACCENT_BAR_WIDTH = 4
+WINDOW_WIDTH = 680
+ACCENT_BAR_WIDTH = 5
 
 
 def pick_family(root) -> str:
@@ -135,14 +147,83 @@ class Theme:
         )
 
 
-def scale_for_display(root, minimum: float = 1.35) -> float:
-    """Nudge Tk's point-to-pixel ratio up on dense displays.
+#: Point-to-pixel ratio assumed when the display reports nothing useful.
+#: 1.35 is a hair above the 96dpi default of 1.333, which is what makes a 12pt
+#: body land on the 16px floor.
+BASE_SCALING = 1.35
 
-    Tk reads this from the X server, which under WSLg reports a conservative
-    96 dpi regardless of the real panel. Left alone, every font comes out too
-    small to read comfortably.
+#: Above this framebuffer width, a 96dpi report is not credible.
+WIDE_PANEL_PX = 2560
+WIDE_PANEL_SCALING = 1.6
+
+#: Manual escape hatch, e.g. SHAMBLES_SCALE=1.9 for a very dense panel.
+SCALE_ENV = "SHAMBLES_SCALE"
+
+#: Refuse anything outside this: a typo should not produce an unusable window.
+SCALING_LIMITS = (1.0, 4.0)
+
+
+def scaling_for(current: float, screen_width: int, override=None) -> float:
+    """Decide Tk's point-to-pixel ratio.
+
+    ``current`` is what the X server reported. Under WSLg, and on plenty of
+    bare Linux setups, that is a flat 96dpi -- 1.333 -- no matter how dense the
+    panel actually is, so a wide framebuffer reporting it is evidence the
+    report is wrong rather than that the display is coarse.
+
+    A desktop already doing fractional scaling reports a higher figure, and
+    that is left alone: raising it again would double-scale.
     """
+    if override:
+        try:
+            wanted = float(override)
+        except (TypeError, ValueError):
+            wanted = 0.0
+        if SCALING_LIMITS[0] <= wanted <= SCALING_LIMITS[1]:
+            return wanted
+
+    floor = WIDE_PANEL_SCALING if screen_width >= WIDE_PANEL_PX else BASE_SCALING
+    return max(current, floor)
+
+
+def scale_for_display(root, minimum: float | None = None) -> float:
+    """Apply :func:`scaling_for` to a live root window."""
     current = float(root.tk.call("tk", "scaling"))
-    wanted = max(current, minimum)
+    wanted = scaling_for(current, root.winfo_screenwidth(),
+                         os.environ.get(SCALE_ENV))
+    if minimum is not None:
+        wanted = max(wanted, minimum)
     root.tk.call("tk", "scaling", wanted)
     return wanted
+
+
+#: Never let the window exceed this share of the screen. Beyond it the footer
+#: runs off the bottom and, since the window is not resizable, its buttons
+#: become unreachable.
+MAX_HEIGHT_FRACTION = 0.8
+
+#: Width a profile name may occupy before it is elided, in pixels. The window
+#: is fixed-width and Tk labels do not truncate, so an over-long name stretches
+#: the whole window instead of being clipped. Measured against the card's own
+#: geometry: total width less the accent spine, padding and the two controls.
+NAME_MAX_PX = WINDOW_WIDTH - 260
+
+
+def elide(text: str, font, max_px: int) -> str:
+    """Shorten ``text`` until it measures under ``max_px``, ending in an
+    ellipsis.
+
+    Preferred over rejecting long names outright: a character limit has to be
+    re-guessed every time the type scale moves, and it refuses names that would
+    have rendered perfectly well in a wider window.
+    """
+    if not text or font.measure(text) <= max_px:
+        return text
+    ellipsis = "…"
+    budget = max_px - font.measure(ellipsis)
+    if budget <= 0:
+        return ellipsis
+    cut = text
+    while cut and font.measure(cut) > budget:
+        cut = cut[:-1]
+    return (cut + ellipsis) if cut else ellipsis

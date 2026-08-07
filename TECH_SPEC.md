@@ -729,6 +729,29 @@ easily mistaken for switching-related loss.
 
 ---
 
+### 1.13 Sizing
+
+Type is scaled to a 16px body minimum — the practical floor across current
+accessibility guidance, and 12pt at Tk's point-to-pixel conversion. The
+previous 11pt rendered 14.9px.
+
+`theme.scaling_for()` is a pure function of the reported factor, the
+framebuffer width and an optional `SHAMBLES_SCALE` override, so the decision is
+testable without a display. A framebuffer at or above 2560px reporting 96dpi is
+treated as a misreport rather than a coarse panel; an already-scaled desktop
+reporting a higher factor is left alone to avoid double-scaling.
+
+Pixel spacing is sized alongside the type. Tk scales points, not pixels, so
+padding left at its old values would have tightened as the text grew.
+
+Two fixed-window hazards are handled rather than assumed away. Tk labels do not
+truncate, so `theme.elide()` shortens a profile name to a measured pixel budget
+with the full value on hover — a character cap was tried first and had to be
+re-guessed the moment the type scale moved. And the card list scrolls once it
+would push the footer past `MAX_HEIGHT_FRACTION` of screen height: the window
+has no resize handle, so a footer off the bottom takes Eject and Add Account
+with it.
+
 ## 5. Test Coverage Summary
 
 **147 cases from 122 functions**, all passing, ~1.3 s. The gap is

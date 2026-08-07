@@ -340,6 +340,37 @@ Showing nothing rather than a guess is deliberate. An earlier version restored
 each profile's stashed figures into `~/.claude.json` on switch, which made the
 VS Code meter display hours-old numbers as though they were current.
 
+## Sizing and readability
+
+Body text renders at **16px minimum**, which is the floor every current
+accessibility guideline converges on — WCAG itself sets no minimum, requiring
+instead that text survive a 200% resize, but 16px is the practical consensus.
+Tk sizes fonts in points and multiplies by its scaling factor, so that means a
+12pt body.
+
+Shambles picks the scaling factor rather than trusting the display:
+
+| Framebuffer width | Factor | Why |
+|---|---|---|
+| ≥ 2560px | 1.6 | A 96dpi report on a panel that wide is not credible — WSLg and many Linux setups report a flat 96dpi whatever the hardware |
+| below that | 1.35 | Just above the 96dpi default, enough to put 12pt on the 16px floor |
+| already scaled | left alone | A desktop doing fractional scaling reports a higher figure; raising it again would double-scale |
+
+Override it if your display needs something else:
+
+```bash
+SHAMBLES_SCALE=1.9 shambles
+```
+
+Values outside 1.0–4.0 are ignored, so a typo cannot produce an unusable
+window.
+
+The window is a fixed width and Tk labels do not truncate, so a long profile
+name is elided with the full value on hover rather than stretching the window.
+The card list scrolls once it would otherwise push the footer past 80% of
+screen height — about five accounts on a 1080p display, more on anything
+taller.
+
 ## Checking token health
 
 Each row shows a countdown chip beside the email:
