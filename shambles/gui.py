@@ -9,8 +9,8 @@ from . import configjson, eject, migrate, profiles, state, switcher, usage
 from .errors import ShamblesError
 from .paths import Paths
 from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
-                    MAX_HEIGHT_FRACTION, NAME_MAX_PX, WINDOW_WIDTH, Theme,
-                    elide, scale_for_display)
+                    MAX_HEIGHT_FRACTION, MIN_HEIGHT, NAME_MAX_PX,
+                    WINDOW_WIDTH, Theme, elide, scale_for_display)
 
 WINDOW_TITLE = "Shambles"
 
@@ -291,28 +291,11 @@ class ShamblesApp(tk.Tk):
         self.subtitle.pack(fill="x")
 
         # -- profile cards -----------------------------------------------
-        # The card list scrolls only when it has to. A fixed-size window that
-        # grows with each profile eventually pushes the footer off the bottom,
-        # and with no resize handle those buttons cannot be reached again.
-        self._viewport = tk.Canvas(self, bg=t["window"], highlightthickness=0,
-                                   bd=0)
-        self._scrollbar = ttk.Scrollbar(self, orient="vertical",
-                                        command=self._viewport.yview)
-        self._viewport.configure(yscrollcommand=self._scrollbar.set)
-        self._viewport.pack(side="left", fill="both", expand=True)
-
-        self.rows = tk.Frame(self._viewport, bg=t["window"], padx=GAP_L)
-        self._rows_window = self._viewport.create_window(
-            (0, 0), window=self.rows, anchor="nw")
-        self.rows.bind("<Configure>", self._fit_viewport)
-        self._viewport.bind(
-            "<Configure>",
-            lambda e: self._viewport.itemconfigure(self._rows_window,
-                                                   width=e.width))
-        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            self.bind_all(seq, self._on_wheel)
 
         # -- footer ------------------------------------------------------
+        # Packed before the card list so it claims the bottom strip across the
+        # whole window. Packed after, it would take a right-hand slab instead
+        # and leave the cards stranded in a narrow column.
         footer = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
         footer.pack(side="bottom", fill="x")
         self.save_button = ttk.Button(footer, text="Save Current Account",
@@ -337,7 +320,32 @@ class ShamblesApp(tk.Tk):
                 "Stop using Shambles and hand ~/.claude back as a stock "
                 "Claude Code install. Nothing is deleted.", t)
 
-        self.minsize(WINDOW_WIDTH, 0)
+        # -- card list ---------------------------------------------------
+        # Scrolls only when it has to. A fixed-size window that grows with each
+        # profile eventually pushes the footer off the bottom, and with no
+        # resize handle those buttons cannot be reached again.
+        body = tk.Frame(self, bg=t["window"])
+        body.pack(fill="both", expand=True)
+
+        self._viewport = tk.Canvas(body, bg=t["window"], highlightthickness=0,
+                                   bd=0)
+        self._scrollbar = ttk.Scrollbar(body, orient="vertical",
+                                        command=self._viewport.yview)
+        self._viewport.configure(yscrollcommand=self._scrollbar.set)
+        self._viewport.pack(side="left", fill="both", expand=True)
+
+        self.rows = tk.Frame(self._viewport, bg=t["window"], padx=GAP_L)
+        self._rows_window = self._viewport.create_window(
+            (0, 0), window=self.rows, anchor="nw")
+        self.rows.bind("<Configure>", self._fit_viewport)
+        self._viewport.bind(
+            "<Configure>",
+            lambda e: self._viewport.itemconfigure(self._rows_window,
+                                                   width=e.width))
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_all(seq, self._on_wheel)
+
+        self.minsize(WINDOW_WIDTH, MIN_HEIGHT)
 
         self._pump = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -479,7 +487,7 @@ class ShamblesApp(tk.Tk):
         room = max(room, 200)
         self._viewport.configure(height=min(needed, room))
         if needed > room:
-            self._scrollbar.pack(side="right", fill="y", before=self._viewport)
+            self._scrollbar.pack(side="right", fill="y")
         else:
             self._scrollbar.pack_forget()
             self._viewport.yview_moveto(0)
