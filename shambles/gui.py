@@ -143,11 +143,39 @@ class Tooltip:
 
     def __init__(self, widget, text, theme=None):
         self.widget, self.text, self.theme, self.tip = widget, text, theme, None
-        widget.bind("<Enter>", self._show, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-        # refresh() destroys every row widget on each switch. Without this a
-        # tooltip visible at that moment never sees <Leave> and is orphaned.
-        widget.bind("<Destroy>", self._hide, add="+")
+        # Bound to the widget *and* everything inside it. Tk delivers <Enter>
+        # to the deepest widget under the pointer, so a tooltip on a container
+        # whose children cover it would never fire -- which is exactly what a
+        # usage row is.
+        for target in self._tree(widget):
+            target.bind("<Enter>", self._show, add="+")
+            target.bind("<Leave>", self._maybe_hide, add="+")
+            # refresh() destroys every row widget on each switch. Without this
+            # a tooltip visible at that moment never sees <Leave> and is
+            # orphaned on the desktop.
+            target.bind("<Destroy>", self._hide, add="+")
+
+    @staticmethod
+    def _tree(widget):
+        found = [widget]
+        for child in widget.winfo_children():
+            found.extend(Tooltip._tree(child))
+        return found
+
+    def _maybe_hide(self, _event=None):
+        """Ignore a <Leave> that is only the pointer crossing into a child.
+
+        Without this, sliding across a row's label onto its bar would hide and
+        re-show the tooltip on every boundary.
+        """
+        try:
+            under = self.widget.winfo_containing(
+                self.widget.winfo_pointerx(), self.widget.winfo_pointery())
+        except tk.TclError:
+            under = None
+        if under is not None and under in self._tree(self.widget):
+            return
+        self._hide()
 
     def _show(self, _event=None):
         if self.tip or not self.text:

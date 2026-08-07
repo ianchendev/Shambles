@@ -24,6 +24,11 @@ TOKEN_WARNINGS = {
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
 
+#: The window is a fixed width and Tk labels do not truncate, so a long name
+#: stretches the whole window rather than being clipped. 80 characters took a
+#: 600px window to 1092px.
+MAX_NAME_LENGTH = 40
+
 #: Below this many days remaining, the countdown is worth drawing attention to.
 EXPIRY_WARN_DAYS = 7
 
@@ -183,6 +188,11 @@ def validate_profile_name(name, existing) -> str:
         raise ProfileNameError("Profile name cannot be '.' or '..'.")
     if cleaned.startswith("."):
         raise ProfileNameError("Profile name cannot start with a dot.")
+    if len(cleaned) > MAX_NAME_LENGTH:
+        raise ProfileNameError(
+            f"That name is {len(cleaned)} characters. Keep it to "
+            f"{MAX_NAME_LENGTH} or fewer so the window stays a sensible size.")
+
     bad = sorted(set(cleaned) & INVALID_NAME_CHARS)
     if bad:
         raise ProfileNameError("Profile name cannot contain:  " + "  ".join(bad))

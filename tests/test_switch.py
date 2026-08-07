@@ -485,3 +485,80 @@ def test_a_synced_stash_stays_owner_only(paths):
     switcher.sync_active_credentials(paths, "Work")
     mode = stat.S_IMODE(os.stat(paths.credentials("Work")).st_mode)
     assert mode == 0o600, oct(mode)
+
+
+def test_a_failure_after_the_login_lands_does_not_overwrite_the_old_profile(paths,
+                                                                            monkeypatch):
+    """switch() installs the target's login, then splices identity, then moves
+    the marker. If the splice fails, the marker still names the outgoing
+    profile while ~/.claude holds the incoming login -- and the window's
+    refresh would then copy that login into the outgoing profile's store,
+    destroying the account you switched away from."""
+    make_profile(paths, "Work", email="work@example.com", active=True,
+                 refresh_expires_ms=NOW + 10 * DAY_MS)
+    make_profile(paths, "Personal", email="me@example.com",
+                 refresh_expires_ms=NOW + 20 * DAY_MS)
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths, refresh_expires_ms=NOW + 10 * DAY_MS)
+
+    work_before = paths.credentials("Work").read_bytes()
+
+    def boom(*a, **k):
+        raise ConfigUnreadableError("config went unreadable mid-switch")
+    monkeypatch.setattr(configjson, "apply_account_keys", boom)
+
+    with pytest.raises(ShamblesError):
+        switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+
+    # whatever state we are left in, a refresh must not corrupt a profile
+    current = state.inspect(paths)
+    if current.kind == state.MANAGED:
+        switcher.sync_active_credentials(paths, current.profile)
+
+    assert paths.credentials("Work").read_bytes() == work_before, \
+        "the outgoing profile's stored login was overwritten"
+
+
+def test_a_refresh_after_any_partial_failure_corrupts_nothing(paths, monkeypatch):
+    """Sweep: whatever step of switch() blows up, a refresh afterwards must
+    leave every stored login and every identity intact."""
+    import shambles.usage as usage_mod
+
+    targets = ["apply_account_keys", "backup"]
+    for broken in targets:
+        for name in list(state.profile_names(paths)):
+            import shutil as _sh
+            _sh.rmtree(paths.profile_dir(name))
+        make_profile(paths, "Work", email="work@example.com", active=True,
+                     refresh_expires_ms=NOW + 10 * DAY_MS)
+        make_profile(paths, "Personal", email="me@example.com",
+                     refresh_expires_ms=NOW + 20 * DAY_MS)
+        make_claude_json(paths, email="work@example.com")
+        make_live_login(paths, refresh_expires_ms=NOW + 10 * DAY_MS)
+
+        before = {n: paths.credentials(n).read_bytes()
+                  for n in ("Work", "Personal")}
+
+        with monkeypatch.context() as mp:
+            mp.setattr(configjson, broken,
+                       lambda *a, **k: (_ for _ in ()).throw(
+                           ConfigUnreadableError("boom")))
+            try:
+                switcher.switch(paths, "Personal", now_ms_fn=_fixed(),
+                                sleep=lambda _s: None)
+            except ShamblesError:
+                pass
+
+        current = state.inspect(paths)
+        usage_mod.capture_live(paths, current.profile, now_ms=NOW)
+        if current.kind == state.MANAGED:
+            switcher.sync_active_credentials(paths, current.profile)
+
+        for n in ("Work", "Personal"):
+            live_now = paths.credentials(n).read_bytes()
+            marker = state.read_active(paths)
+            # the profile that ended up active may legitimately be resynced to
+            # the live login; every other profile must be byte-identical
+            if n != marker:
+                assert live_now == before[n], (
+                    f"{broken} left '{n}' corrupted")

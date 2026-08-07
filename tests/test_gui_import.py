@@ -562,3 +562,31 @@ def test_refresh_button_only_reads(paths, make_app):
     assert paths.live_credentials.read_bytes() == before_live
     assert paths.claude_json.read_bytes() == before_cfg
     assert state.read_active(paths) == before_marker
+
+
+def test_a_tooltip_on_a_row_fires_from_its_children(paths, make_app):
+    """Tk delivers <Enter> to the deepest widget under the pointer. A tooltip
+    bound only to a container whose children cover it never appears — which is
+    what the usage rows did."""
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import gui, switcher
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com",
+                     extra={"cachedUsageUtilization":
+                            _usage_blob(40, 90, switcher.now_ms())})
+    make_live_login(paths)
+    app = make_app(paths)
+    app.update()
+
+    rows = [w for w in _all_widgets(app)
+            if isinstance(w, tk.Frame) and w.bind("<Enter>")
+            and any(isinstance(c, tk.Label) for c in w.winfo_children())]
+    assert rows, "no usage row found"
+    label = [c for c in rows[0].winfo_children() if isinstance(c, tk.Label)][0]
+    assert label.bind("<Enter>"), "child label cannot raise the row's tooltip"
+
+    label.event_generate("<Enter>")
+    app.update_idletasks()
+    assert gui.Tooltip._open, "hovering the row's label showed no tooltip"
+    gui.Tooltip.hide_all()
