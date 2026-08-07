@@ -1,71 +1,59 @@
-"""Discovering profiles and working out who each one belongs to."""
+"""Discovering profiles and working out who each one belongs to.
 
-import math
+Everything provider-specific -- what a token means, where identity lives, when
+a window closes -- is delegated. This module decides ordering, naming rules,
+and how a computed liveness is worded for the UI, all of which are the same
+for every vendor.
+"""
+
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import configjson
+from . import state
 from .errors import ProfileNameError
-
-CREDENTIALS_NAME = "credentials.json"
-
-TOKEN_OK = "ok"
-TOKEN_MISSING = "missing"
-TOKEN_EXPIRED = "expired"
-
-TOKEN_WARNINGS = {
-    TOKEN_MISSING: (
-        "No token found. Switch to this profile and run 'claude' in terminal to login."
-    ),
-    TOKEN_EXPIRED: (
-        "Token expired — switch to this profile and run /login."
-    ),
-}
+from .providers import ABSENT, CLOSED, CLOSING, NEEDS_LOGIN, Liveness
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
 
-#: Below this many days remaining, the countdown is worth drawing attention to.
-EXPIRY_WARN_DAYS = 7
-
+#: How loudly the UI draws the countdown chip.
 EXPIRY_OK = "ok"
 EXPIRY_SOON = "soon"
 EXPIRY_GONE = "gone"
 
-MS_PER_DAY = 86_400_000
+SEVERITY = {CLOSING: EXPIRY_SOON, CLOSED: EXPIRY_GONE}
+
+WARNINGS = {
+    ABSENT: "No token here yet. Switch to this profile and log in.",
+    CLOSED: "Refresh window closed — switch to this profile and log in again.",
+}
 
 
 @dataclass(frozen=True)
 class Profile:
     name: str
+    provider: str
     path: Path
     active: bool
     email: str | None
     org: str | None
-    token_state: str
-    #: When this account's refresh token lapses. ``None`` if there is no
-    #: readable credentials file at all.
-    refresh_expires_ms: int | None = None
-    #: Whole days until that moment, negative once past. Computed against the
-    #: clock passed to :func:`discover`, never read from the system here.
-    days_left: int | None = None
-
-    @property
-    def warning(self) -> str | None:
-        return TOKEN_WARNINGS.get(self.token_state)
+    plan: str | None
+    liveness: Liveness
 
 
-def refresh_expiry_ms(profile_dir) -> int | None:
-    """When this profile's refresh token lapses, or ``None`` if unreadable."""
-    oauth = configjson.load(Path(profile_dir) / CREDENTIALS_NAME).get("claudeAiOauth")
-    if not isinstance(oauth, dict):
-        return None
-    expires = oauth.get("refreshTokenExpiresAt")
-    return expires if isinstance(expires, (int, float)) else None
+def warning(profile: Profile) -> str | None:
+    """The ⚠ tooltip for a profile that cannot be used as-is."""
+    return WARNINGS.get(profile.liveness.state)
 
 
 def expiry_label(profile: Profile) -> str | None:
-    """Short countdown for the UI, e.g. ``"29d"`` or ``"expired 3d ago"``."""
-    days = profile.days_left
+    """Short countdown for the UI, e.g. ``"29d"`` or ``"expired 3d ago"``.
+
+    ``None`` for a profile with no token and for one whose expiry could not be
+    determined -- the VS Code bundle writes Claude credentials without the
+    field, and inventing a number there would be worse than showing none.
+    """
+    days = profile.liveness.days_left
     if days is None:
         return None
     if days < 0:
@@ -76,81 +64,43 @@ def expiry_label(profile: Profile) -> str | None:
 
 
 def expiry_severity(profile: Profile) -> str | None:
-    """How loudly the UI should render the countdown."""
-    days = profile.days_left
-    if days is None:
+    if profile.liveness.days_left is None:
         return None
-    if days < 0:
-        return EXPIRY_GONE
-    if days <= EXPIRY_WARN_DAYS:
-        return EXPIRY_SOON
-    return EXPIRY_OK
+    return SEVERITY.get(profile.liveness.state, EXPIRY_OK)
 
 
-def list_profile_names(paths) -> list[str]:
+def needs_login(profile: Profile) -> bool:
+    return profile.liveness.state in NEEDS_LOGIN
+
+
+def list_profile_names(paths, provider_id: str) -> list[str]:
     """Profile directories, case-insensitively sorted for display."""
-    from . import state
-    return sorted(state.profile_names(paths), key=str.casefold)
+    return sorted(state.profile_names(paths, provider_id), key=str.casefold)
 
 
-def token_state(profile_dir, now_ms: int) -> str:
-    oauth = configjson.load(Path(profile_dir) / CREDENTIALS_NAME).get("claudeAiOauth")
-    if not isinstance(oauth, dict) or not oauth.get("accessToken"):
-        return TOKEN_MISSING
-    expires = oauth.get("refreshTokenExpiresAt")
-    if isinstance(expires, (int, float)) and expires <= now_ms:
-        return TOKEN_EXPIRED
-    return TOKEN_OK
-
-
-def resolve_account(paths, name: str, active_name: str | None) -> dict:
-    """Best-known ``oauthAccount`` blob for a profile; ``{}`` if unknown.
-
-    The live ~/.claude.json wins for the active profile, since it is the one
-    Claude Code keeps current. Otherwise fall back to what was stashed when
-    this profile was last active.
-    """
-    if active_name is not None and name == active_name:
-        live = configjson.load(paths.claude_json).get("oauthAccount")
-        if _usable(live):
-            return live
-
-    stashed = configjson.read_sidecar(paths.account(name)).get("oauthAccount")
-    return stashed if _usable(stashed) else {}
-
-
-def _usable(account) -> bool:
-    return isinstance(account, dict) and bool(account.get("emailAddress"))
-
-
-def _stamp(path: Path) -> int:
-    try:
-        return int(path.name.rsplit(".", 1)[1])
-    except (IndexError, ValueError):
-        return 0
-
-
-def discover(paths, active_name: str | None, now_ms: int) -> list[Profile]:
+def discover(paths, provider, active_name: str | None, now_ms: int, *,
+             platform: str = sys.platform) -> list[Profile]:
     found = []
-    for name in list_profile_names(paths):
-        directory = paths.profile_dir(name)
-        account = resolve_account(paths, name, active_name)
-        expires = refresh_expiry_ms(directory)
-        # Floor rather than truncate, so a token 12 hours past its window
-        # reads as "expired 1d ago" instead of "today".
-        days = math.floor((expires - now_ms) / MS_PER_DAY) if expires else None
-        found.append(
-            Profile(
-                name=name,
-                path=directory,
-                active=(name == active_name),
-                email=account.get("emailAddress"),
-                org=account.get("organizationName"),
-                token_state=token_state(directory, now_ms),
-                refresh_expires_ms=expires,
-                days_left=days,
-            )
-        )
+    for name in list_profile_names(paths, provider.id):
+        directory = paths.profile_dir(provider.id, name)
+        try:
+            blob = paths.credentials(provider.id, name).read_bytes()
+        except OSError:
+            blob = None
+
+        is_active = (name == active_name)
+        identity = provider.identity(blob, home=paths.home,
+                                     profile_dir=directory, active=is_active)
+        found.append(Profile(
+            name=name,
+            provider=provider.id,
+            path=directory,
+            active=is_active,
+            email=identity.email,
+            org=identity.org,
+            plan=identity.plan,
+            liveness=provider.liveness(blob, now_ms=now_ms),
+        ))
     return found
 
 
