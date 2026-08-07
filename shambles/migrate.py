@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import configjson, state
 from .errors import ShamblesError
+from .paths import ACCOUNT_NAME, CREDENTIALS_NAME
 
 #: Directories inside a profile that hold machine-scoped state and must be
 #: merged rather than picked from one profile. ``plugins`` belongs here for the
@@ -217,3 +218,89 @@ def run(paths, *, now_ms: int) -> Plan:
     if active:
         state.write_active(paths, active)
     return plan
+
+
+#: The provider every v1.0 profile belongs to. There was only one.
+V1_PROVIDER = "claude"
+
+#: Files a v1.0 profile could hold. Anything else in there was not ours.
+V1_PROFILE_FILES = (CREDENTIALS_NAME, ACCOUNT_NAME)
+
+
+@dataclass
+class StorePlan:
+    profiles: list = field(default_factory=list)
+    active: str | None = None
+    backups: int = 0
+    source: Path | None = None
+    dest: Path | None = None
+
+
+def store_migration_needed(paths) -> bool:
+    """Whether a v1.0 store exists and has not been migrated yet.
+
+    The presence of ``~/.shambles`` is the "already done" signal, deliberately
+    rather than the absence of the old store: the migration copies, so the old
+    store is still there afterwards and would otherwise retrigger forever.
+    """
+    return paths.legacy_profiles_dir.is_dir() and not paths.library_dir.exists()
+
+
+def migrate_store(paths) -> StorePlan:
+    """Copy ~/.claude-profiles/<Name>/ to ~/.shambles/claude/<Name>/.
+
+    Copies rather than moves. Every profile directory holds a refresh token
+    recoverable only through a fresh verification email, so the old store stays
+    on disk for the user to remove once they are satisfied -- the same posture
+    as the pre-1.0 history merge and as Eject.
+
+    Never overwrites: a file already present in the new store wins, which is
+    what makes running this twice a no-op.
+    """
+    plan = StorePlan(source=paths.legacy_profiles_dir,
+                     dest=paths.library_dir)
+    if not paths.legacy_profiles_dir.is_dir():
+        return plan
+
+    paths.ensure_provider(V1_PROVIDER)
+
+    for entry in sorted(paths.legacy_profiles_dir.iterdir()):
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        paths.ensure_profile(V1_PROVIDER, entry.name)
+        plan.profiles.append(entry.name)
+        for filename in V1_PROFILE_FILES:
+            source = entry / filename
+            dest = paths.profile_dir(V1_PROVIDER, entry.name) / filename
+            if source.is_file() and not dest.exists():
+                shutil.copy2(source, dest)
+                _lock_down(dest)
+
+    # A marker naming a profile that did not come across would surface as
+    # MISSING_PROFILE on a brand-new layout, which is a confusing thing to
+    # greet someone with after an automatic migration.
+    marked = None
+    if paths.legacy_active_marker.is_file():
+        marked = paths.legacy_active_marker.read_text(encoding="utf-8").strip() or None
+    if marked in plan.profiles:
+        plan.active = marked
+        if not paths.active_marker(V1_PROVIDER).exists():
+            paths.active_marker(V1_PROVIDER).write_text(
+                marked + "\n", encoding="utf-8")
+
+    if paths.legacy_backup_dir.is_dir():
+        paths.backup_dir.mkdir(parents=True, exist_ok=True)
+        for snapshot in sorted(paths.legacy_backup_dir.glob("claude.json.*")):
+            dest = paths.backup_dir / snapshot.name
+            if not dest.exists():
+                shutil.copy2(snapshot, dest)
+                plan.backups += 1
+
+    return plan
+
+
+def _lock_down(path: Path) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
