@@ -219,14 +219,24 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 - [ ] **Step 7: Widen `identity()` to take `profile_dir` and `active`**
 
-Take the implementation from commit `01d6de8`, which contains exactly this change for these three files and nothing else:
+Take the implementation from commit `01d6de8`, which contains exactly this change for these three files and nothing else.
+
+**Apply it as a patch, not a checkout.** `git checkout 01d6de8 -- <files>` replaces whole files with that commit's versions, and `01d6de8` branched before Step 6 existed — it would silently delete the `login_binary()` and `login_command()` methods you just added. Take only the three `identity()` hunks:
 
 ```bash
-git checkout 01d6de8 -- shambles/providers/base.py shambles/providers/claude.py shambles/providers/codex.py
-git diff --cached --stat
+git diff 1467f7a 01d6de8 -- shambles/providers/base.py \
+    shambles/providers/claude.py shambles/providers/codex.py > /tmp/identity.patch
+git apply --check --verbose /tmp/identity.patch     # verify first
+git apply /tmp/identity.patch
 ```
 
-Expected: 3 files changed, 35 insertions, 10 deletions. **Verify before continuing** that the only change is the `identity()` signature and body — if `git diff --cached` shows anything else, stop and report BLOCKED.
+Expected from `--check`: three hunks apply, two of them reporting `offset 10 lines` (the offset is the login accessors you added above them — it is correct, not a warning). Then confirm:
+
+```bash
+git diff --stat
+```
+
+Expected: 3 files changed, 35 insertions, 10 deletions, and `git diff` shows **only** `identity()` signatures and bodies. If it shows anything touching `login_binary`, `login_command`, or any other method, stop and report BLOCKED.
 
 `ClaudeProvider.identity()` gains the branch that matters:
 
