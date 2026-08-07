@@ -580,7 +580,7 @@ def test_the_info_icon_raises_its_tooltip(paths, make_app):
     app.update()
 
     icon = [w for w in _all_widgets(app)
-            if isinstance(w, tk.Label) and str(w.cget("text")) == gui.INFO_GLYPH][0]
+            if isinstance(w, tk.Label) and str(w.cget("text")) == app.glyph["info"]][0]
     icon.event_generate("<Enter>")
     app.update_idletasks()
     assert gui.Tooltip._open, "hovering the info icon showed no tooltip"
@@ -728,7 +728,7 @@ def test_each_usage_row_ends_in_an_info_icon(paths, make_app):
     from shambles import gui
     app = _usage_app(paths, make_app)
     icons = [w for w in _all_widgets(app)
-             if isinstance(w, tk.Label) and str(w.cget("text")) == gui.INFO_GLYPH]
+             if isinstance(w, tk.Label) and str(w.cget("text")) == app.glyph["info"]]
     assert len(icons) == 2, f"expected one icon per bar, got {len(icons)}"
 
 
@@ -739,7 +739,7 @@ def test_only_the_icon_carries_the_tooltip(paths, make_app):
     app = _usage_app(paths, make_app)
 
     icon = [w for w in _all_widgets(app)
-            if isinstance(w, tk.Label) and str(w.cget("text")) == gui.INFO_GLYPH][0]
+            if isinstance(w, tk.Label) and str(w.cget("text")) == app.glyph["info"]][0]
     row = icon.master
     assert icon.bind("<Enter>"), "the icon has no tooltip"
     for sibling in row.winfo_children():
@@ -772,7 +772,7 @@ def test_the_active_account_is_not_told_it_is_signed_out(paths, make_app):
     app = _usage_app(paths, make_app, fetched_ago_ms=4 * 3_600_000)
 
     icon = [w for w in _all_widgets(app)
-            if isinstance(w, tk.Label) and str(w.cget("text")) == gui.INFO_GLYPH][0]
+            if isinstance(w, tk.Label) and str(w.cget("text")) == app.glyph["info"]][0]
     icon.event_generate("<Enter>")
     app.update_idletasks()
     tip = list(gui.Tooltip._open)[0]

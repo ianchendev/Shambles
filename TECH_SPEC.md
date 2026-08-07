@@ -744,7 +744,16 @@ reporting a higher factor is left alone to avoid double-scaling.
 Pixel spacing is sized alongside the type. Tk scales points, not pixels, so
 padding left at its old values would have tightened as the text grew.
 
-Hover detail lives on a per-row **ⓘ** rather than the row itself. Binding a
+Decorative glyphs are chosen at runtime, not hardcoded. Tk substitutes a box
+for a glyph the font lacks and reports nothing, so a character picked on one
+machine renders as tofu on another — Ubuntu has no U+24D8, which is exactly how
+the info icon shipped broken. `theme.glyph()` measures each candidate against
+U+FFFF, a permanent noncharacter no font defines, and takes the first that
+differs; every icon has a plain ASCII fallback. The probe must be a single
+codepoint: a two-character one measures two glyphs, can never equal one missing
+glyph, and disables detection silently.
+
+Hover detail lives on a per-row info icon rather than the row itself. Binding a
 whole row meant every element under the pointer raised a tooltip as it crossed
 a card, which read as twitchy; `Tooltip._show` also now closes any other tooltip
 first, since crossing from an expiry chip onto a bar could leave two overlapping
