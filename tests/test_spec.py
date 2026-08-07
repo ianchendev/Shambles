@@ -128,3 +128,25 @@ def test_every_spec_records_how_far_it_was_verified(provider_id):
     provenance = spec.load(provider_id)["provenance"]
     assert provenance["platforms_executed"]
     assert "platforms_from_source_only" in provenance
+
+
+import pytest
+
+from shambles import providers
+
+
+@pytest.mark.parametrize("provider_id, binary, command", [
+    ("claude", "claude", ["claude", "auth", "login"]),
+    ("codex", "codex", ["codex", "login"]),
+])
+def test_every_provider_declares_how_to_log_in(provider_id, binary, command):
+    provider = providers.load(provider_id)
+    assert provider.login_binary() == binary
+    assert provider.login_command() == command
+
+
+def test_login_command_starts_with_the_binary():
+    """The binary is what gets probed on PATH; argv[0] must be the same thing,
+    or availability and execution would disagree."""
+    for provider in providers.all_providers():
+        assert provider.login_command()[0] == provider.login_binary()

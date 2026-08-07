@@ -66,7 +66,11 @@
   },
 
   "login": {
-    "hint": "Run 'claude' in a terminal, then /login. Use a terminal rather than VS Code — the extension may still hold a handle on the profile."
+    "binary": "claude",
+    "command": ["claude", "auth", "login"],
+    "hint": "Run 'claude auth login' in a terminal.",
+    "email_flag": "--email",
+    "note": "claude auth login opens the browser and runs its own callback server. --email pre-populates the address on the login page."
   },
 
   "provenance": {

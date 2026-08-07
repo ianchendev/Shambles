@@ -54,7 +54,10 @@
   },
 
   "login": {
-    "hint": "Run 'codex login' in a terminal."
+    "binary": "codex",
+    "command": ["codex", "login"],
+    "hint": "Run 'codex login' in a terminal.",
+    "email_flag": null
   },
 
   "provenance": {
