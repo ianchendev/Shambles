@@ -308,6 +308,11 @@ me@example.com                     27d
 usage appears once you run Claude
 ```
 
+Each row ends in a **ⓘ** carrying the detail — the exact percentage, when the
+window resets, and how fresh the figure is. Only that icon reacts to the
+pointer; the label, bar and value do not, so moving across a card does not set
+tooltips off.
+
 Bars are full-width rows beneath the identity, so they line up down the window
 whatever a name or address happens to be. **A bar turns red at 80%**, the same
 threshold the VS Code extension uses, so the two never disagree on screen.

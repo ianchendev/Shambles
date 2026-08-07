@@ -744,6 +744,18 @@ reporting a higher factor is left alone to avoid double-scaling.
 Pixel spacing is sized alongside the type. Tk scales points, not pixels, so
 padding left at its old values would have tightened as the text grew.
 
+Hover detail lives on a per-row **ⓘ** rather than the row itself. Binding a
+whole row meant every element under the pointer raised a tooltip as it crossed
+a card, which read as twitchy; `Tooltip._show` also now closes any other tooltip
+first, since crossing from an expiry chip onto a bar could leave two overlapping
+on screen.
+
+The freshness note is chosen by whether the profile is active. The same figure
+means different things in the two cases: on an idle profile it is frozen at the
+moment you left, but on the account you are signed in as it is simply
+unrefreshed, and telling the user it "has not been signed in since" about the
+account they are signed in as was plainly wrong.
+
 Two fixed-window hazards are handled rather than assumed away. Tk labels do not
 truncate, so `theme.elide()` shortens a profile name to a measured pixel budget
 with the full value on hover — a character cap was tried first and had to be

@@ -372,9 +372,10 @@ def test_the_active_card_shows_live_usage_chips(paths, make_app):
     app = make_app(paths)
     app.update()
 
-    text = " ".join(_buttons(app))
-    assert "session 22%" in text
-    assert "week 87%" in text
+    # label, icon and value are separate widgets, so check the parts
+    text = _buttons(app)
+    assert "session" in text and "22%" in text
+    assert "week" in text and "87%" in text
 
 
 def test_a_stale_stashed_figure_is_labelled_with_its_age(paths, make_app):
@@ -396,9 +397,10 @@ def test_a_stale_stashed_figure_is_labelled_with_its_age(paths, make_app):
     app = make_app(paths)
     app.update()
 
-    text = " ".join(_buttons(app))
-    assert "week 92%" in text
-    assert "7h ago" in text, "a 7h-old figure rendered without its age"
+    text = _buttons(app)
+    assert "week" in text and "92%" in text
+    assert any("7h ago" in t for t in text), \
+        "a 7h-old figure rendered without its age"
 
 
 def test_no_usage_row_when_there_is_nothing_to_show(paths, make_app):
@@ -564,10 +566,8 @@ def test_refresh_button_only_reads(paths, make_app):
     assert state.read_active(paths) == before_marker
 
 
-def test_a_tooltip_on_a_row_fires_from_its_children(paths, make_app):
-    """Tk delivers <Enter> to the deepest widget under the pointer. A tooltip
-    bound only to a container whose children cover it never appears — which is
-    what the usage rows did."""
+def test_the_info_icon_raises_its_tooltip(paths, make_app):
+    """The row no longer reacts, so the icon must."""
     from helpers import make_claude_json, make_live_login, make_profile
     from shambles import gui, switcher
 
@@ -579,16 +579,11 @@ def test_a_tooltip_on_a_row_fires_from_its_children(paths, make_app):
     app = make_app(paths)
     app.update()
 
-    rows = [w for w in _all_widgets(app)
-            if isinstance(w, tk.Frame) and w.bind("<Enter>")
-            and any(isinstance(c, tk.Label) for c in w.winfo_children())]
-    assert rows, "no usage row found"
-    label = [c for c in rows[0].winfo_children() if isinstance(c, tk.Label)][0]
-    assert label.bind("<Enter>"), "child label cannot raise the row's tooltip"
-
-    label.event_generate("<Enter>")
+    icon = [w for w in _all_widgets(app)
+            if isinstance(w, tk.Label) and str(w.cget("text")) == gui.INFO_GLYPH][0]
+    icon.event_generate("<Enter>")
     app.update_idletasks()
-    assert gui.Tooltip._open, "hovering the row's label showed no tooltip"
+    assert gui.Tooltip._open, "hovering the info icon showed no tooltip"
     gui.Tooltip.hide_all()
 
 
@@ -714,3 +709,73 @@ def test_the_window_is_not_squat_with_one_profile(paths, make_app):
     app.update()
 
     assert app.winfo_height() >= theme.MIN_HEIGHT
+
+
+def _usage_app(paths, make_app, session=60, week=8, fetched_ago_ms=0):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import switcher
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": _usage_blob(
+            session, week, switcher.now_ms() - fetched_ago_ms)})
+    make_live_login(paths)
+    app = make_app(paths)
+    app.update()
+    return app
+
+
+def test_each_usage_row_ends_in_an_info_icon(paths, make_app):
+    from shambles import gui
+    app = _usage_app(paths, make_app)
+    icons = [w for w in _all_widgets(app)
+             if isinstance(w, tk.Label) and str(w.cget("text")) == gui.INFO_GLYPH]
+    assert len(icons) == 2, f"expected one icon per bar, got {len(icons)}"
+
+
+def test_only_the_icon_carries_the_tooltip(paths, make_app):
+    """Hovering the label, the bar or the percentage should do nothing — the
+    whole row reacting was too eager."""
+    from shambles import gui
+    app = _usage_app(paths, make_app)
+
+    icon = [w for w in _all_widgets(app)
+            if isinstance(w, tk.Label) and str(w.cget("text")) == gui.INFO_GLYPH][0]
+    row = icon.master
+    assert icon.bind("<Enter>"), "the icon has no tooltip"
+    for sibling in row.winfo_children():
+        if sibling is icon:
+            continue
+        assert not sibling.bind("<Enter>"), \
+            f"{sibling.cget('text') if isinstance(sibling, tk.Label) else sibling} still reacts"
+    assert not row.bind("<Enter>"), "the row itself still reacts"
+
+
+def test_only_one_tooltip_is_ever_open(paths, make_app):
+    """The screenshot showed the expiry chip's tooltip and a usage tooltip
+    overlapping each other."""
+    from shambles import gui
+    app = _usage_app(paths, make_app)
+
+    hoverable = [w for w in _all_widgets(app) if w.bind("<Enter>")]
+    assert len(hoverable) >= 2
+    for widget in hoverable[:4]:
+        widget.event_generate("<Enter>")
+        app.update_idletasks()
+        assert len(gui.Tooltip._open) <= 1, "more than one tooltip on screen"
+    gui.Tooltip.hide_all()
+
+
+def test_the_active_account_is_not_told_it_is_signed_out(paths, make_app):
+    """An hour-old figure on the account you are signed in as is just an
+    unrefreshed number, not evidence you left."""
+    from shambles import gui
+    app = _usage_app(paths, make_app, fetched_ago_ms=4 * 3_600_000)
+
+    icon = [w for w in _all_widgets(app)
+            if isinstance(w, tk.Label) and str(w.cget("text")) == gui.INFO_GLYPH][0]
+    icon.event_generate("<Enter>")
+    app.update_idletasks()
+    tip = list(gui.Tooltip._open)[0]
+    text = tip.text
+    assert "not been signed in since" not in text, text
+    gui.Tooltip.hide_all()
