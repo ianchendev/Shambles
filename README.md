@@ -314,6 +314,17 @@ threshold the VS Code extension uses, so the two never disagree on screen.
 Below that it is the ordinary accent — unless Claude Code itself flags the
 bucket, in which case its warning shows through rather than being painted over.
 
+**⟳ re-reads the figures on disk.** It opens local files and nothing else — no
+network call, no credential written, no marker moved, nothing a running Claude
+Code session can notice. Claude Code updates those figures as you work, so
+press it after a session to pick up what it has written.
+
+Only the **signed-in** account can have current figures. Claude Code caches
+usage for whoever is logged in, and there is no way to ask the server about a
+second account without using that account's token — which would rotate it and
+leave the copy Shambles holds dead. Other accounts therefore show their last
+known figures with an age, and never anything newer.
+
 An account with no figures yet says so rather than leaving a gap. That happens
 in two cases:
 
