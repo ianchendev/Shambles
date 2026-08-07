@@ -150,6 +150,15 @@ def switch(paths, target_name: str, *, now_ms_fn=now_ms, sleep=time.sleep):
             # A profile that has never been signed into: clear the login so
             # Claude Code prompts for one rather than reusing the last account.
             paths.live_credentials.unlink(missing_ok=True)
+
+        # The marker moves with the login, not after the identity splice.
+        # Anything that fails below leaves the two still agreeing, so the
+        # window reads the result as DRIFTED -- an identity that lags -- rather
+        # than as a marker naming a profile whose login has already been
+        # replaced. That second reading is the dangerous one: the refresh pass
+        # would copy the incoming login into the outgoing profile's store and
+        # destroy the account just switched away from.
+        state.write_active(paths, target_name)
     except OSError as exc:
         raise SwitchFailedError(
             f"Could not update the login in ~/.claude:\n{exc}\n\n"
@@ -157,7 +166,6 @@ def switch(paths, target_name: str, *, now_ms_fn=now_ms, sleep=time.sleep):
 
     configjson.apply_account_keys(
         paths.claude_json, configjson.read_sidecar(paths.account(target_name)))
-    state.write_active(paths, target_name)
     return state.inspect(paths)
 
 

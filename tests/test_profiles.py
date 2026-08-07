@@ -254,3 +254,25 @@ def test_the_active_profile_prefers_live_over_its_own_stash(paths):
     p = profiles.discover(paths, active_name="Work", now_ms=NOW)[0]
 
     assert p.usage.bars[0].percent == 44, "showed a stale stash over live data"
+
+
+def test_a_name_long_enough_to_distort_the_window_is_refused():
+    """The window is fixed-width and does not truncate labels, so an
+    unbounded name silently stretches it — 80 characters took a 600px window
+    to 1092px."""
+    from shambles.errors import ProfileNameError
+    with pytest.raises(ProfileNameError):
+        profiles.validate_profile_name("A" * 80, [])
+
+
+def test_a_reasonable_name_is_still_fine():
+    assert profiles.validate_profile_name("Cognitivo Admin (AU)", []) == \
+        "Cognitivo Admin (AU)"
+
+
+def test_the_cap_is_stated_in_the_error():
+    from shambles.errors import ProfileNameError
+    try:
+        profiles.validate_profile_name("A" * 80, [])
+    except ProfileNameError as exc:
+        assert str(profiles.MAX_NAME_LENGTH) in str(exc)
