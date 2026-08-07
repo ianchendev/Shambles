@@ -514,3 +514,51 @@ def test_an_account_with_no_figures_says_why(paths, make_app):
 
     text = " ".join(_buttons(app))
     assert "usage appears once you run Claude" in text
+
+
+def test_switch_sits_left_of_the_remove_button(paths, make_app):
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Other", email="other@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    pos = {}
+    for w in _all_widgets(app):
+        try:
+            label = str(w.cget("text"))
+        except tk.TclError:
+            continue
+        if label in ("Switch", "✕"):
+            pos[label] = w.winfo_rootx()
+    assert pos["Switch"] < pos["✕"], "expected [Switch][✕]"
+
+
+def test_refresh_button_only_reads(paths, make_app):
+    """It must be safe to press at any time: no switch, no credential write,
+    nothing a running Claude Code session would notice."""
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import state
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_profile(paths, "Other", email="other@example.com")
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    before_live = paths.live_credentials.read_bytes()
+    before_cfg = paths.claude_json.read_bytes()
+    before_marker = state.read_active(paths)
+
+    app.refresh()
+    app.update()
+
+    assert paths.live_credentials.read_bytes() == before_live
+    assert paths.claude_json.read_bytes() == before_cfg
+    assert state.read_active(paths) == before_marker

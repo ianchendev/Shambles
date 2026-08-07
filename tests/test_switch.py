@@ -1,6 +1,7 @@
 """Switching accounts moves the login and nothing else."""
 
 import json
+import os
 
 import pytest
 
@@ -443,3 +444,44 @@ def test_stashing_with_no_usage_present_is_fine(paths):
     switcher.switch(paths, "Personal", now_ms_fn=_fixed())
 
     assert configjson.load(paths.account("Work")).get("usage") in (None, {})
+
+
+# ---- keeping the active profile's stored token current ------------------
+
+def test_sync_updates_a_superseded_stash(paths):
+    """Refresh tokens rotate. Claude Code refreshes in place while an account
+    is active, so the copy stashed at switch-in time goes stale behind us."""
+    _two_profiles(paths)
+    paths.live_credentials.write_text('{"claudeAiOauth": {"refreshToken": "NEW"}}')
+
+    assert switcher.sync_active_credentials(paths, "Work") is True
+    assert "NEW" in paths.credentials("Work").read_text()
+
+
+def test_sync_is_a_no_op_when_they_already_match(paths):
+    """Runs on every window refresh, so it must not rewrite a secret needlessly."""
+    _two_profiles(paths)
+    switcher.sync_active_credentials(paths, "Work")
+    assert switcher.sync_active_credentials(paths, "Work") is False
+
+
+def test_sync_does_nothing_without_a_live_login(paths):
+    _two_profiles(paths)
+    paths.live_credentials.unlink()
+    assert switcher.sync_active_credentials(paths, "Work") is False
+    assert paths.credentials("Work").exists(), "stash must survive"
+
+
+def test_sync_needs_a_named_profile(paths):
+    _two_profiles(paths)
+    assert switcher.sync_active_credentials(paths, None) is False
+
+
+@posix_modes_only
+def test_a_synced_stash_stays_owner_only(paths):
+    import stat
+    _two_profiles(paths)
+    paths.live_credentials.write_text('{"claudeAiOauth": {"refreshToken": "NEW"}}')
+    switcher.sync_active_credentials(paths, "Work")
+    mode = stat.S_IMODE(os.stat(paths.credentials("Work")).st_mode)
+    assert mode == 0o600, oct(mode)

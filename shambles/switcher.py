@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from . import configjson, profiles, retry, state
-from .errors import (AlreadyManagedError, ProfileNotFoundError,
+from .errors import (AlreadyManagedError, ProfileNotFoundError, ShamblesError,
                      SwitchFailedError)
 
 NOTHING_TO_SAVE = (
@@ -70,6 +70,38 @@ def stash_live_login(paths, name: str, *, now_ms_fn=now_ms, sleep=time.sleep) ->
     if isinstance(cached, dict):
         account["usage"] = cached
     configjson.write_sidecar(paths.account(name), account, now_ms_fn())
+
+
+def sync_active_credentials(paths, active_name, *, sleep=time.sleep) -> bool:
+    """Refresh the active profile's stored copy of its own login.
+
+    Refresh tokens rotate: Claude Code replaces ``.credentials.json`` in place
+    whenever it renews, so the copy stashed when the profile was switched *in*
+    is superseded within hours. Left alone, switching away and back could
+    restore a token that has already been rotated out.
+
+    Returns True when it wrote. Called on every window refresh, so it compares
+    first rather than rewriting a secret each time.
+    """
+    if not active_name:
+        return False
+    live = paths.live_credentials
+    stored = paths.credentials(active_name)
+    if not live.exists():
+        return False
+    try:
+        if stored.exists() and stored.read_bytes() == live.read_bytes():
+            return False
+    except OSError:
+        return False
+
+    try:
+        copy_secret(live, stored, sleep=sleep)
+    except ShamblesError:
+        # A locked file is not worth interrupting the window for; the next
+        # refresh, or the next switch, will catch it.
+        return False
+    return True
 
 
 def switch(paths, target_name: str, *, now_ms_fn=now_ms, sleep=time.sleep):

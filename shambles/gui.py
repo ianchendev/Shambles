@@ -271,6 +271,15 @@ class ShamblesApp(tk.Tk):
         self.save_button = ttk.Button(footer, text="Save Current Account",
                                       style="Shambles.TButton", command=self.on_save)
         self.save_button.pack(side="left")
+        refresh = ttk.Button(footer, text="⟳", style="Shambles.TButton", width=3,
+                             command=self.refresh)
+        refresh.pack(side="left", padx=(GAP_S, 0))
+        Tooltip(refresh,
+                "Re-read the figures on disk.\n\n"
+                "Reads local files only — no network call, and nothing that a "
+                "running Claude Code session would notice. Claude Code updates "
+                "those figures as you work, so this picks up whatever it has "
+                "written since the window opened.", t)
         ttk.Button(footer, text="＋  Add Account", style="Accent.TButton",
                    command=self.on_add).pack(side="right")
         self.eject_button = ttk.Button(footer, text="Eject",
@@ -386,6 +395,10 @@ class ShamblesApp(tk.Tk):
         # has something to show rather than being the one guaranteed to be
         # blank. No-op unless the live blob is both present and provably its.
         usage.capture_live(self.paths, current.profile, now_ms=switcher.now_ms())
+        # Refresh tokens rotate in place, so the stored copy for the account in
+        # use goes stale behind us. Cheap to keep current while we are here.
+        if current.kind == state.MANAGED:
+            switcher.sync_active_credentials(self.paths, current.profile)
 
         found = profiles.discover(self.paths, current.profile, switcher.now_ms())
         if not found:
@@ -515,18 +528,18 @@ class ShamblesApp(tk.Tk):
         else:
             controls = tk.Frame(top, bg=bg)
             controls.pack(side="right")
-            ttk.Button(controls, text="Switch", style="Switch.TButton",
-                       command=lambda p=profile: self.on_switch(p.name)).pack(side="right")
             # Inactive profiles only. The active one has no ✕ at all, so the
             # login you are currently using cannot be deleted by a misclick.
+            # The gap between the two is deliberate: ✕ is destructive and sits
+            # beside the button reached most often.
             remove = ttk.Button(controls, text="✕", style="Danger.TButton", width=2,
                                 command=lambda p=profile: self.on_remove(p.name))
-            # Sits inboard of Switch: the rightmost slot is the easiest to hit,
-            # and that should belong to the action used constantly rather than
-            # the one that destroys a login. The gap is deliberate too.
-            remove.pack(side="right", padx=(0, GAP_M))
+            remove.pack(side="right")
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
                             "deleted and that account needs a new /login.", t)
+            ttk.Button(controls, text="Switch", style="Switch.TButton",
+                       command=lambda p=profile: self.on_switch(p.name)
+                       ).pack(side="right", padx=(0, GAP_M))
 
         bottom = tk.Frame(card, bg=bg)
         bottom.pack(fill="x", pady=(GAP_XS, 0))
