@@ -22,6 +22,7 @@ import unicodedata
 from pathlib import Path
 
 from ..stores import CredmanStore, FileStore, KeychainStore
+from ..stores.base import StoreUnavailableError
 from . import spec as specmod
 from .base import ABSENT, CLOSED, CLOSING, LIVE, UNKNOWN, Identity, Liveness
 
@@ -171,14 +172,24 @@ class ClaudeProvider:
             state = LIVE
         return Liveness(state, expires_at_ms=expires, days_left=days)
 
-    def identity(self, blob: bytes | None, *, home) -> Identity:
-        """Read identity from the sidecar, not from the credential.
+    def identity(self, blob: bytes | None, *, home, profile_dir=None,
+                 active: bool = False) -> Identity:
+        """Read identity from a file, never from the credential.
 
-        The credential is opaque, so it carries no identity at all. ``blob`` is
-        accepted to satisfy the protocol and deliberately unused.
+        Claude's tokens are opaque, so they carry no identity at all -- ``blob``
+        is accepted to satisfy the protocol and deliberately unused.
+
+        Which file depends on whether this profile is the live one.
+        ``~/.claude.json`` describes only the account signed in right now, so
+        reading it for a parked profile labels every row with the active
+        account's email. Parked profiles come from the copy stashed beside
+        their credential.
         """
         block = self.spec["identity"]
-        data = _read_json(specmod.expand(block["path"], home=home))
+        if active or profile_dir is None:
+            data = _read_json(specmod.expand(block["path"], home=home))
+        else:
+            data = _read_json(Path(profile_dir) / "account.json")
         return Identity(
             email=specmod.pointer(data, block["email"]),
             display_name=specmod.pointer(data, block["display_name"]),
@@ -208,7 +219,11 @@ class ClaudeProvider:
                 config[key] = data[key]
             else:
                 config.pop(key, None)
-        _write_json(path, config)
+        try:
+            _write_json(path, config)
+        except OSError as exc:
+            raise StoreUnavailableError(
+                f"Could not write {path}:\n{exc}") from exc
 
 
 def _parse(blob: bytes | None) -> dict:
@@ -234,9 +249,23 @@ def _read_json(path: Path) -> dict:
 
 
 def _write_json(path: Path, data: dict) -> None:
+    """Atomic, owner-only write of a companion file.
+
+    Raises :class:`StoreUnavailableError` rather than ``OSError``:
+    ``switcher.switch`` calls ``companion_write`` outside its own ``OSError``
+    guard, so a bare one would reach the user as a stderr traceback and look
+    like the switch silently did nothing.
+    """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".shambles-tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".shambles-tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, (json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise StoreUnavailableError(f"Could not write {path}:\n{exc}") from exc

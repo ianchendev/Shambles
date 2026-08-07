@@ -11,10 +11,13 @@ free and cannot quietly skip the awkward cases.
 """
 
 import json
+import os
 
 import pytest
 
+from conftest import posix_modes_only
 from shambles.stores import CredentialStore, CredmanStore, FileStore, KeychainStore
+from shambles.stores.base import StoreUnavailableError
 from shambles.stores.credman import join_chunks, split_payload
 from tests.fakes import FakeCredman, FakeSecurity
 
@@ -147,3 +150,41 @@ def test_credman_refuses_to_return_a_truncated_credential():
     del backend.entries[missing]
     with pytest.raises(Exception, match="truncated|missing chunk"):
         store.read()
+
+
+@posix_modes_only
+def test_a_credential_is_never_observable_at_loose_permissions(tmp_path, monkeypatch):
+    """The temp file must be created 0600, not created at umask and chmod'd
+    afterwards. Between those two calls a full plaintext credential sits on
+    disk world-readable, which is exactly what the 0600 rule exists to stop.
+
+    Asserted by watching the mode at the moment the bytes land, because the
+    final file is 0600 either way and cannot distinguish the two.
+    """
+    observed = {}
+    real_replace = os.replace
+
+    def spy(src, dst):
+        observed["mode"] = oct(os.stat(src).st_mode)[-3:]
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy)
+    FileStore(tmp_path / "creds.json", 0o600).write(b'{"token": "secret"}')
+
+    assert observed["mode"] == "600"
+
+
+@posix_modes_only
+def test_the_parent_directory_is_created_owner_only(tmp_path):
+    store = FileStore(tmp_path / "nested" / "creds.json", 0o600)
+    store.write(b"{}")
+    assert oct(os.stat(tmp_path / "nested").st_mode)[-3:] == "700"
+
+
+def test_a_write_failure_is_a_shambles_error(tmp_path):
+    """Never a bare OSError: the GUI renders ShamblesError only, and anything
+    else reaches the user as a stderr traceback."""
+    store = FileStore(tmp_path / "creds.json", 0o600)
+    (tmp_path / "creds.json").mkdir()  # a directory where a file must go
+    with pytest.raises(StoreUnavailableError):
+        store.write(b"{}")

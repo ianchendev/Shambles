@@ -135,8 +135,14 @@ class CodexProvider:
             state = LIVE
         return Liveness(state, expires_at_ms=expires_ms, days_left=days)
 
-    def identity(self, blob: bytes | None, *, home) -> Identity:
-        """Everything comes out of the id_token; ``home`` is unused."""
+    def identity(self, blob: bytes | None, *, home, profile_dir=None,
+                 active: bool = False) -> Identity:
+        """Everything comes out of the id_token.
+
+        ``home``, ``profile_dir`` and ``active`` are all unused, which is the
+        point: a self-describing token needs no sidecar and cannot fall out of
+        step with the credential it accompanies.
+        """
         block = self.spec["identity"]
         claims = jwt_claims(specmod.pointer(_parse(blob), block["pointer"]))
         return Identity(
