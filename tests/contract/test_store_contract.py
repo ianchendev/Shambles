@@ -12,6 +12,7 @@ free and cannot quietly skip the awkward cases.
 
 import json
 import os
+import stat as os_stat
 
 import pytest
 
@@ -154,24 +155,41 @@ def test_credman_refuses_to_return_a_truncated_credential():
 
 @posix_modes_only
 def test_a_credential_is_never_observable_at_loose_permissions(tmp_path, monkeypatch):
-    """The temp file must be created 0600, not created at umask and chmod'd
-    afterwards. Between those two calls a full plaintext credential sits on
-    disk world-readable, which is exactly what the 0600 rule exists to stop.
+    """The temp file must be *created* 0600, not created at the umask and
+    tightened afterwards. In between, a complete plaintext refresh token sits
+    on disk world-readable -- a window, not a formality.
 
-    Asserted by watching the mode at the moment the bytes land, because the
-    final file is 0600 either way and cannot distinguish the two.
+    Observed at the ``chmod`` call rather than at ``os.replace``: by replace
+    time the mode is 0600 whichever way it got there, so that vantage point
+    cannot tell a fixed implementation from a vulnerable one. The umask is
+    pinned lax for the same reason -- under a strict umask the old code
+    happened to create at 0600 and the window closed by luck.
     """
     observed = {}
-    real_replace = os.replace
+    real_chmod = os.chmod
 
-    def spy(src, dst):
-        observed["mode"] = oct(os.stat(src).st_mode)[-3:]
-        return real_replace(src, dst)
+    def spy(path, mode, *args, **kwargs):
+        try:
+            stat = os.stat(path)
+            # Regular files only: this call also tightens the parent
+            # directory, and a directory's mode says nothing about whether
+            # the credential inside it was ever exposed.
+            if os_stat.S_ISREG(stat.st_mode) and stat.st_size:
+                observed.setdefault("mode", oct(stat.st_mode)[-3:])
+        except OSError:
+            pass
+        return real_chmod(path, mode, *args, **kwargs)
 
-    monkeypatch.setattr(os, "replace", spy)
-    FileStore(tmp_path / "creds.json", 0o600).write(b'{"token": "secret"}')
+    monkeypatch.setattr(os, "chmod", spy)
+    previous = os.umask(0o022)
+    try:
+        FileStore(tmp_path / "creds.json", 0o600).write(b'{"token": "secret"}')
+    finally:
+        os.umask(previous)
 
-    assert observed["mode"] == "600"
+    assert observed.get("mode") == "600", (
+        f"credential was on disk at {observed.get('mode')} before being "
+        f"restricted to 0600")
 
 
 @posix_modes_only
