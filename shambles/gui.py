@@ -41,8 +41,16 @@ USAGE_STYLES = {
 
 USAGE_LABELS = {"session": "session", "week": "week"}
 
-#: Track geometry for a usage bar, in pixels before DPI scaling.
-BAR_WIDTH, BAR_HEIGHT = 104, 7
+#: Bar geometry. The track fills whatever width the row is given, so only the
+#: height and the fixed label/value columns are set here.
+BAR_HEIGHT = 8
+BAR_LABEL_WIDTH = 8
+BAR_VALUE_WIDTH = 5
+
+#: Shown in place of the bars when there is nothing to draw. Blank space reads
+#: as a broken widget; saying why does not.
+NO_USAGE_ACTIVE = "usage appears once you run Claude"
+NO_USAGE_IDLE = "no usage recorded yet"
 
 #: Fill colour per display severity. Red past usage.RED_AT, matching the
 #: extension's meter; amber only when Claude Code itself flags something below
@@ -374,6 +382,11 @@ class ShamblesApp(tk.Tk):
         for child in self.rows.winfo_children():
             child.destroy()
 
+        # Record the active account's figures before listing, so its own card
+        # has something to show rather than being the one guaranteed to be
+        # blank. No-op unless the live blob is both present and provably its.
+        usage.capture_live(self.paths, current.profile, now_ms=switcher.now_ms())
+
         found = profiles.discover(self.paths, current.profile, switcher.now_ms())
         if not found:
             tk.Label(self.rows, text="No profiles yet.", font=t.body,
@@ -415,41 +428,48 @@ class ShamblesApp(tk.Tk):
                  ).pack(fill="x", pady=(GAP_XS, 0))
 
     def _render_usage(self, parent, bg, profile):
-        """Session and weekly bars, right-aligned under the card's controls.
+        """Session and weekly bars as full-width rows beneath the identity.
 
-        Nothing is the honest answer more often than it looks: a switch clears
-        the cache so Claude Code refetches, and a profile that has never been
-        active has none stashed. An empty column beats a number that might be
-        wrong.
+        Every card renders this block, including the empty case, so heights
+        match down the list and the bars line up with each other.
         """
-        if not profile.usage:
-            return
         t = self.theme
         now = switcher.now_ms()
+
+        if not profile.usage:
+            tk.Label(parent,
+                     text=NO_USAGE_ACTIVE if profile.active else NO_USAGE_IDLE,
+                     font=t.chip, bg=bg, fg=t["faint"], anchor="w",
+                     ).pack(fill="x", pady=(GAP_S, 0))
+            return
+
         stale = profile.usage.is_stale(now)
         age = profile.usage.age_label(now)
 
-        for bar in profile.usage.bars:
+        for index, bar in enumerate(profile.usage.bars):
             row = tk.Frame(parent, bg=bg)
-            row.pack(anchor="e", pady=(GAP_XS, 0))
+            row.pack(fill="x", pady=(GAP_S if index == 0 else GAP_XS, 0))
 
             tk.Label(row, text=USAGE_LABELS.get(bar.label, bar.label),
                      font=t.chip, bg=bg,
                      fg=t["faint"] if stale else t["muted"],
-                     width=7, anchor="w").pack(side="left")
-
-            track = tk.Canvas(row, width=BAR_WIDTH, height=BAR_HEIGHT,
-                              bg=t["border"], highlightthickness=0, bd=0)
-            track.pack(side="left", padx=(0, GAP_XS))
-            fill = t["faint"] if stale else t[BAR_FILL[bar.display_severity]]
-            width = round(BAR_WIDTH * bar.fill)
-            if width:
-                track.create_rectangle(0, 0, width, BAR_HEIGHT,
-                                       fill=fill, width=0)
+                     width=BAR_LABEL_WIDTH, anchor="w").pack(side="left")
 
             tk.Label(row, text=f"{bar.percent}%", font=t.chip, bg=bg,
                      fg=t["faint"] if stale else t["text"],
-                     width=5, anchor="e").pack(side="left")
+                     width=BAR_VALUE_WIDTH, anchor="e").pack(side="right",
+                                                             padx=(GAP_S, 0))
+
+            # Packed last and expanding, so the track takes whatever is left
+            # between the label and the value however wide the window is.
+            track = tk.Frame(row, bg=t["border"], height=BAR_HEIGHT)
+            track.pack(side="left", fill="x", expand=True)
+            track.pack_propagate(False)
+
+            fill = t["faint"] if stale else t[BAR_FILL[bar.display_severity]]
+            if bar.fill > 0:
+                tk.Frame(track, bg=fill).place(
+                    relwidth=bar.fill, relheight=1.0, x=0, y=0)
 
             resets = bar.resets_label()
             Tooltip(row, USAGE_TOOLTIP.format(
@@ -460,8 +480,8 @@ class ShamblesApp(tk.Tk):
             ), t)
 
         if stale and age:
-            tk.Label(parent, text=age, font=t.chip, bg=bg,
-                     fg=t["faint"]).pack(anchor="e", pady=(GAP_XS - 2, 0))
+            tk.Label(parent, text=f"as of {age}", font=t.chip, bg=bg,
+                     fg=t["faint"], anchor="e").pack(fill="x", pady=(GAP_XS, 0))
 
     def _render_card(self, profile):
         """One profile as a bordered card, accented when it is the active one."""
@@ -480,15 +500,7 @@ class ShamblesApp(tk.Tk):
         card = tk.Frame(shell, bg=bg, padx=GAP_M, pady=GAP_M)
         card.pack(side="left", fill="both", expand=True)
 
-        # Two columns. Identity reads down the left; controls and the usage
-        # bars stack down the right, so the bars line up across every card
-        # regardless of how long a profile name or email happens to be.
-        right = tk.Frame(card, bg=bg)
-        right.pack(side="right", anchor="ne")
-        left = tk.Frame(card, bg=bg)
-        left.pack(side="left", fill="both", expand=True)
-
-        top = tk.Frame(left, bg=bg)
+        top = tk.Frame(card, bg=bg)
         top.pack(fill="x")
 
         name = tk.Label(top, text=profile.name, font=t.name, bg=bg,
@@ -501,8 +513,8 @@ class ShamblesApp(tk.Tk):
             tk.Label(top, text="ACTIVE", font=t.caption, bg=bg,
                      fg=t["accent"]).pack(side="left", padx=(GAP_S, 0))
         else:
-            controls = tk.Frame(right, bg=bg)
-            controls.pack(anchor="e")
+            controls = tk.Frame(top, bg=bg)
+            controls.pack(side="right")
             ttk.Button(controls, text="Switch", style="Switch.TButton",
                        command=lambda p=profile: self.on_switch(p.name)).pack(side="right")
             # Inactive profiles only. The active one has no ✕ at all, so the
@@ -516,12 +528,12 @@ class ShamblesApp(tk.Tk):
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
                             "deleted and that account needs a new /login.", t)
 
-        bottom = tk.Frame(left, bg=bg)
+        bottom = tk.Frame(card, bg=bg)
         bottom.pack(fill="x", pady=(GAP_XS, 0))
         tk.Label(bottom, text=profile.email or "unknown", font=t.body,
                  bg=bg, fg=t["muted"]).pack(side="left")
 
-        self._render_usage(right, bg, profile)
+        self._render_usage(card, bg, profile)
 
         label = profiles.expiry_label(profile)
         if label:

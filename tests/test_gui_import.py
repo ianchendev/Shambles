@@ -420,10 +420,26 @@ def test_no_usage_row_when_there_is_nothing_to_show(paths, make_app):
     assert "session" not in text and "week" not in text
 
 
+
+def _bar_fills(app):
+    """Every rendered bar as (colour, fraction), in card order."""
+    out = []
+    for w in _all_widgets(app):
+        if not isinstance(w, tk.Frame):
+            continue
+        try:
+            info = w.place_info()
+        except tk.TclError:
+            continue
+        if info and info.get("relwidth"):
+            out.append((str(w.cget("bg")), float(info["relwidth"])))
+    return out
+
+
 def test_bars_go_red_at_eighty_percent(paths, make_app):
     """Matches the extension's own meter, so the two never disagree."""
     from helpers import make_claude_json, make_live_login, make_profile
-    from shambles import switcher, usage
+    from shambles import switcher
 
     make_profile(paths, "Work", email="work@example.com", active=True)
     make_claude_json(paths, email="work@example.com",
@@ -434,16 +450,15 @@ def test_bars_go_red_at_eighty_percent(paths, make_app):
     app = make_app(paths)
     app.update()
 
-    bars = [w for w in _all_widgets(app) if isinstance(w, tk.Canvas)]
-    assert len(bars) == 2, "expected one canvas per bucket"
-    fills = [b.itemcget(b.find_all()[0], "fill") for b in bars]
-    assert fills[0] == app.theme["accent"], "43% should not be red"
-    assert fills[1] == app.theme["chip_gone_fg"], "89% should be red"
+    fills = _bar_fills(app)
+    assert len(fills) == 2, f"expected two bars, got {len(fills)}"
+    assert fills[0][0] == app.theme["accent"], "43% should not be red"
+    assert fills[1][0] == app.theme["chip_gone_fg"], "89% should be red"
 
 
 def test_a_bar_never_overflows_its_track(paths, make_app):
     from helpers import make_claude_json, make_live_login, make_profile
-    from shambles import gui, switcher
+    from shambles import switcher
 
     make_profile(paths, "Work", email="work@example.com", active=True)
     make_claude_json(paths, email="work@example.com",
@@ -454,13 +469,12 @@ def test_a_bar_never_overflows_its_track(paths, make_app):
     app = make_app(paths)
     app.update()
 
-    for canvas in [w for w in _all_widgets(app) if isinstance(w, tk.Canvas)]:
-        x0, _y0, x1, _y1 = canvas.coords(canvas.find_all()[0])
-        assert x1 - x0 <= gui.BAR_WIDTH, "over-quota bar drew past its track"
+    for _colour, fraction in _bar_fills(app):
+        assert fraction <= 1.0, "over-quota bar drew past its track"
 
 
-def test_bars_sit_in_the_right_hand_column(paths, make_app):
-    """Right-aligned so they line up across cards whatever the name length."""
+def test_bars_span_the_card_below_the_email(paths, make_app):
+    """Full-width rows, so they line up across cards whatever the name length."""
     from helpers import make_claude_json, make_live_login, make_profile
     from shambles import switcher
 
@@ -473,7 +487,30 @@ def test_bars_sit_in_the_right_hand_column(paths, make_app):
     app = make_app(paths)
     app.update()
 
-    canvas = [w for w in _all_widgets(app) if isinstance(w, tk.Canvas)][0]
-    email = [w for w in _all_widgets(app)
-             if isinstance(w, tk.Label) and "a@example.com" in str(w.cget("text"))][0]
-    assert canvas.winfo_rootx() > email.winfo_rootx(), "bar is not to the right"
+    email = [w for w in _all_widgets(app) if isinstance(w, tk.Label)
+             and "a@example.com" in str(w.cget("text"))][-1]
+    tracks = [w for w in _all_widgets(app) if isinstance(w, tk.Frame)
+              and str(w.cget("bg")) == app.theme["border"]
+              and w.winfo_width() > 100]
+    assert tracks, "no full-width track found"
+    assert tracks[0].winfo_rooty() > email.winfo_rooty(), "bars are not below the email"
+    assert tracks[0].winfo_width() > email.winfo_width(), "track is not spanning the card"
+
+
+def test_an_account_with_no_figures_says_why(paths, make_app):
+    """Blank space reads as a broken widget; this is what the reporter saw."""
+    from helpers import make_claude_json, make_live_login, make_profile
+    import json as _json
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    d = _json.loads(paths.claude_json.read_text())
+    d.pop("cachedUsageUtilization", None)
+    paths.claude_json.write_text(_json.dumps(d))
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    text = " ".join(_buttons(app))
+    assert "usage appears once you run Claude" in text
