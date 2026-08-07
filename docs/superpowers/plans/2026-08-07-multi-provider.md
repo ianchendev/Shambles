@@ -1453,18 +1453,48 @@ def test_codex_email_comes_out_of_the_jwt(paths, codex):
     assert found[0].plan == "plus"
 
 
-@pytest.mark.parametrize("days, state, label", [
-    (30, LIVE, "30d"),
-    (2, CLOSING, "2d"),
-    (0, CLOSING, "today"),
-    (-3, CLOSED, "expired 3d ago"),
+HOUR_MS = 3_600_000
+
+#: Offsets from the reference clock rather than whole days, because the two
+#: interesting cases are not expressible in days. Claude's warn window is one
+#: day (DD-1), so "closing" lives between 0 and 1 days out, and "today" means
+#: some hours from now -- an expiry of *exactly* now is closed, not closing.
+@pytest.mark.parametrize("offset_ms, state, label", [
+    (30 * DAY_MS, LIVE, "30d"),
+    (DAY_MS + HOUR_MS, CLOSING, "1d"),
+    (6 * HOUR_MS, CLOSING, "today"),
+    (-3 * DAY_MS, CLOSED, "expired 3d ago"),
 ])
-def test_the_countdown_reads_from_the_token(paths, claude, days, state, label):
+def test_the_countdown_reads_from_the_token(paths, claude, offset_ms, state, label):
     make_profile(paths, "claude", "Work", email="w@example.com",
-                 refresh_expires_ms=NOW + days * DAY_MS)
+                 refresh_expires_ms=NOW + offset_ms)
     found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
     assert found.liveness.state == state
     assert profiles.expiry_label(found) == label
+
+
+def test_an_expiry_of_exactly_now_is_closed_not_closing(paths, claude):
+    """The boundary the parametrized cases step around."""
+    make_profile(paths, "claude", "Work", email="w@example.com",
+                 refresh_expires_ms=NOW)
+    found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
+    assert found.liveness.state == CLOSED
+
+
+def test_the_same_token_reads_differently_under_each_provider_threshold(paths):
+    """DD-1's actual requirement: one shared constant cannot serve both."""
+    claude_p, codex_p = providers.load("claude"), providers.load("codex")
+    make_profile(paths, "claude", "Work", email="w@example.com",
+                 refresh_expires_ms=NOW + 2 * DAY_MS)
+    make_profile(paths, "codex", "Work", email="c@example.com",
+                 refresh_expires_ms=NOW + 2 * DAY_MS)
+
+    claude_state = profiles.discover(
+        paths, claude_p, None, NOW, platform="linux")[0].liveness.state
+    codex_state = profiles.discover(
+        paths, codex_p, None, NOW, platform="linux")[0].liveness.state
+
+    assert (claude_state, codex_state) == (LIVE, CLOSING)
 
 
 def test_a_profile_with_no_token_is_absent_not_expired(paths, claude):
