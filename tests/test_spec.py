@@ -8,6 +8,7 @@ key called ``https://api``.
 
 import pytest
 
+from shambles import providers
 from shambles.providers import spec
 
 
@@ -130,11 +131,6 @@ def test_every_spec_records_how_far_it_was_verified(provider_id):
     assert "platforms_from_source_only" in provenance
 
 
-import pytest
-
-from shambles import providers
-
-
 @pytest.mark.parametrize("provider_id, binary, command", [
     ("claude", "claude", ["claude", "auth", "login"]),
     ("codex", "codex", ["codex", "login"]),
@@ -150,3 +146,17 @@ def test_login_command_starts_with_the_binary():
     or availability and execution would disagree."""
     for provider in providers.all_providers():
         assert provider.login_command()[0] == provider.login_binary()
+
+
+def test_companion_write_failure_is_a_shambles_error(tmp_path, monkeypatch):
+    """_write_json backs companion_write, which switcher.switch calls outside
+    its OSError guard. An unguarded failure there is a raw traceback."""
+    from shambles.errors import ShamblesError
+    claude = providers.load("claude")
+
+    def refuse(*_args, **_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("shambles.providers.claude._write_json", refuse)
+    with pytest.raises(ShamblesError):
+        claude.companion_write({"oauthAccount": {}}, home=tmp_path)
