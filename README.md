@@ -296,35 +296,38 @@ the same protection Claude Code's own `.credentials.json` gets.
 Each card carries the two figures that decide which account to reach for:
 
 ```
-Admin  ACTIVE                    session ▇▇▇▇▇░░░░░░░  43%
-admin@example.com          28d   week    ▇▇▇▇▇▇▇▇▇▇▇░  89%
+Admin                                       [✕] [Switch]
+admin@example.com                  28d
 
-Ian-Work                                    [✕] [Switch]
-me@example.com             27d   session ▇░░░░░░░░░░░  12%
-                                 week    ▇▇▇▇▇▇▇▇▇▇▇░  92%
-                                                17h ago
+session   ▇▇▇▇▇▇░░░░░░░░░░░░░░░░░░░░░░░░░░   49%
+week      ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇░░░░   90%
+
+Ian-Work  ACTIVE
+me@example.com                     27d
+
+usage appears once you run Claude
 ```
 
-Bars sit in a right-hand column so they line up across cards whatever a name or
-address happens to be. **A bar turns red at 80%**, the same threshold the VS
-Code extension uses, so the two never disagree on screen. Below that it is the
-ordinary accent — unless Claude Code itself flags the bucket, in which case its
-warning shows through rather than being painted over.
+Bars are full-width rows beneath the identity, so they line up down the window
+whatever a name or address happens to be. **A bar turns red at 80%**, the same
+threshold the VS Code extension uses, so the two never disagree on screen.
+Below that it is the ordinary accent — unless Claude Code itself flags the
+bucket, in which case its warning shows through rather than being painted over.
 
-**The active account's figures are live**, read from the cache Claude Code
-keeps current as you work. **Every other account shows what it last reported**,
-greyed out with its age beside it, because nothing has signed in as that
-account since. A number with `17h ago` next to it is a hint, not a reading.
-
-Two cases show no figures at all, both deliberate:
+An account with no figures yet says so rather than leaving a gap. That happens
+in two cases:
 
 - **Just after a switch.** Shambles clears the usage cache so Claude Code
-  refetches for the account you moved to. Figures reappear once it does.
-- **An account never used since you saved it.** Nothing has been reported yet.
+  refetches for the account you moved to, and the account has not reported yet.
+- **An account never used while Shambles was open.**
 
-Showing nothing is the honest answer there. An earlier version restored each
-profile's stashed figures into `~/.claude.json` on switch, which made the VS
-Code meter display hours-old numbers as though they were current.
+In both, the line reads *usage appears once you run Claude*, and figures show up
+on the next refresh. Shambles records the active account's numbers whenever it
+sees them, so a profile keeps its last known figures once it has been used.
+
+Showing nothing rather than a guess is deliberate. An earlier version restored
+each profile's stashed figures into `~/.claude.json` on switch, which made the
+VS Code meter display hours-old numbers as though they were current.
 
 ## Checking token health
 

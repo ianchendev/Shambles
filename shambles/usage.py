@@ -15,6 +15,8 @@ labelled with its age.
 import datetime
 from dataclasses import dataclass
 
+from . import configjson
+
 #: ``kind`` values in the cache's ``limits`` array, mapped to a short label.
 #: ``weekly_all`` is the whole-week bucket; the per-model ones are ignored
 #: because a row has space for two numbers, not six.
@@ -177,3 +179,35 @@ def parse(blob) -> Usage:
     order = [lbl for lbl in ("session", "week") if lbl in found]
     return Usage(bars=tuple(found[lbl] for lbl in order),
                  fetched_at_ms=int(fetched) if fetched else None)
+
+
+def capture_live(paths, active_name, *, now_ms) -> bool:
+    """Record the active account's live figures into its own profile.
+
+    Without this a profile only learns its usage at the moment you switch
+    away, so the account you are actually using is the one guaranteed to show
+    nothing -- exactly backwards. Called on every window refresh, so it writes
+    only when the figure has actually moved.
+
+    Refuses a blob whose ``accountUuid`` does not match the profile's stored
+    identity: ``~/.claude.json`` can still hold the previous account's cache in
+    the moments after a switch, and attributing that to this profile would be
+    the same class of mistake as restoring it.
+    """
+    if not active_name:
+        return False
+    live = configjson.load(paths.claude_json).get("cachedUsageUtilization")
+    if not isinstance(live, dict):
+        return False
+
+    sidecar = configjson.load(paths.account(active_name))
+    expected = (sidecar.get("oauthAccount") or {}).get("accountUuid")
+    if not expected or live.get("accountUuid") != expected:
+        return False
+
+    if sidecar.get("usage") == live:
+        return False
+
+    sidecar["usage"] = live
+    configjson.write_atomic(paths.account(active_name), sidecar)
+    return True

@@ -271,7 +271,16 @@ holds that raw verdict; `Bar.display_severity` applies a **red floor at
 screen. The floor never *downgrades* — a bucket Claude Code flags below 80%
 still renders amber — and an unrecognised severity renders as the worst case
 rather than guessing. `fill_fraction` clamps to 0..1 so an over-quota account
-saturates the track instead of drawing past it. The active profile reads the live config; the
+saturates the track instead of drawing past it.
+
+`usage.capture_live()` runs on every window refresh and records the active
+account's live blob into its own profile. Without it a profile only learned its
+figures at the moment you switched *away*, so the account actually in use was
+the one guaranteed to render blank — reported as "I switched to Ian-Work but
+can't see the bars". It refuses any blob whose `accountUuid` does not match the
+profile's stored identity, since `~/.claude.json` can still hold the previous
+account's cache immediately after a switch, and writes only when the figure has
+moved so a per-refresh call does not churn the file. The active profile reads the live config; the
 rest read their stash and render greyed out with an age label, so a figure
 nobody has refreshed cannot pass for a current one.
 
