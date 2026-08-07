@@ -1,7 +1,9 @@
 import json
+import os
 
 import pytest
 
+from conftest import posix_modes_only
 from helpers import NOW, account, make_claude_json, write_json
 from shambles import configjson
 from shambles.errors import ConfigUnreadableError
@@ -153,3 +155,44 @@ def test_preserves_every_unrelated_key_when_splicing(paths):
     assert after["mcpServers"] == original["mcpServers"]
     assert after["userID"] == "abc123"
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
+
+
+@posix_modes_only
+def test_a_leftover_temp_file_does_not_expose_the_next_write(tmp_path, monkeypatch):
+    """Same defect as ``FileStore.write``, in ``write_atomic``'s own temp
+    file: ``O_CREAT``'s mode argument is ignored when the file already
+    exists, so a ``*.shambles-tmp`` left at a loose mode by a crashed run
+    would take the next write's full plaintext payload before anything
+    restricted it.
+
+    Observed via ``os.fstat`` on the descriptor right after the real
+    ``os.write`` returns -- the vantage point that catches the bytes at rest
+    regardless of which call is meant to have fixed the mode by then.
+    """
+    target = tmp_path / "config.json"
+    tmp = target.with_name(target.name + configjson.TMP_SUFFIX)
+    tmp.write_bytes(b"stale content from a crashed run")
+    os.chmod(tmp, 0o644)
+
+    observed = {}
+    real_write = os.write
+
+    def spy(fd, data):
+        result = real_write(fd, data)
+        observed.setdefault("mode", oct(os.fstat(fd).st_mode)[-3:])
+        return result
+
+    monkeypatch.setattr(os, "write", spy)
+    previous = os.umask(0o022)
+    try:
+        configjson.write_atomic(target, {"oauthAccount": {"emailAddress": "a@b.com"}})
+    finally:
+        os.umask(previous)
+
+    assert "mode" in observed, (
+        "os.write was never called -- write_atomic no longer writes through "
+        "the low-level descriptor, so this test can no longer see the bytes "
+        "land and needs a new vantage point")
+    assert observed["mode"] == "600", (
+        f"config landed at {observed['mode']} while a leftover temp file's "
+        f"old permissions still applied")

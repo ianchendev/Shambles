@@ -262,6 +262,13 @@ def _write_json(path: Path, data: dict) -> None:
         tmp = path.with_name(path.name + ".shambles-tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
+            # A leftover *.shambles-tmp from a crashed run is opened, not
+            # created, so O_CREAT's mode argument does not apply to it --
+            # fchmod fixes the descriptor itself before the first byte lands.
+            # No os.fchmod on Windows; the trailing os.chmod covers that
+            # platform and is a harmless no-op elsewhere.
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o600)
             os.write(fd, (json.dumps(data, indent=2) + "\n").encode("utf-8"))
         finally:
             os.close(fd)
