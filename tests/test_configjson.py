@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 
 import pytest
 
@@ -175,24 +176,24 @@ def test_a_leftover_temp_file_does_not_expose_the_next_write(tmp_path, monkeypat
     os.chmod(tmp, 0o644)
 
     observed = {}
-    real_write = os.write
+    real_chmod = os.chmod
 
-    def spy(fd, data):
-        result = real_write(fd, data)
-        observed.setdefault("mode", oct(os.fstat(fd).st_mode)[-3:])
-        return result
+    def spy(path, mode, *args, **kwargs):
+        try:
+            info = os.stat(path)
+            if stat.S_ISREG(info.st_mode) and info.st_size:
+                observed.setdefault("mode", oct(info.st_mode)[-3:])
+        except OSError:
+            pass
+        return real_chmod(path, mode, *args, **kwargs)
 
-    monkeypatch.setattr(os, "write", spy)
+    monkeypatch.setattr(os, "chmod", spy)
     previous = os.umask(0o022)
     try:
         configjson.write_atomic(target, {"oauthAccount": {"emailAddress": "a@b.com"}})
     finally:
         os.umask(previous)
 
-    assert "mode" in observed, (
-        "os.write was never called -- write_atomic no longer writes through "
-        "the low-level descriptor, so this test can no longer see the bytes "
-        "land and needs a new vantage point")
-    assert observed["mode"] == "600", (
-        f"config landed at {observed['mode']} while a leftover temp file's "
-        f"old permissions still applied")
+    assert observed.get("mode") == "600", (
+        f"config was on disk at {observed.get('mode')} before being "
+        f"restricted to 0600")
