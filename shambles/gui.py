@@ -9,7 +9,8 @@ from . import configjson, eject, migrate, profiles, state, switcher, usage
 from .errors import ShamblesError
 from .paths import Paths
 from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
-                    WINDOW_WIDTH, Theme, scale_for_display)
+                    MAX_HEIGHT_FRACTION, NAME_MAX_PX, WINDOW_WIDTH, Theme,
+                    elide, scale_for_display)
 
 WINDOW_TITLE = "Shambles"
 
@@ -290,12 +291,30 @@ class ShamblesApp(tk.Tk):
         self.subtitle.pack(fill="x")
 
         # -- profile cards -----------------------------------------------
-        self.rows = tk.Frame(self, bg=t["window"], padx=GAP_L)
-        self.rows.pack(fill="both", expand=True)
+        # The card list scrolls only when it has to. A fixed-size window that
+        # grows with each profile eventually pushes the footer off the bottom,
+        # and with no resize handle those buttons cannot be reached again.
+        self._viewport = tk.Canvas(self, bg=t["window"], highlightthickness=0,
+                                   bd=0)
+        self._scrollbar = ttk.Scrollbar(self, orient="vertical",
+                                        command=self._viewport.yview)
+        self._viewport.configure(yscrollcommand=self._scrollbar.set)
+        self._viewport.pack(side="left", fill="both", expand=True)
+
+        self.rows = tk.Frame(self._viewport, bg=t["window"], padx=GAP_L)
+        self._rows_window = self._viewport.create_window(
+            (0, 0), window=self.rows, anchor="nw")
+        self.rows.bind("<Configure>", self._fit_viewport)
+        self._viewport.bind(
+            "<Configure>",
+            lambda e: self._viewport.itemconfigure(self._rows_window,
+                                                   width=e.width))
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_all(seq, self._on_wheel)
 
         # -- footer ------------------------------------------------------
         footer = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
-        footer.pack(fill="x")
+        footer.pack(side="bottom", fill="x")
         self.save_button = ttk.Button(footer, text="Save Current Account",
                                       style="Shambles.TButton", command=self.on_save)
         self.save_button.pack(side="left")
@@ -446,6 +465,35 @@ class ShamblesApp(tk.Tk):
                        style="Shambles.TButton",
                        command=self.on_forget_marker).pack(anchor="w", pady=(GAP_S, 0))
 
+    def _fit_viewport(self, _event=None):
+        """Size the canvas to its content, up to the screen-height cap.
+
+        Below the cap the window behaves exactly as before -- no scrollbar and
+        nothing to scroll. Past it the list scrolls and the footer stays put,
+        which matters because the window has no resize handle: a footer pushed
+        off the bottom takes Eject and Add Account with it.
+        """
+        self._viewport.configure(scrollregion=self._viewport.bbox("all"))
+        needed = self.rows.winfo_reqheight()
+        room = int(self.winfo_screenheight() * MAX_HEIGHT_FRACTION) - 260
+        room = max(room, 200)
+        self._viewport.configure(height=min(needed, room))
+        if needed > room:
+            self._scrollbar.pack(side="right", fill="y", before=self._viewport)
+        else:
+            self._scrollbar.pack_forget()
+            self._viewport.yview_moveto(0)
+
+    def _on_wheel(self, event):
+        """Wheel scrolling, but only while there is somewhere to scroll."""
+        try:
+            if not self._scrollbar.winfo_ismapped():
+                return
+        except tk.TclError:
+            return
+        down = getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0
+        self._viewport.yview_scroll(2 if down else -2, "units")
+
     def _render_override_banner(self, target: str):
         """CLAUDE_CONFIG_DIR is set, so the CLI reads a tree Shambles never
         touches. Switches still work in VS Code -- the extension host does not
@@ -544,11 +592,14 @@ class ShamblesApp(tk.Tk):
         top = tk.Frame(card, bg=bg)
         top.pack(fill="x")
 
-        name = tk.Label(top, text=profile.name, font=t.name, bg=bg,
+        shown = elide(profile.name, t.name, NAME_MAX_PX)
+        name = tk.Label(top, text=shown, font=t.name, bg=bg,
                         fg=t["text"], cursor="hand2")
         name.pack(side="left")
         name.bind("<Double-Button-1>", lambda _e, p=profile: self.on_rename_prompt(p.name))
-        Tooltip(name, RENAME_HINT, t)
+        Tooltip(name,
+                f"{profile.name}\n\n{RENAME_HINT}" if shown != profile.name
+                else RENAME_HINT, t)
 
         if profile.active:
             tk.Label(top, text="ACTIVE", font=t.caption, bg=bg,

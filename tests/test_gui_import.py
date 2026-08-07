@@ -590,3 +590,70 @@ def test_a_tooltip_on_a_row_fires_from_its_children(paths, make_app):
     app.update_idletasks()
     assert gui.Tooltip._open, "hovering the row's label showed no tooltip"
     gui.Tooltip.hide_all()
+
+
+def test_the_window_never_grows_past_the_screen(paths, make_app, monkeypatch):
+    """No resize handle, so a footer pushed off the bottom takes Eject and
+    Add Account with it and cannot be recovered.
+
+    The cap is a fraction of screen height, so it is forced small here rather
+    than depending on whatever display the suite happens to run on.
+    """
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import gui
+
+    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 0.12)
+
+    for i in range(12):
+        make_profile(paths, f"Account{i}", email=f"a{i}@example.com",
+                     active=(i == 0))
+    make_claude_json(paths, email="a0@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert app._scrollbar.winfo_ismapped(), "no scrollbar despite overflowing"
+    assert app.winfo_reqheight() < 12 * 140, \
+        "window grew with every profile instead of capping"
+
+
+def test_no_scrollbar_when_everything_fits(paths, make_app):
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert not app._scrollbar.winfo_ismapped(), "scrollbar shown unnecessarily"
+
+
+def test_the_footer_stays_reachable_with_many_profiles(paths, make_app,
+                                                       monkeypatch):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import gui
+
+    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 0.12)
+
+    for i in range(12):
+        make_profile(paths, f"Account{i}", email=f"a{i}@example.com",
+                     active=(i == 0))
+    make_claude_json(paths, email="a0@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    def label_of(w):
+        try:
+            return str(w.cget("text"))
+        except tk.TclError:
+            return ""
+
+    eject = [w for w in _all_widgets(app) if label_of(w) == "Eject"]
+    assert eject, "Eject button missing"
+    assert eject[0].winfo_rooty() < app.winfo_rooty() + app.winfo_height(), \
+        "footer is off the bottom of the window"
