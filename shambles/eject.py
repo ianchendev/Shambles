@@ -21,7 +21,7 @@ from . import state, switcher
 from .errors import ShamblesError
 
 #: Shambles' own artefacts inside ~/.claude. Only ever the sidecar left by the
-#: pre-1.0 layout; everything else there belongs to Claude Code.
+#: 1.x layout; everything else there belongs to Claude Code.
 OWN_FILES_IN_CLAUDE = (".shambles.json",)
 
 

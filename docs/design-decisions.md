@@ -306,7 +306,7 @@ The repo is 1745 readable lines. The failure mode here is a framework.
 ### Consequences
 
 - The profile store layout becomes provider-scoped —
-  `~/.shambles/<provider>/<name>/` — and the pre-1.0 migration in
+  `~/.shambles/<provider>/<name>/` — and the 1.x migration in
   [`migrate.py`](../shambles/migrate.py) gains a second hop.
 - `Profile` grows a `provider` field; `EXPIRY_WARN_DAYS` becomes per-provider
   (DD-1 already requires this: Claude ~4 days, Codex ~10).

@@ -170,7 +170,7 @@ def switch(paths, target_name: str, *, now_ms_fn=now_ms, sleep=time.sleep):
 
 
 MIGRATION_REQUIRED = (
-    "~/.claude is still a symlink from an older version of Shambles.\n\n"
+    "~/.claude is still a symlink from Shambles 1.x.\n\n"
     "That layout gave every account its own copy of your session history. "
     "Run the migration to merge them back into one shared directory."
 )

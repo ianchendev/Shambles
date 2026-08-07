@@ -395,7 +395,7 @@ class ShamblesApp(tk.Tk):
         self.refresh()
 
     def _repair_legacy_layout(self):
-        """Convert the pre-1.0 layout on sight.
+        """Convert the 1.x layout on sight.
 
         Deliberately not a choice. That layout gave every account its own copy
         of ~/.claude, so switching hid your session history -- there is no
