@@ -36,6 +36,18 @@ class FileStore:
         a window, not a formality. Codex's own writer gets this half right --
         it sets 0600 only on creation, leaving an existing loose file loose --
         so this sets the mode every time.
+
+        ``O_CREAT`` honours the ``mode`` argument only when it actually
+        creates the file. A ``*.shambles-tmp`` left behind at a loose mode by
+        a crashed run is opened, not created, so the mode passed to
+        :func:`os.open` is silently ignored for it -- the payload would land
+        at the old mode before anything fixed it. ``os.fchmod`` closes that
+        because it acts on the open descriptor regardless of whether the file
+        pre-existed, so it runs before the first byte is written rather than
+        after the last one. Windows has no ``os.fchmod``; the trailing
+        ``os.chmod`` stays so that platform keeps its previous (best-effort)
+        behaviour, and is otherwise a harmless no-op once ``fchmod`` has
+        already put the descriptor at the right mode.
         """
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,12 +58,11 @@ class FileStore:
             tmp = self.path.with_name(self.path.name + TMP_SUFFIX)
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, self.mode)
             try:
+                if hasattr(os, "fchmod"):
+                    os.fchmod(fd, self.mode)
                 os.write(fd, payload)
             finally:
                 os.close(fd)
-            # O_CREAT honours the mode only when the file did not already
-            # exist, so a leftover temp from a crashed run keeps its old mode
-            # without this.
             os.chmod(tmp, self.mode)
             os.replace(tmp, self.path)
         except OSError as exc:

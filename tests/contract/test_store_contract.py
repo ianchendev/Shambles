@@ -206,3 +206,41 @@ def test_a_write_failure_is_a_shambles_error(tmp_path):
     (tmp_path / "creds.json").mkdir()  # a directory where a file must go
     with pytest.raises(StoreUnavailableError):
         store.write(b"{}")
+
+
+@posix_modes_only
+def test_a_leftover_temp_file_does_not_expose_the_next_write(tmp_path, monkeypatch):
+    """``O_CREAT`` honours the ``mode`` argument only when it creates the
+    file. A ``*.shambles-tmp`` left behind at a loose mode by a crashed run
+    is opened, not created, on the next write -- so a fix that only passes
+    ``mode`` to ``os.open`` looks correct on a clean run and still leaks the
+    credential on this one.
+
+    Observed via ``os.fstat`` on the descriptor immediately after the real
+    ``os.write`` returns: the one vantage point that catches the bytes at
+    rest no matter which mechanism (or lack of one) is meant to have fixed
+    the mode by then.
+    """
+    target = tmp_path / "creds.json"
+    tmp = target.with_name(target.name + ".shambles-tmp")
+    tmp.write_bytes(b"stale content from a crashed run")
+    os.chmod(tmp, 0o644)
+
+    observed = {}
+    real_write = os.write
+
+    def spy(fd, data):
+        result = real_write(fd, data)
+        observed.setdefault("mode", oct(os.fstat(fd).st_mode)[-3:])
+        return result
+
+    monkeypatch.setattr(os, "write", spy)
+    previous = os.umask(0o022)
+    try:
+        FileStore(target, 0o600).write(b'{"token": "secret"}')
+    finally:
+        os.umask(previous)
+
+    assert observed.get("mode") == "600", (
+        f"credential landed at {observed.get('mode')} while a leftover "
+        f"temp file's old permissions still applied")

@@ -41,12 +41,26 @@ def extract_account_keys(config: dict) -> dict:
 
 
 def write_atomic(path, config: dict) -> None:
-    """Write via a same-directory temp file, then rename over the original."""
+    """Write via a same-directory temp file, then rename over the original.
+
+    The descriptor is chmod'd before anything is written to it, not after --
+    ``O_CREAT`` only honours a mode on creation, so a ``*.shambles-tmp`` left
+    at a loose mode by a crashed run would otherwise take the full plaintext
+    payload while still world-readable. ``os.fchmod`` acts on the open fd
+    regardless of whether the file pre-existed; Windows has no ``os.fchmod``,
+    so the trailing ``os.chmod`` stays for that platform and is a no-op
+    everywhere else.
+    """
     path = Path(path)
     tmp = path.with_name(path.name + TMP_SUFFIX)
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(config, fh, indent=2)
-        fh.write("\n")
+    payload = (json.dumps(config, indent=2) + "\n").encode("utf-8")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
