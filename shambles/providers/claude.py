@@ -114,6 +114,16 @@ class ClaudeProvider:
     def login_hint(self) -> str:
         return self.spec["login"]["hint"]
 
+    def login_binary(self) -> str:
+        """The executable to probe on PATH before offering this provider."""
+        return self.spec["login"]["binary"]
+
+    def login_command(self) -> list[str]:
+        """The vendor's own login command. It opens the browser itself and
+        runs its own OAuth callback -- Shambles never handles a token in
+        flight, which is what keeps DD-2's structural argument intact."""
+        return list(self.spec["login"]["command"])
+
     # -- where the bytes live ---------------------------------------------
 
     def store(self, *, home, platform: str):
