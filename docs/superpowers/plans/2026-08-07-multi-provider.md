@@ -100,18 +100,29 @@ This matters because the release binary is PyInstaller `--onefile`, where `__fil
 
 ---
 
-## Task 2: Add login metadata to the provider specs
+## Task 2: Login metadata, the wide `identity()` signature, and two layer fixes
+
+Four changes to the layers Task 1 brought in, all of them prerequisites for wiring the core onto them.
 
 `login_hint()` returns prose. Driving the browser needs the binary name and argv, as data, so `login.py` never hardcodes a vendor.
 
+The other three come from the Task 1 review:
+
+1. **`identity()` must take `profile_dir` and `active`.** Commit `1467f7a` shipped the narrow `identity(self, blob, *, home)`. Tasks 5 and 6 call the wide form, and without it `ClaudeProvider.identity()` always reads the live `~/.claude.json` — so **every parked Claude profile displays the active account's email**. Task 6's `test_a_parked_claude_profile_shows_its_own_email_not_the_live_one` asserts the opposite. The correct implementation already exists in commit `01d6de8` as exactly three hunks touching only these modules.
+2. **`FileStore.write` leaves a permission window.** It does `tmp.write_bytes(payload)` — creating the file at the default umask, typically `0644`, with the full plaintext credential in it — and only then `os.chmod(tmp, 0o600)`. The Global Constraint says a credential is never observable at loose permissions; that is currently false.
+3. **`_write_json` in `claude.py` has no error handling.** It is what `companion_write()` writes through, and Task 7 calls `companion_write()` *outside* its `OSError` guard, so a disk-full or read-only filesystem surfaces as a raw traceback — violating "tracebacks never reach the user."
+
+> **Ruling (human partner, pre-Task-2):** fixes 2 and 3 land here rather than being deferred. This overrides Task 1's "do not improve its content" and the Global Constraints sentence "FileStore.write already does this — do not reimplement it", which is false as written.
+
 **Files:**
 - Modify: `shambles/providers/claude.json`, `shambles/providers/codex.json`
-- Modify: `shambles/providers/claude.py`, `shambles/providers/codex.py`
-- Test: `tests/test_spec.py`
+- Modify: `shambles/providers/base.py`, `shambles/providers/claude.py`, `shambles/providers/codex.py`
+- Modify: `shambles/stores/file.py`
+- Test: `tests/test_spec.py`, `tests/contract/test_store_contract.py`
 
 **Interfaces:**
 - Consumes: Task 1's `Provider` protocol.
-- Produces: `provider.login_binary() -> str`, `provider.login_command() -> list[str]`. Used by Task 9's `login.py` and Task 12's GUI.
+- Produces: `provider.login_binary() -> str`, `provider.login_command() -> list[str]` (used by Task 9's `login.py` and Task 12's GUI); and the wide `provider.identity(blob, *, home, profile_dir=None, active=False) -> Identity` (used by Tasks 5 and 6).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -193,7 +204,7 @@ Add the identical two methods to `CodexProvider` in `shambles/providers/codex.py
 Run: `.venv/bin/python -m pytest tests/test_spec.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Commit the login metadata**
 
 ```bash
 git add shambles/providers tests/test_spec.py
@@ -202,6 +213,202 @@ git commit -m "feat: declare each provider's login command as spec data
 login_hint() returns prose for a human. Driving the browser needs the
 binary name and argv as data, so login.py can spawn either vendor
 without naming one.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+- [ ] **Step 7: Widen `identity()` to take `profile_dir` and `active`**
+
+Take the implementation from commit `01d6de8`, which contains exactly this change for these three files and nothing else:
+
+```bash
+git checkout 01d6de8 -- shambles/providers/base.py shambles/providers/claude.py shambles/providers/codex.py
+git diff --cached --stat
+```
+
+Expected: 3 files changed, 35 insertions, 10 deletions. **Verify before continuing** that the only change is the `identity()` signature and body — if `git diff --cached` shows anything else, stop and report BLOCKED.
+
+`ClaudeProvider.identity()` gains the branch that matters:
+
+```python
+        if active or profile_dir is None:
+            data = _read_json(specmod.expand(block["path"], home=home))
+        else:
+            data = _read_json(Path(profile_dir) / "account.json")
+```
+
+Confirm `from pathlib import Path` is present in `claude.py` after the checkout; the new body uses it.
+
+- [ ] **Step 8: Write the failing tests for the two layer fixes**
+
+Append to `tests/contract/test_store_contract.py`:
+
+```python
+import os
+
+import pytest
+
+from conftest import posix_modes_only
+from shambles.stores import FileStore
+from shambles.stores.base import StoreUnavailableError
+
+
+@posix_modes_only
+def test_a_credential_is_never_observable_at_loose_permissions(tmp_path, monkeypatch):
+    """The temp file must be created 0600, not created at umask and chmod'd
+    afterwards. Between those two calls a full plaintext credential sits on
+    disk world-readable, which is exactly what the 0600 rule exists to stop.
+
+    Asserted by watching the mode at the moment the bytes land, because the
+    final file is 0600 either way and cannot distinguish the two.
+    """
+    observed = {}
+    real_replace = os.replace
+
+    def spy(src, dst):
+        observed["mode"] = oct(os.stat(src).st_mode)[-3:]
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy)
+    FileStore(tmp_path / "creds.json", 0o600).write(b'{"token": "secret"}')
+
+    assert observed["mode"] == "600"
+
+
+@posix_modes_only
+def test_the_parent_directory_is_created_owner_only(tmp_path):
+    store = FileStore(tmp_path / "nested" / "creds.json", 0o600)
+    store.write(b"{}")
+    assert oct(os.stat(tmp_path / "nested").st_mode)[-3:] == "700"
+
+
+def test_a_write_failure_is_a_shambles_error(tmp_path):
+    """Never a bare OSError: the GUI renders ShamblesError only, and anything
+    else reaches the user as a stderr traceback."""
+    store = FileStore(tmp_path / "creds.json", 0o600)
+    (tmp_path / "creds.json").mkdir()  # a directory where a file must go
+    with pytest.raises(StoreUnavailableError):
+        store.write(b"{}")
+```
+
+Append to `tests/test_spec.py`:
+
+```python
+def test_companion_write_failure_is_a_shambles_error(tmp_path, monkeypatch):
+    """_write_json backs companion_write, which switcher.switch calls outside
+    its OSError guard. An unguarded failure there is a raw traceback."""
+    from shambles.errors import ShamblesError
+    claude = providers.load("claude")
+
+    def refuse(*_args, **_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("shambles.providers.claude._write_json", refuse)
+    with pytest.raises(ShamblesError):
+        claude.companion_write({"oauthAccount": {}}, home=tmp_path)
+```
+
+- [ ] **Step 9: Run the new tests to verify they fail**
+
+Run: `.venv/bin/python -m pytest tests/contract/test_store_contract.py tests/test_spec.py -k "loose_permissions or owner_only or shambles_error" -v`
+Expected: FAIL — the permission test reports `644`, and both error tests raise bare `OSError` rather than a `ShamblesError`.
+
+- [ ] **Step 10: Fix `FileStore.write`**
+
+In `shambles/stores/file.py`, replace the body of `write`. The temp file is created **already restricted**, so the credential is never on disk at a looser mode for any interval:
+
+```python
+    def write(self, payload: bytes) -> None:
+        """Write via a same-directory temp file, then rename over the original.
+
+        The temp file is opened with its final mode rather than chmod'd after
+        the fact. Creating it at the umask and tightening it afterwards leaves
+        the complete plaintext credential world-readable in between, which is
+        a window, not a formality. Codex's own writer gets this half right --
+        it sets 0600 only on creation, leaving an existing loose file loose --
+        so this sets the mode every time.
+        """
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(self.path.parent, 0o700)
+            except OSError:
+                pass  # Windows cannot express this; the file mode still applies
+            tmp = self.path.with_name(self.path.name + TMP_SUFFIX)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, self.mode)
+            try:
+                os.write(fd, payload)
+            finally:
+                os.close(fd)
+            # O_CREAT honours the mode only when the file did not already
+            # exist, so a leftover temp from a crashed run keeps its old mode
+            # without this.
+            os.chmod(tmp, self.mode)
+            os.replace(tmp, self.path)
+        except OSError as exc:
+            raise StoreUnavailableError(
+                f"Could not write {self.path}:\n{exc}") from exc
+```
+
+- [ ] **Step 11: Guard `_write_json`**
+
+In `shambles/providers/claude.py`, add the import and wrap the body:
+
+```python
+from ..stores.base import StoreUnavailableError
+```
+
+```python
+def _write_json(path: Path, data: dict) -> None:
+    """Atomic, owner-only write of a companion file.
+
+    Raises :class:`StoreUnavailableError` rather than ``OSError``:
+    ``switcher.switch`` calls ``companion_write`` outside its own ``OSError``
+    guard, so a bare one would reach the user as a stderr traceback and look
+    like the switch silently did nothing.
+    """
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".shambles-tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, (json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise StoreUnavailableError(f"Could not write {path}:\n{exc}") from exc
+```
+
+- [ ] **Step 12: Run the full suite**
+
+Run: `.venv/bin/python -m pytest`
+Expected: PASS. The suite must still be fully green at the end of this task — the accepted red window does not start until Task 3.
+
+- [ ] **Step 13: Commit the layer fixes**
+
+```bash
+git add shambles/providers shambles/stores tests/
+git commit -m "fix: close a credential permission window and a traceback path
+
+Three corrections to the layers, all found by the Task 1 review and all
+prerequisites for wiring the core onto them.
+
+identity() regains the profile_dir/active parameters from 01d6de8.
+Without them ClaudeProvider always reads the live ~/.claude.json, so
+every parked profile would display the active account's email -- the
+credential and the name beside it would disagree.
+
+FileStore.write created its temp file at the umask, wrote the complete
+plaintext credential into it, and only then chmod'd 0600. The file is
+now opened with its final mode. A window is not a formality when the
+bytes in it are a refresh token.
+
+_write_json had no error handling at all, and switcher.switch calls
+companion_write outside its OSError guard -- a disk-full would have
+surfaced as a stderr traceback rather than a dialog.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
