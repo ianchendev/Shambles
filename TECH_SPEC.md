@@ -4,12 +4,12 @@ Architectural reference for the Claude Code account switcher.
 
 | | |
 |---|---|
-| **Version** | 1.0 (post-redesign) |
+| **Version** | 2.0.0 |
 | **Target** | Claude Code 2.1.x — CLI and VS Code extension |
 | **Platforms** | Linux and WSL2 confirmed. Windows unverified — see §1.11. macOS unsupported |
 | **Runtime** | Python 3.10+, Tkinter. No third-party dependencies |
-| **Source** | ~1,800 lines across 13 modules |
-| **Tests** | 169 cases, all passing on Linux and Windows |
+| **Source** | 2,678 lines across 14 modules |
+| **Tests** | 272 cases from 247 functions, passing on Linux and Windows |
 
 ---
 
@@ -75,7 +75,7 @@ behaves: one `~/.claude`, one history, regardless of who is signed in.
 
 ### 1.4 Mechanism: targeted replace, not root symlink
 
-**Superseded design (pre-1.0).** `~/.claude` was a symlink retargeted between
+**Superseded design (1.x).** `~/.claude` was a symlink retargeted between
 `~/.claude-profiles/<Name>/`, each holding a full copy of the directory:
 
 ```
@@ -158,16 +158,19 @@ A profile is roughly **500 bytes**. Under the previous design it was 208 MB.
 
 | Module | Lines | Responsibility |
 |---|---|---|
+| `gui.py` | 793 | Tkinter window |
+| `switcher.py` | 285 | Switch, save, add, rename, remove, token sync |
+| `theme.py` | 276 | Palette, type scale, DPI scaling, glyph detection |
+| `migrate.py` | 219 | One-way conversion from the 1.x layout |
+| `usage.py` | 213 | Parsing and ageing the cached usage figures |
+| `profiles.py` | 202 | Discovery, token state, expiry arithmetic, name validation |
+| `configjson.py` | 160 | Parse, splice and back up `~/.claude.json` |
+| `state.py` | 138 | Which account is live; six-state classification |
+| `eject.py` | 134 | Restoring a stock installation |
 | `paths.py` | 113 | Every path, derived from an injectable home root |
-| `state.py` | 109 | Which account is live; six-state classification |
-| `switcher.py` | 194 | Switch, save, add, rename |
-| `configjson.py` | 145 | Parse, splice and back up `~/.claude.json` |
-| `profiles.py` | 172 | Discovery, token state, expiry arithmetic, name validation |
-| `migrate.py` | 219 | One-way conversion from the pre-1.0 layout |
-| `retry.py` | 36 | Transient-lock retry |
+| `__main__.py` | 60 | Entry point, `--version`, `--help` |
 | `errors.py` | 46 | Typed exceptions carrying user-facing text |
-| `gui.py` | 430 | Tkinter window |
-| `theme.py` | 131 | Palette, fonts, DPI scaling |
+| `retry.py` | 36 | Transient-lock retry |
 
 `Path.home()` is called in exactly one place — `Paths.real()` — so the entire
 application can be pointed at a temporary directory under test.

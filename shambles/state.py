@@ -25,7 +25,7 @@ DRIFTED = "drifted"
 UNKNOWN = "unknown"
 
 #: ~/.claude is expected to be a real directory now. A leftover symlink means
-#: the pre-1.0 layout is still in place and migration has not run.
+#: the 1.x layout is still in place and migration has not run.
 LEGACY_LAYOUT = "legacy-layout"
 
 

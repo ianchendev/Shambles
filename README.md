@@ -76,8 +76,9 @@ the one in your WSL home directory. If you use Claude Code inside WSL, install
 inside WSL.
 
 **Windows needs Developer Mode** (Settings → System → For developers) only when
-migrating from a pre-1.0 layout, which used symlinks. Ordinary switching needs
-no special privileges — but see the Windows caveat above before relying on it.
+migrating from a Shambles 1.x layout, which used symlinks. Ordinary switching
+needs no special privileges — but see the Windows caveat above before relying
+on it.
 
 ## CLI or VS Code extension — both
 
@@ -564,6 +565,7 @@ installation from the one in a WSL home directory.
 
 | Document | What it is |
 |---|---|
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release, and the known limitations of the current one |
 | [TECH_SPEC.md](TECH_SPEC.md) | **Definitive** architecture reference for shipped v1.0 — mechanism, concurrency, permissions, token lifecycle, test coverage |
 | [docs/token-storage.md](docs/token-storage.md) | Field research into how Claude and Codex store credentials across macOS, Windows and Linux. Covers platforms this tool does not yet support |
 | [docs/design-decisions.md](docs/design-decisions.md) | Recorded decisions and rationale. DD-1–DD-3 describe shipped behaviour; DD-4 is an unimplemented proposal |
