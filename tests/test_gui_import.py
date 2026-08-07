@@ -657,3 +657,60 @@ def test_the_footer_stays_reachable_with_many_profiles(paths, make_app,
     assert eject, "Eject button missing"
     assert eject[0].winfo_rooty() < app.winfo_rooty() + app.winfo_height(), \
         "footer is off the bottom of the window"
+
+
+def test_nothing_is_stranded_in_a_column(paths, make_app):
+    """The card list was packed side='left' and the footer side='bottom',
+    so the footer claimed a right-hand slab and the cards were squeezed into
+    a narrow column with 677px of dead space beside them."""
+    from helpers import make_claude_json, make_live_login, make_profile
+
+    for i in range(3):
+        make_profile(paths, f"Account{i}", email=f"a{i}@example.com",
+                     active=(i == 0))
+    make_claude_json(paths, email="a0@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    width = app.winfo_width()
+    for child in app.winfo_children():
+        try:
+            child.pack_info()
+        except tk.TclError:
+            continue          # the scrollbar, hidden until needed
+        assert child.winfo_width() == width, (
+            f"{type(child).__name__} is {child.winfo_width()}px in a "
+            f"{width}px window — something is stranded beside it")
+
+
+def test_cards_span_the_window(paths, make_app):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import theme
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    cards = [w for w in app.rows.winfo_children() if isinstance(w, tk.Frame)]
+    assert cards, "no card rendered"
+    # full width less the list's own horizontal padding
+    assert cards[0].winfo_width() >= app.winfo_width() - 3 * theme.GAP_L
+
+
+def test_the_window_is_not_squat_with_one_profile(paths, make_app):
+    from helpers import make_claude_json, make_live_login, make_profile
+    from shambles import theme
+
+    make_profile(paths, "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert app.winfo_height() >= theme.MIN_HEIGHT

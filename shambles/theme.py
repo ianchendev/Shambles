@@ -54,7 +54,12 @@ PALETTE = {
 # feel tight.
 GAP_XS, GAP_S, GAP_M, GAP_L = 6, 10, 16, 24
 
-WINDOW_WIDTH = 680
+#: Wide enough for the footer's three controls in a row at the current type
+#: size, which is what sets the floor -- the cards themselves need less.
+WINDOW_WIDTH = 720
+
+#: Keeps the window from looking squat with a single profile.
+MIN_HEIGHT = 480
 ACCENT_BAR_WIDTH = 5
 
 
