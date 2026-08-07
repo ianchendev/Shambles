@@ -65,7 +65,24 @@ USAGE_TOOLTIP = (
 
 #: Hover target for a bar's detail. Only this reacts: a whole row lighting up
 #: as the pointer crosses it was too eager to live with.
-INFO_GLYPH = "ⓘ"
+#:
+#: The glyph is chosen at runtime from what the font can draw -- Ubuntu has no
+#: U+24D8, and Tk renders a missing glyph as a box with no warning. Resolved in
+#: Theme so every window agrees.
+INFO_CANDIDATES = ("ⓘ", "ℹ")
+INFO_FALLBACK = "i"
+
+REMOVE_CANDIDATES = ("✕", "✖", "×")
+REMOVE_FALLBACK = "x"
+
+REFRESH_CANDIDATES = ("⟳", "↻", "⭯")
+REFRESH_FALLBACK = "R"
+
+ADD_CANDIDATES = ("＋", "+")
+ADD_FALLBACK = "+"
+
+WARN_CANDIDATES = ("⚠", "△")
+WARN_FALLBACK = "!"
 
 FRESH_NOTE = "Updated by Claude Code as you work."
 #: For the account you are signed in as. An old figure here just means nothing
@@ -285,6 +302,13 @@ class ShamblesApp(tk.Tk):
         scale_for_display(self)
         self.theme = Theme(self)
         t = self.theme
+        self.glyph = t.resolve_glyphs({
+            "info": (INFO_CANDIDATES, INFO_FALLBACK),
+            "remove": (REMOVE_CANDIDATES, REMOVE_FALLBACK),
+            "refresh": (REFRESH_CANDIDATES, REFRESH_FALLBACK),
+            "add": (ADD_CANDIDATES, ADD_FALLBACK),
+            "warn": (WARN_CANDIDATES, WARN_FALLBACK),
+        })
 
         self.title(WINDOW_TITLE)
         self.configure(bg=t["window"])
@@ -315,7 +339,8 @@ class ShamblesApp(tk.Tk):
         self.save_button = ttk.Button(footer, text="Save Current Account",
                                       style="Shambles.TButton", command=self.on_save)
         self.save_button.pack(side="left")
-        refresh = ttk.Button(footer, text="⟳", style="Shambles.TButton", width=3,
+        refresh = ttk.Button(footer, text=self.glyph["refresh"],
+                             style="Shambles.TButton", width=3,
                              command=self.refresh)
         refresh.pack(side="left", padx=(GAP_S, 0))
         Tooltip(refresh,
@@ -324,7 +349,8 @@ class ShamblesApp(tk.Tk):
                 "running Claude Code session would notice. Claude Code updates "
                 "those figures as you work, so this picks up whatever it has "
                 "written since the window opened.", t)
-        ttk.Button(footer, text="＋  Add Account", style="Accent.TButton",
+        ttk.Button(footer, text=f"{self.glyph['add']}  Add Account",
+                   style="Accent.TButton",
                    command=self.on_add).pack(side="right")
         self.eject_button = ttk.Button(footer, text="Eject",
                                        style="Shambles.TButton",
@@ -568,7 +594,7 @@ class ShamblesApp(tk.Tk):
 
             # Packed right-to-left: the icon sits outermost, the value inside
             # it, and the track then takes whatever is left.
-            info = tk.Label(row, text=INFO_GLYPH, font=t.chip, bg=bg,
+            info = tk.Label(row, text=self.glyph["info"], font=t.chip, bg=bg,
                             fg=t["faint"], cursor="hand2")
             info.pack(side="right", padx=(GAP_XS, 0))
 
@@ -645,7 +671,8 @@ class ShamblesApp(tk.Tk):
             # login you are currently using cannot be deleted by a misclick.
             # The gap between the two is deliberate: ✕ is destructive and sits
             # beside the button reached most often.
-            remove = ttk.Button(controls, text="✕", style="Danger.TButton", width=2,
+            remove = ttk.Button(controls, text=self.glyph["remove"],
+                                style="Danger.TButton", width=2,
                                 command=lambda p=profile: self.on_remove(p.name))
             remove.pack(side="right")
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "

@@ -95,3 +95,78 @@ def test_a_hopeless_width_still_returns_something_renderable():
 
 def test_empty_text_is_safe():
     assert theme.elide("", _FakeFont(), 100) == ""
+
+
+# ---- picking glyphs the font can actually draw ---------------------------
+
+class _PartialFont:
+    """Renders everything except the codepoints in ``missing``.
+
+    Missing glyphs measure the same as Tk's fallback box, which is how a
+    missing glyph is detectable at all.
+    """
+    TOFU = 7
+
+    def __init__(self, missing=()):
+        self.missing = set(missing)
+
+    def measure(self, text):
+        if text == theme.MISSING_PROBE or text in self.missing:
+            return self.TOFU
+        return 4 + len(text)
+
+
+def test_the_first_drawable_candidate_wins():
+    font = _PartialFont(missing={"ⓘ"})
+    assert theme.glyph(font, "ⓘ", "ℹ", fallback="i") == "ℹ"
+
+
+def test_a_font_with_everything_keeps_the_preferred_glyph():
+    assert theme.glyph(_PartialFont(), "ⓘ", "ℹ", fallback="i") == "ⓘ"
+
+
+def test_the_ascii_fallback_is_used_when_nothing_renders():
+    font = _PartialFont(missing={"ⓘ", "ℹ"})
+    assert theme.glyph(font, "ⓘ", "ℹ", fallback="i") == "i"
+
+
+def test_the_fallback_is_never_itself_a_box():
+    """Whatever comes back has to be drawable, or the fix achieves nothing."""
+    font = _PartialFont(missing={"ⓘ", "ℹ"})
+    got = theme.glyph(font, "ⓘ", "ℹ", fallback="i")
+    assert font.measure(got) != _PartialFont.TOFU
+
+
+def test_no_candidates_still_returns_the_fallback():
+    assert theme.glyph(_PartialFont(), fallback="i") == "i"
+
+
+def test_a_font_that_raises_does_not_break_the_window():
+    class Hostile:
+        def measure(self, text):
+            raise RuntimeError("no font here")
+    assert theme.glyph(Hostile(), "ⓘ", fallback="i") == "i"
+
+
+def test_the_probe_is_a_single_codepoint():
+    """A two-character probe measures the width of two glyphs and can never
+    equal a single missing glyph, so detection silently never fires."""
+    assert len(theme.MISSING_PROBE) == 1
+
+
+def test_detection_works_against_a_real_font(): 
+    """End to end, with the font actually in use rather than a stub."""
+    tk = pytest.importorskip("tkinter")
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        font = theme.Theme(root).chip
+        # U+24D8 is absent from several common UI fonts; whatever comes back
+        # must at least not be the box.
+        chosen = theme.glyph(font, "ⓘ", "ℹ", fallback="i")
+        assert font.measure(chosen) != font.measure(theme.MISSING_PROBE)
+    finally:
+        root.destroy()

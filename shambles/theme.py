@@ -83,6 +83,18 @@ class Theme:
         self.body = tkfont.Font(root=root, family=family, size=SIZE_BODY)
         self.chip = tkfont.Font(root=root, family=family, size=SIZE_CHIP, weight="bold")
         self.caption = tkfont.Font(root=root, family=family, size=SIZE_CAPTION, weight="bold")
+
+        #: Decorative glyphs, resolved against the font actually in use. Set
+        #: by the GUI once the candidate lists are known.
+        self.glyphs = {}
+
+    def resolve_glyphs(self, spec: dict) -> dict:
+        """``{name: (candidates, fallback)}`` -> ``{name: drawable glyph}``."""
+        self.glyphs = {
+            name: glyph(self.chip, *candidates, fallback=fallback)
+            for name, (candidates, fallback) in spec.items()
+        }
+        return self.glyphs
         self.button = tkfont.Font(root=root, family=family, size=SIZE_BODY)
         self._apply_ttk(root)
 
@@ -232,3 +244,33 @@ def elide(text: str, font, max_px: int) -> str:
     while cut and font.measure(cut) > budget:
         cut = cut[:-1]
     return (cut + ellipsis) if cut else ellipsis
+
+
+#: A codepoint no font defines, so its width is whatever Tk draws for a glyph
+#: it cannot render. Comparing against that is the only portable way to ask
+#: "can this font draw this character?" from Tkinter.
+#: U+FFFF is a permanent noncharacter -- no font defines it. It must stay a
+#: single codepoint: a two-character probe measures two glyphs and can never
+#: equal the width of one missing glyph, which silently disables detection.
+MISSING_PROBE = "\uffff"
+
+
+def glyph(font, *candidates, fallback: str) -> str:
+    """The first candidate ``font`` can actually draw, else ``fallback``.
+
+    Tk silently substitutes a box for a missing glyph, so a decorative
+    character that looks fine on the machine it was chosen on can render as
+    tofu everywhere else -- Ubuntu, for instance, has no U+24D8 CIRCLED LATIN
+    SMALL LETTER I. ``fallback`` must be plain ASCII.
+
+    A real glyph happening to match the box width is read as missing and
+    skipped. That costs a nicer character, never correctness.
+    """
+    try:
+        tofu = font.measure(MISSING_PROBE)
+        for candidate in candidates:
+            if font.measure(candidate) != tofu:
+                return candidate
+    except Exception:
+        return fallback
+    return fallback

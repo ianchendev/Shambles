@@ -308,7 +308,7 @@ me@example.com                     27d
 usage appears once you run Claude
 ```
 
-Each row ends in a **ⓘ** carrying the detail — the exact percentage, when the
+Each row ends in an **info icon** carrying the detail — the exact percentage, when the
 window resets, and how fresh the figure is. Only that icon reacts to the
 pointer; the label, bar and value do not, so moving across a card does not set
 tooltips off.
