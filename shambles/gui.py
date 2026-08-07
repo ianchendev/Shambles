@@ -63,7 +63,18 @@ USAGE_TOOLTIP = (
     "Read from the figures Claude Code caches for this account. {freshness}"
 )
 
+#: Hover target for a bar's detail. Only this reacts: a whole row lighting up
+#: as the pointer crosses it was too eager to live with.
+INFO_GLYPH = "ⓘ"
+
 FRESH_NOTE = "Updated by Claude Code as you work."
+#: For the account you are signed in as. An old figure here just means nothing
+#: has refreshed it lately, not that you left.
+IDLE_NOTE = (
+    "Last updated {age}. Claude Code refreshes this as you work, so run a "
+    "session or press ⟳ to pick up a newer figure."
+)
+#: For an account you are not signed in as, where the number really is frozen.
 STALE_NOTE = (
     "Last updated {age}, while this account was active — it has not been "
     "signed in since, so the real figure may have moved on. Switch to it to "
@@ -181,6 +192,9 @@ class Tooltip:
     def _show(self, _event=None):
         if self.tip or not self.text:
             return
+        # One at a time. Crossing from a chip onto a bar could otherwise leave
+        # both on screen, overlapping each other.
+        Tooltip.hide_all()
         self.tip = tk.Toplevel(self.widget)
         self.tip.wm_overrideredirect(True)
         opts = {}
@@ -552,6 +566,12 @@ class ShamblesApp(tk.Tk):
                      fg=t["faint"] if stale else t["muted"],
                      width=BAR_LABEL_WIDTH, anchor="w").pack(side="left")
 
+            # Packed right-to-left: the icon sits outermost, the value inside
+            # it, and the track then takes whatever is left.
+            info = tk.Label(row, text=INFO_GLYPH, font=t.chip, bg=bg,
+                            fg=t["faint"], cursor="hand2")
+            info.pack(side="right", padx=(GAP_XS, 0))
+
             tk.Label(row, text=f"{bar.percent}%", font=t.chip, bg=bg,
                      fg=t["faint"] if stale else t["text"],
                      width=BAR_VALUE_WIDTH, anchor="e").pack(side="right",
@@ -569,11 +589,17 @@ class ShamblesApp(tk.Tk):
                     relwidth=bar.fill, relheight=1.0, x=0, y=0)
 
             resets = bar.resets_label()
-            Tooltip(row, USAGE_TOOLTIP.format(
+            if not stale:
+                freshness = FRESH_NOTE
+            elif profile.active:
+                freshness = IDLE_NOTE.format(age=age)
+            else:
+                freshness = STALE_NOTE.format(age=age)
+            Tooltip(info, USAGE_TOOLTIP.format(
                 label=USAGE_LABELS.get(bar.label, bar.label).capitalize(),
                 percent=bar.percent,
                 resets=f", resets {resets}" if resets else "",
-                freshness=STALE_NOTE.format(age=age) if stale else FRESH_NOTE,
+                freshness=freshness,
             ), t)
 
         if stale and age:
