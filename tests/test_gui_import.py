@@ -3,9 +3,9 @@ import tkinter as tk
 import pytest
 
 from conftest import posix_only
-from helpers import (make_claude_json, make_live_claude_login,
+from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
                      make_live_codex_login, make_profile, make_v1_profile)
-from shambles import gui, providers, state
+from shambles import gui, profiles, providers, state
 
 
 @pytest.fixture
@@ -41,6 +41,16 @@ def _all_text(widget):
         # with one splits it into individual characters.
         found.append(_all_text(child))
     return " ".join(found)
+
+
+def _labels(widget):
+    """Every ``tk.Label`` under ``widget``, depth-first."""
+    found = []
+    for child in widget.winfo_children():
+        if isinstance(child, tk.Label):
+            found.append(child)
+        found.extend(_labels(child))
+    return found
 
 
 # -- the heading, without a display ------------------------------------
@@ -84,6 +94,44 @@ def test_the_window_renders_both_providers(paths, make_app):
 
     rendered = _all_text(app.rows)
     assert "Work" in rendered and "Side" in rendered
+
+
+def test_a_healthy_active_card_has_no_active_label_or_countdown(paths, make_app):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True,
+                 refresh_expires_ms=NOW + 30 * DAY_MS)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.refresh()
+    text = _all_text(app.rows)
+
+    assert "Work" in text and "w@example.com" in text
+    assert "ACTIVE" not in text
+    assert "30d" not in text
+    assert "soon" not in text
+    assert "needs login" not in text
+
+
+def test_a_closed_card_shows_needs_login_without_a_warning_glyph(paths, make_app):
+    make_profile(paths, "claude", "Old", email="o@example.com",
+                 refresh_expires_ms=NOW - 3 * DAY_MS)
+
+    app = make_app(paths)
+    app.refresh()
+    text = _all_text(app.rows)
+
+    assert "needs login" in text
+    # Group headers may still contain ⚠ for drift/unknown; the card badge was
+    # a Label whose entire text was the glyph.
+    assert not any(str(c.cget("text")).strip() == "⚠" for c in _labels(app.rows))
+
+
+def test_chip_tooltip_uses_warning_prose_when_there_is_no_expiry(paths, claude):
+    make_profile(paths, "claude", "Empty", token=False)
+    found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
+    tip = gui.chip_tooltip(found)
+    assert "No token here yet" in tip
 
 
 def test_saved_profiles_stay_visible_when_the_vendor_is_missing(paths, make_app):
