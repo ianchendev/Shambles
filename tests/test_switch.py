@@ -203,3 +203,110 @@ def test_renaming_carries_the_active_marker(paths, provider):
     switcher.rename_profile(paths, provider, "Work", "Job", sleep=lambda _: None)
     assert state.read_active(paths, provider.id) == "Job"
     assert paths.profile_dir(provider.id, "Job").is_dir()
+
+
+# -- rotation -----------------------------------------------------------
+
+def test_a_rotating_provider_restashes_a_refreshed_credential(paths):
+    """Codex rotates on every use, so the stashed copy goes stale the moment
+    the live one refreshes. Switching away would then write back a dead
+    refresh token and cost a verification email."""
+    from helpers import codex_auth, write_json
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="c@example.com", active=True)
+    live = make_live_codex_login(paths, email="c@example.com",
+                                 exp_ms=NOW + 30 * DAY_MS)
+
+    # The vendor refreshes during use, rotating the refresh token.
+    rotated = codex_auth(email="c@example.com", exp_ms=NOW + 30 * DAY_MS)
+    rotated["tokens"]["refresh_token"] = "refresh-2"
+    write_json(live, rotated)
+
+    assert switcher.restash_active(paths, codex, platform="linux") is True
+
+    stashed = json.loads(paths.credentials("codex", "Work").read_text())
+    assert stashed["tokens"]["refresh_token"] == "refresh-2"
+
+
+def test_restash_is_a_no_op_when_nothing_changed(paths):
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="c@example.com", active=True)
+    blob = paths.credentials("codex", "Work").read_bytes()
+    (paths.home / ".codex").mkdir(parents=True, exist_ok=True)
+    (paths.home / ".codex" / "auth.json").write_bytes(blob)
+
+    assert switcher.restash_active(paths, codex, platform="linux") is False
+
+
+def test_a_non_rotating_provider_is_never_restashed(paths):
+    """Claude's refresh token does not rotate, so the live file drifting from
+    the stash is normal and re-stashing would be pointless writes."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="something-else")
+
+    assert switcher.restash_active(paths, claude, platform="linux") is False
+
+
+def test_restash_does_nothing_without_an_active_profile(paths):
+    codex = providers.load("codex")
+    make_live_codex_login(paths, email="c@example.com")
+    assert switcher.restash_active(paths, codex, platform="linux") is False
+
+
+def test_without_restash_the_active_row_shows_a_stale_token(paths):
+    """What re-stashing actually corrects.
+
+    Switching away is *already* safe -- ``switch`` stashes the outgoing login
+    first, so a rotation between switches is captured either way. What is not
+    covered is the display: ``profiles.discover`` reads each profile's stashed
+    credential, including the active one, so a Codex account whose token
+    refreshed during use keeps showing the pre-refresh email and countdown
+    until something re-stashes it.
+
+    Written as a before/after on the same profile, because a test that only
+    asserted the "after" state would pass with ``restash_active`` deleted --
+    an earlier version of this test did exactly that.
+    """
+    from shambles import profiles
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="old@example.com", active=True,
+                 refresh_expires_ms=NOW + 3 * DAY_MS)
+    make_live_codex_login(paths, email="new@example.com",
+                          exp_ms=NOW + 30 * DAY_MS)
+
+    def row():
+        return profiles.discover(paths, codex, "Work", NOW, platform="linux")[0]
+
+    stale = row()
+    assert (stale.email, stale.liveness.days_left) == ("old@example.com", 3)
+
+    assert switcher.restash_active(paths, codex, platform="linux") is True
+
+    fresh = row()
+    assert (fresh.email, fresh.liveness.days_left) == ("new@example.com", 30)
+
+
+def test_switching_away_captures_a_rotation_even_without_restash(paths):
+    """The guarantee that makes restash a display fix rather than a data fix.
+
+    Recorded because it is easy to assume re-stashing is what protects the
+    token on switch-away. It is not -- ``switch`` stashing the outgoing login
+    is. Both matter; conflating them produced a vacuous test once already.
+    """
+    from helpers import codex_auth, write_json
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="c@example.com", active=True)
+    make_profile(paths, "codex", "Other", email="o@example.com")
+    live = make_live_codex_login(paths, email="c@example.com",
+                                 exp_ms=NOW + 30 * DAY_MS)
+
+    rotated = codex_auth(email="c@example.com", exp_ms=NOW + 30 * DAY_MS)
+    rotated["tokens"]["refresh_token"] = "refresh-2"
+    write_json(live, rotated)
+
+    switcher.switch(paths, codex, "Other", platform="linux", sleep=lambda _: None)
+
+    kept = json.loads(paths.credentials("codex", "Work").read_text())
+    assert kept["tokens"]["refresh_token"] == "refresh-2"
