@@ -241,3 +241,47 @@ def remove_profile(paths, provider, name: str, *, platform=sys.platform) -> None
 def forget_active_marker(paths, provider) -> None:
     """Clear a marker pointing at a profile that no longer exists."""
     state.write_active(paths, provider.id, None)
+
+
+def restash_active(paths, provider, *, platform=sys.platform,
+                   now_ms_fn=now_ms) -> bool:
+    """Refresh the stashed copy of a rotating provider's active credential.
+
+    Returns whether anything was written.
+
+    Codex replaces its refresh token on every use, so a snapshot taken before
+    a refresh holds a token the server has already invalidated. Restoring one
+    does not fail cleanly -- it silently breaks the account until the user
+    logs in again, which is the single outcome this tool exists to prevent.
+
+    A no-op for providers whose refresh token does not rotate: Claude's live
+    file drifts from the stash constantly and harmlessly, and re-stashing it
+    would be pure write amplification.
+
+    Failures are swallowed. This runs on every window refresh as a background
+    correction, and a locked file is a reason to try again next time, not to
+    put a dialog in front of someone who did not ask for anything.
+    """
+    if not provider.rotates:
+        return False
+
+    name = state.read_active(paths, provider.id)
+    if not name or not paths.profile_dir(provider.id, name).is_dir():
+        return False
+
+    try:
+        live = _store(paths, provider, platform).read()
+        if live is None:
+            return False
+        stashed_path = paths.credentials(provider.id, name)
+        if stashed_path.exists() and stashed_path.read_bytes() == live:
+            return False
+        _write_credential(paths, provider, name, live, sleep=time.sleep)
+    except (OSError, StoreUnavailableError, SwitchFailedError):
+        return False
+
+    companion = provider.companion_read(home=paths.home)
+    if companion:
+        configjson.write_sidecar(paths.account(provider.id, name), companion,
+                                 now_ms_fn())
+    return True
