@@ -34,6 +34,28 @@ REMOVE_ACTIVE = (
     "Switch to another profile first, then remove this one."
 )
 
+MIGRATION_REQUIRED = (
+    "~/.claude is still a symlink from an older version of Shambles.\n\n"
+    "That layout gave every account its own copy of your session history. "
+    "Run the migration to merge them back into one shared directory."
+)
+
+
+def _refuse_legacy_layout(paths) -> None:
+    """Stop before touching a pre-1.0 layout.
+
+    ``~/.claude`` being a symlink means it points *into* a profile directory,
+    so writing the live credential would write through the link and corrupt
+    the very profile the switch is trying to leave. The GUI migrates on
+    startup, so this should be unreachable there -- it is here because a
+    half-applied switch on that layout is unrecoverable and the check is one
+    ``is_symlink`` call.
+
+    Claude-only: the pre-1.0 layout predates every other provider.
+    """
+    if paths.claude_dir.is_symlink():
+        raise SwitchFailedError(MIGRATION_REQUIRED)
+
 
 def now_ms() -> int:
     return int(time.time() * 1000)
@@ -81,6 +103,9 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     matching identity into the provider's companion file if it has one.
     Nothing outside the credential moves.
     """
+    if provider.id == "claude":
+        _refuse_legacy_layout(paths)
+
     current = state.inspect(paths, provider, platform=platform)
 
     if not paths.profile_dir(provider.id, target_name).is_dir():

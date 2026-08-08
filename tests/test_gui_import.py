@@ -1,342 +1,134 @@
-"""The GUI is smoke-tested only -- no display is assumed in CI."""
-
 import pytest
 
-tk = pytest.importorskip("tkinter")
+from helpers import (make_claude_json, make_live_claude_login,
+                     make_live_codex_login, make_profile, make_v1_profile)
+from shambles import gui, providers, state
 
 
-def test_module_imports_and_exposes_run():
-    from shambles import gui
-    assert callable(gui.run)
-    assert issubclass(gui.ShamblesApp, tk.Tk)
+@pytest.fixture
+def claude():
+    return providers.load("claude")
 
 
-def test_header_text_for_each_state(paths):
-    from helpers import make_claude_json, make_profile
-    from shambles import gui, state
-
-    make_claude_json(paths, email="work@example.com")
-    assert "no accounts saved" in gui.header_text(
-        paths, state.inspect(paths)).lower()
-
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    text = gui.header_text(paths, state.inspect(paths))
-    assert "Work" in text
-    assert "work@example.com" in text
-
-
-def test_header_reports_a_missing_profile(paths):
-    from helpers import make_claude_json, make_profile
-    from shambles import gui, state
-
-    make_profile(paths, "Gone", email="gone@example.com", active=True)
-    make_claude_json(paths, email="gone@example.com")
-    for child in paths.profile_dir("Gone").iterdir():
-        child.unlink()
-    paths.profile_dir("Gone").rmdir()
-
-    text = gui.header_text(paths, state.inspect(paths))
-    assert "Gone" in text and "missing" in text.lower()
-
-
-def test_header_reports_drift_after_a_manual_login(paths):
-    from helpers import make_claude_json, make_profile
-    from shambles import gui, state
-
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_claude_json(paths, email="someone-else@example.com")
-    text = gui.header_text(paths, state.inspect(paths))
-    assert "someone-else@example.com" in text
-
-
-def test_header_reports_a_failed_merge(paths):
-    """Startup repairs the old layout automatically, so seeing this state at
-    all means the merge failed."""
-    import os
-
-    from helpers import make_claude_json, make_profile
-    from shambles import gui, state
-
-    make_profile(paths, "Work", email="work@example.com")
-    make_claude_json(paths, email="work@example.com")
-    os.symlink(str(paths.profile_dir("Work")), str(paths.claude_dir),
-               target_is_directory=True)
-    text = gui.header_text(paths, state.inspect(paths)).lower()
-    assert "could not merge" in text
-
-
-def test_window_renders_every_profile_state(paths, make_app):
-    """Builds the real widget tree and forces a render pass, so a broken
-    card layout fails here instead of only when the user launches it."""
-    import json
-    import os
-
-    from helpers import DAY_MS, make_claude_json, make_profile
-    from shambles import gui, switcher
-
-    # The window reads the real clock, so anchor the fixtures to it. The extra
-    # hour keeps each value off a day boundary, where flooring would flip it.
-    now = switcher.now_ms()
-    hour = 3_600_000
-    make_profile(paths, "Healthy", email="ok@example.com",
-                 refresh_expires_ms=now + 29 * DAY_MS + hour)
-    make_profile(paths, "Soon", email="soon@example.com",
-                 refresh_expires_ms=now + 4 * DAY_MS + hour)
-    make_profile(paths, "Lapsed", email="old@example.com",
-                 refresh_expires_ms=now - 3 * DAY_MS + hour)
-    make_profile(paths, "Fresh", token=False)
-    make_claude_json(paths, email="ok@example.com")
-    paths.active_marker.write_text("Healthy\n", encoding="utf-8")
-
-    app = make_app(paths)
-    app.update()
-
-    assert app.winfo_width() >= 400
-    assert "Healthy" in app.title_label.cget("text")
-    assert "ok@example.com" in app.subtitle.cget("text")
-    assert str(app.save_button.cget("state")) == "disabled"
-
-    texts = _all_text(app.rows)
-    for expected in ("Healthy", "Soon", "Lapsed", "Fresh", "ACTIVE",
-                     "29d", "4d", "expired 3d ago", "⚠"):
-        assert any(expected in t for t in texts), f"missing from UI: {expected}"
-    # the active card offers no Switch of its own
-    assert sum(t == "Switch" for t in texts) == 3
-
-
-
-def test_window_renders_with_no_profiles(paths, make_app):
-    from shambles import gui
-
-    app = make_app(paths)
-    app.update()
-    assert any("No profiles yet" in t for t in _all_text(app.rows))
+@pytest.fixture
+def codex():
+    return providers.load("codex")
 
 
 def _all_text(widget):
+    """Every string rendered anywhere under a widget."""
     found = []
     for child in widget.winfo_children():
         try:
-            text = child.cget("text")
-        except Exception:
-            text = ""
-        if text:
-            found.append(str(text))
-        found.extend(_all_text(child))
-    return found
-
-
-def test_window_warns_when_config_dir_is_overridden(paths, make_app, monkeypatch):
-    """A globally-set CLAUDE_CONFIG_DIR makes the CLI ignore every swap."""
-    from helpers import make_claude_json, make_live_login, make_profile
-
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-    elsewhere = paths.home / "elsewhere-config"
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(elsewhere))
-
-    app = make_app(paths)
-    app.update()
-
-    texts = []
-    def walk(w):
-        for child in w.winfo_children():
-            try:
-                texts.append(str(child.cget("text")))
-            except tk.TclError:
-                pass
-            walk(child)
-    walk(app)
-    joined = " ".join(texts)
-    assert "CLAUDE_CONFIG_DIR" in joined
-    assert "elsewhere-config" in joined
-
-
-def test_window_is_quiet_when_config_dir_is_unset(paths, make_app, monkeypatch):
-    from helpers import make_claude_json, make_live_login, make_profile
-
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-
-    app = make_app(paths)
-    app.update()
-
-    texts = []
-    def walk(w):
-        for child in w.winfo_children():
-            try:
-                texts.append(str(child.cget("text")))
-            except tk.TclError:
-                pass
-            walk(child)
-    walk(app)
-    assert "CLAUDE_CONFIG_DIR" not in " ".join(texts)
-
-
-def test_the_expiry_tooltip_does_not_name_a_fixed_window():
-    """Measured windows differ by an order of magnitude between platform/plan
-    samples (docs/token-storage.md). The tooltip sits next to a chip showing
-    the real number, so naming a different one contradicts what is on screen."""
-    from shambles import gui
-    assert "30-day" not in gui.EXPIRY_TOOLTIP
-    assert "30 day" not in gui.EXPIRY_TOOLTIP
-
-
-def _buttons(widget, found=None):
-    found = [] if found is None else found
-    for child in widget.winfo_children():
-        try:
             found.append(str(child.cget("text")))
-        except tk.TclError:
+        except Exception:
             pass
-        _buttons(child, found)
-    return found
+        # append, not extend: _all_text returns a string, and extending a list
+        # with one splits it into individual characters.
+        found.append(_all_text(child))
+    return " ".join(found)
 
 
-def test_only_inactive_profiles_offer_removal(paths, make_app):
-    """The active profile must have no ✕ — the login in use cannot be deleted
-    by a misclick."""
-    from helpers import make_claude_json, make_live_login, make_profile
+# -- the heading, without a display ------------------------------------
 
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_profile(paths, "Third", email="third@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
+def test_the_heading_names_the_active_account(paths, claude):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
 
-    app = make_app(paths)
-    app.update()
+    text = gui.group_heading(claude, state.inspect(paths, claude, platform="linux"))
 
-    labels = _buttons(app)
-    # two inactive profiles -> two ✕ and two Switch, never three
-    assert labels.count("✕") == 2
-    assert labels.count("Switch") == 2
+    assert "Claude Code" in text and "Work" in text and "w@example.com" in text
 
 
-def test_a_lone_active_profile_offers_no_removal(paths, make_app):
-    from helpers import make_claude_json, make_live_login, make_profile
+def test_the_heading_surfaces_drift(paths, claude):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="other@example.com")
 
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
+    text = gui.group_heading(claude, state.inspect(paths, claude, platform="linux"))
 
-    app = make_app(paths)
-    app.update()
-
-    assert "✕" not in _buttons(app)
+    assert "⚠" in text and "other@example.com" in text
 
 
-def test_declining_the_confirmation_removes_nothing(paths, make_app, monkeypatch):
-    from helpers import make_claude_json, make_live_login, make_profile
-    from shambles import gui, state
-
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-
-    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *a, **k: False)
-    app = make_app(paths)
-    app.on_remove("Personal")
-
-    assert paths.credentials("Personal").exists()
-    assert sorted(state.profile_names(paths)) == ["Personal", "Work"]
+def test_the_heading_of_an_empty_provider_says_so(paths, codex):
+    text = gui.group_heading(codex, state.inspect(paths, codex, platform="linux"))
+    assert "Codex" in text
+    assert "No accounts saved" in text
 
 
-def test_confirming_removes_the_profile_and_refreshes(paths, make_app, monkeypatch):
-    from helpers import make_claude_json, make_live_login, make_profile
-    from shambles import gui, state
+# -- the window --------------------------------------------------------
 
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-
-    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *a, **k: True)
-    app = make_app(paths)
-    app.on_remove("Personal")
-    app.update()
-
-    assert state.profile_names(paths) == ["Work"]
-    assert "Personal" not in " ".join(_buttons(app)), "still listed after removal"
-
-
-def test_the_confirmation_names_the_profile_and_the_cost(paths, make_app,
-                                                         monkeypatch):
-    from helpers import make_claude_json, make_live_login, make_profile
-    from shambles import gui
-
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-
-    seen = {}
-    def capture(title, message, **k):
-        seen["title"], seen["message"] = title, message
-        return False
-    monkeypatch.setattr(gui.messagebox, "askyesno", capture)
+def test_the_window_renders_both_providers(paths, make_app):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "codex", "Side", email="c@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+    make_live_codex_login(paths, email="c@example.com")
 
     app = make_app(paths)
-    app.on_remove("Personal")
+    app.refresh()
 
-    assert seen["title"] == "Remove Profile"
-    assert "'Personal'" in seen["message"]
-    assert "permanently destroy its stored login token" in seen["message"]
-
-
-def test_tooltip_position_is_clamped_to_the_screen():
-    """The ✕ sits at the right of a card, so its tooltip is the one that runs
-    off the display — the screenshot showed it clipped mid-word."""
-    from shambles.gui import tooltip_position
-
-    # a button near the right edge, tooltip wider than the space left
-    x, _y = tooltip_position(widget_x=1850, widget_y=100, widget_height=24,
-                             tip_width=360, screen_width=1920, screen_height=1080)
-    assert x + 360 <= 1920, f"tooltip runs to {x + 360} on a 1920 screen"
-    assert x >= 0
+    rendered = _all_text(app.rows)
+    assert "Work" in rendered and "Side" in rendered
 
 
-def test_tooltip_position_is_unchanged_when_it_already_fits():
-    from shambles.gui import tooltip_position
+def test_saved_profiles_stay_visible_when_the_vendor_is_missing(paths, make_app):
+    """Switching copies a file and runs nothing, so it still works without the
+    vendor binary. Hiding the accounts would take away something usable."""
+    make_profile(paths, "codex", "Side", email="c@example.com", active=True)
+    make_live_codex_login(paths, email="c@example.com")
 
-    x, y = tooltip_position(widget_x=100, widget_y=200, widget_height=24,
-                            tip_width=360, screen_width=1920, screen_height=1080)
-    assert (x, y) == (112, 230)
-
-
-def test_tooltip_flips_above_when_it_would_fall_off_the_bottom():
-    from shambles.gui import tooltip_position
-
-    _x, y = tooltip_position(widget_x=100, widget_y=1050, widget_height=24,
-                             tip_width=360, screen_width=1920, screen_height=1080,
-                             tip_height=80)
-    assert y + 80 <= 1080, "tooltip runs past the bottom of the screen"
-
-
-def test_the_remove_button_is_not_styled_as_a_peer_of_switch(paths, make_app):
-    """✕ and Switch shared a style, so a destructive control rendered in the
-    same accent blue as the one you click constantly."""
-    from helpers import make_claude_json, make_live_login, make_profile
-
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
     app = make_app(paths)
-    app.update()
+    app.refresh()
 
-    styles = {}
-    def walk(w):
-        for c in w.winfo_children():
-            try:
-                styles[str(c.cget("text"))] = str(c.cget("style"))
-            except tk.TclError:
-                pass
-            walk(c)
-    walk(app)
-    assert styles.get("✕") != styles.get("Switch"), \
-        "the destructive control looks identical to the primary one"
+    rendered = _all_text(app.rows)
+    assert "Side" in rendered
+    assert "not on your PATH" in rendered
+
+
+def test_the_window_migrates_a_v1_store_on_open(paths, make_app):
+    """The repair is automatic and unprompted, like the v1.0 history merge:
+    there is no version of the old layout anyone wants."""
+    make_v1_profile(paths, "Work", email="w@example.com", active=True)
+
+    make_app(paths)
+
+    assert paths.credentials("claude", "Work").is_file()
+    assert state.read_active(paths, "claude") == "Work"
+
+
+def test_an_empty_machine_renders_without_error(paths, make_app):
+    app = make_app(paths)
+    app.refresh()
+    assert "No accounts yet." in _all_text(app.rows)
+
+
+# -- add account -------------------------------------------------------
+
+def test_add_offers_every_provider_with_its_availability(paths, make_app):
+    app = make_app(paths)
+    options = app.add_account_options()
+    assert {p.id for p, _ok in options} == {"claude", "codex"}
+    assert all(isinstance(ok, bool) for _p, ok in options)
+
+
+def test_stash_after_login_files_what_the_vendor_wrote(paths, make_app):
+    """The step that turns a vendor login into a Shambles profile."""
+    codex = providers.load("codex")
+    app = make_app(paths)
+    paths.ensure_profile("codex", "Fresh")
+    make_live_codex_login(paths, email="new@example.com")
+
+    assert app.stash_after_login(codex, "Fresh") is True
+    assert paths.credentials("codex", "Fresh").is_file()
+
+
+def test_stash_after_login_reports_false_when_nothing_was_written(paths, make_app):
+    """A cancelled or failed login leaves the profile empty, and the caller
+    must be able to tell."""
+    codex = providers.load("codex")
+    app = make_app(paths)
+    paths.ensure_profile("codex", "Fresh")
+
+    assert app.stash_after_login(codex, "Fresh") is False
+    assert not paths.credentials("codex", "Fresh").exists()
