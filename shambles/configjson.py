@@ -132,12 +132,29 @@ def write_sidecar(path, account: dict, now_ms: int) -> None:
 
 
 def backup(path, backup_dir, now_ms: int) -> Path | None:
+    """Snapshot the companion config before it is spliced.
+
+    The directory is created ``0700`` and each snapshot ``0600``, like the rest
+    of the store. These are copies of ``~/.claude.json``, which carries the
+    account's email, organisation and UUIDs -- no token, but not something to
+    leave at the umask either. ``shutil.copy2`` preserves the source's mode,
+    and Claude Code writes that file ``0600``, but a snapshot's protection
+    should not depend on the vendor's choice.
+    """
     path, backup_dir = Path(path), Path(backup_dir)
     if not path.exists():
         return None
     backup_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(backup_dir, 0o700)
+    except OSError:
+        pass  # Windows cannot express this; the file modes still apply
     dest = backup_dir / f"claude.json.{now_ms}"
     shutil.copy2(path, dest)
+    try:
+        os.chmod(dest, 0o600)
+    except OSError:
+        pass
     prune(backup_dir)
     return dest
 
