@@ -41,6 +41,10 @@ MERGE_JSONL = ("history.jsonl",)
 #: ~/.claude should look exactly like a stock install.
 LEGACY_SIDECAR = ".shambles.json"
 
+#: The provider every pre-1.0 and v1.0 profile belongs to. There was only one;
+#: both migrations file everything they find under it.
+V1_PROVIDER = "claude"
+
 
 class MigrationError(ShamblesError):
     """The migration could not run safely."""
@@ -67,23 +71,40 @@ def _session_count(profile_dir: Path) -> int:
     return sum(1 for _ in projects.rglob("*.jsonl"))
 
 
+def legacy_names(paths) -> list[str]:
+    """Profile directories in the **pre-1.0** store.
+
+    Not :func:`state.profile_names`: that reads the provider-scoped store this
+    migration is trying to reach, which is empty at the point this runs. These
+    profiles live in ``~/.claude-profiles/<Name>/``, each a full copy of
+    ``~/.claude``.
+    """
+    try:
+        entries = sorted(p for p in paths.legacy_profiles_dir.iterdir()
+                         if p.is_dir())
+    except OSError:
+        return []
+    return [p.name for p in entries if not p.name.startswith(".")]
+
+
 def survey(paths) -> Plan:
     """Work out what a migration would do, without touching anything."""
-    names = state.profile_names(paths)
+    names = legacy_names(paths)
     if not names:
         raise MigrationError("No profiles found to migrate.")
 
-    ranked = sorted(names, key=lambda n: _session_count(paths.profile_dir(n)),
+    ranked = sorted(names,
+                    key=lambda n: _session_count(paths.legacy_profiles_dir / n),
                     reverse=True)
     plan = Plan(base=ranked[0], others=ranked[1:])
 
-    base_dir = paths.profile_dir(plan.base)
+    base_dir = paths.legacy_profiles_dir / plan.base
     for name in names:
-        if (paths.profile_dir(name) / ".credentials.json").exists():
+        if (paths.legacy_profiles_dir / name / ".credentials.json").exists():
             plan.credentials_found.append(name)
 
     for name in plan.others:
-        src_root = paths.profile_dir(name)
+        src_root = paths.legacy_profiles_dir / name
         for sub in MERGE_DIRS:
             src = src_root / sub
             if not src.is_dir():
@@ -146,14 +167,14 @@ def run(paths, *, now_ms: int) -> Plan:
         raise MigrationError("~/.claude is not a symlink; nothing to migrate.")
 
     plan = survey(paths)
-    base_dir = paths.profile_dir(plan.base)
+    base_dir = paths.legacy_profiles_dir / plan.base
     if not base_dir.is_dir():
         raise MigrationError(f"Base profile '{plan.base}' is missing.")
 
     # 1. Merge everyone else's machine-scoped state into the base.
     merged = skipped = 0
     for name in plan.others:
-        src_root = paths.profile_dir(name)
+        src_root = paths.legacy_profiles_dir / name
         for sub in MERGE_DIRS:
             src = src_root / sub
             if src.is_dir():
@@ -167,9 +188,9 @@ def run(paths, *, now_ms: int) -> Plan:
     # 2. Stash each profile's identity into the slim store, reading the old
     #    locations before anything is rearranged.
     identities = {}
-    for name in state.profile_names(paths):
-        old_creds = paths.profile_dir(name) / ".credentials.json"
-        old_sidecar = paths.profile_dir(name) / ".shambles.json"
+    for name in legacy_names(paths):
+        old_creds = paths.legacy_profiles_dir / name / ".credentials.json"
+        old_sidecar = paths.legacy_profiles_dir / name / ".shambles.json"
         identities[name] = (
             old_creds.read_bytes() if old_creds.exists() else None,
             configjson.read_sidecar(old_sidecar),
@@ -177,8 +198,8 @@ def run(paths, *, now_ms: int) -> Plan:
 
     active = None
     target = os.path.realpath(paths.claude_dir)
-    for name in state.profile_names(paths):
-        if os.path.realpath(paths.profile_dir(name)) == target:
+    for name in legacy_names(paths):
+        if os.path.realpath(paths.legacy_profiles_dir / name) == target:
             active = name
             break
 
@@ -207,21 +228,20 @@ def run(paths, *, now_ms: int) -> Plan:
     #    are already captured in `identities` above.
     (paths.claude_dir / LEGACY_SIDECAR).unlink(missing_ok=True)
 
-    # 5. Write the slim profile store.
+    # 5. Write the slim profile store, provider-scoped. Everything the pre-1.0
+    #    layout held was a Claude login -- there was no second provider.
     for name, (creds, account) in identities.items():
-        paths.ensure_profile(name)
+        paths.ensure_profile(V1_PROVIDER, name)
         if creds is not None:
-            paths.credentials(name).write_bytes(creds)
-            os.chmod(paths.credentials(name), 0o600)
-        configjson.write_sidecar(paths.account(name), account, now_ms)
+            paths.credentials(V1_PROVIDER, name).write_bytes(creds)
+            _lock_down(paths.credentials(V1_PROVIDER, name))
+        configjson.write_sidecar(paths.account(V1_PROVIDER, name), account,
+                                 now_ms)
 
     if active:
-        state.write_active(paths, active)
+        state.write_active(paths, V1_PROVIDER, active)
     return plan
 
-
-#: The provider every v1.0 profile belongs to. There was only one.
-V1_PROVIDER = "claude"
 
 #: Files a v1.0 profile could hold. Anything else in there was not ours.
 V1_PROFILE_FILES = (CREDENTIALS_NAME, ACCOUNT_NAME)

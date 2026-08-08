@@ -1,11 +1,13 @@
-"""A compact window for switching Claude Code accounts."""
+"""A compact window for switching between accounts, grouped by provider."""
 
 import datetime
 import signal
+import sys
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from . import configjson, eject, migrate, profiles, state, switcher
+from . import eject, login, migrate, profiles, state, switcher
+from . import providers as provider_registry
 from .errors import ShamblesError
 from .paths import Paths
 from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
@@ -35,6 +37,17 @@ RENAME_HINT = "Double-click to rename"
 TOOLTIP_OFFSET = 12
 TOOLTIP_MARGIN = 8
 
+#: How often to hand control back to Python so pending signals get dispatched.
+SIGNAL_POLL_MS = 150
+
+GROUP_STATES = {
+    state.UNMANAGED: "No accounts saved yet",
+    state.UNKNOWN: "⚠ Not sure which account is live",
+    state.MISSING_PROFILE: "⚠ Profile '{profile}' is missing from disk",
+    state.DRIFTED: "⚠ Signed in as {live_email}, but '{profile}' expects "
+                   "{expected_email}",
+}
+
 
 def tooltip_position(widget_x, widget_y, widget_height, tip_width,
                      screen_width, screen_height, tip_height=0):
@@ -53,41 +66,30 @@ def tooltip_position(widget_x, widget_y, widget_height, tip_width,
         y = max(TOOLTIP_MARGIN, widget_y - tip_height - 6)
     return x, y
 
-#: How often to hand control back to Python so pending signals get dispatched.
-SIGNAL_POLL_MS = 150
 
+def group_heading(provider, current) -> str:
+    """One line naming a provider and whatever is true about it right now.
 
-def header_text(paths, current) -> str:
-    """Who is logged in right now.
-
-    Managed profiles return two lines -- name, then email and organisation --
-    which the header renders at different weights.
+    Per-provider rather than a single window header: with two providers there
+    are two active accounts and two independent warning states, and a
+    fixed-size header cannot render N of them without growing every time a
+    provider is added.
     """
-    if current.kind == state.LEGACY_LAYOUT:
-        # Startup repairs this automatically, so reaching here means the
-        # merge failed and the reason was already shown in a dialog.
-        return "⚠ Could not merge your split session history — see the error."
-    if current.kind == state.UNMANAGED:
-        return "No accounts saved yet — use Save Current Account."
-    if current.kind == state.UNKNOWN:
-        return "⚠ Not sure which account is live — use Save Current Account."
-    if current.kind == state.MISSING_PROFILE:
-        return f"⚠ Profile '{current.profile}' is missing from disk."
-    if current.kind == state.DRIFTED:
-        return (f"⚠ Signed in as {current.live_email}, "
-                f"but '{current.profile}' expects {current.expected_email}.")
-
-    account = profiles.resolve_account(paths, current.profile, current.profile)
-    email = account.get("emailAddress") or current.live_email or "unknown"
-    org = account.get("organizationName")
-    suffix = f"  ·  {org}" if org else ""
-    return f"{current.profile}\n{email}{suffix}"
+    if current.kind == state.MANAGED:
+        who = current.profile or "unknown"
+        email = current.live_email
+        return f"{provider.display_name} · {who}" + (f" — {email}" if email else "")
+    template = GROUP_STATES.get(current.kind, "")
+    detail = template.format(profile=current.profile or "",
+                             live_email=current.live_email or "unknown",
+                             expected_email=current.expected_email or "unknown")
+    return f"{provider.display_name} · {detail}"
 
 
 def expiry_tooltip(profile) -> str:
     """The exact date behind the short countdown chip."""
-    when = datetime.datetime.fromtimestamp(profile.refresh_expires_ms / 1000)
-    verb = "expired" if profile.days_left < 0 else "expires"
+    when = datetime.datetime.fromtimestamp(profile.liveness.expires_at_ms / 1000)
+    verb = "expired" if profile.liveness.days_left < 0 else "expires"
     return EXPIRY_TOOLTIP.format(verb=verb, date=when.strftime("%d %b %Y, %H:%M"))
 
 
@@ -149,9 +151,14 @@ class Tooltip:
 
 
 class AddAccountDialog(tk.Toplevel):
-    """Asks for a profile name. Returns the name, or None if cancelled."""
+    """Asks which provider and what to call the profile.
 
-    def __init__(self, parent, active_name, theme):
+    ``options`` is ``[(provider, available)]``. An unavailable provider is
+    shown and disabled rather than omitted: a missing row reads as a bug,
+    while a greyed one with a reason reads as an instruction.
+    """
+
+    def __init__(self, parent, options, theme):
         super().__init__(parent)
         self.title("Add Account")
         self.resizable(False, False)
@@ -162,8 +169,26 @@ class AddAccountDialog(tk.Toplevel):
         body = tk.Frame(self, bg=theme["window"], padx=GAP_L, pady=GAP_L)
         body.pack(fill="both", expand=True)
 
-        tk.Label(body, text="PROFILE NAME", font=theme.caption,
+        tk.Label(body, text="PROVIDER", font=theme.caption,
                  bg=theme["window"], fg=theme["muted"]).pack(anchor="w")
+
+        first_available = next((p.id for p, ok in options if ok), None)
+        self.provider_var = tk.StringVar(value=first_available or "")
+        for provider, ok in options:
+            label = (provider.display_name if ok
+                     else f"{provider.display_name}  —  not installed")
+            tk.Radiobutton(
+                body, text=label, value=provider.id,
+                variable=self.provider_var, state="normal" if ok else "disabled",
+                font=theme.body, bg=theme["window"], fg=theme["text"],
+                selectcolor=theme["card"], activebackground=theme["window"],
+                activeforeground=theme["text"], disabledforeground=theme["faint"],
+                anchor="w", highlightthickness=0,
+            ).pack(fill="x", pady=(GAP_XS, 0))
+
+        tk.Label(body, text="PROFILE NAME", font=theme.caption,
+                 bg=theme["window"], fg=theme["muted"]).pack(anchor="w",
+                                                             pady=(GAP_M, 0))
         self.name_var = tk.StringVar()
         entry = tk.Entry(body, textvariable=self.name_var, font=theme.body,
                          width=26, relief="flat", highlightthickness=1,
@@ -173,18 +198,21 @@ class AddAccountDialog(tk.Toplevel):
         entry.pack(fill="x", pady=(GAP_XS, GAP_M), ipady=GAP_XS + 2)
 
         tk.Label(body, font=theme.body, bg=theme["window"], fg=theme["muted"],
-                 anchor="w", justify="left",
-                 wraplength=260,
+                 anchor="w", justify="left", wraplength=260,
                  text=("Your settings, plugins and session history are shared "
-                       "with every account — only the login differs."),
+                       "with every account — only the login differs.\n\n"
+                       "Your browser will open so you can sign in."),
                  ).pack(fill="x")
 
         buttons = tk.Frame(body, bg=theme["window"])
         buttons.pack(fill="x", pady=(GAP_M, 0))
         ttk.Button(buttons, text="Cancel", style="Shambles.TButton",
                    command=self.destroy).pack(side="right")
-        ttk.Button(buttons, text="Create", style="Accent.TButton",
-                   command=self._accept).pack(side="right", padx=(0, GAP_S))
+        self.create = ttk.Button(buttons, text="Create", style="Accent.TButton",
+                                 command=self._accept)
+        self.create.pack(side="right", padx=(0, GAP_S))
+        if first_available is None:
+            self.create.config(state="disabled")
 
         entry.focus_set()
         self.bind("<Return>", lambda _e: self._accept())
@@ -193,14 +221,107 @@ class AddAccountDialog(tk.Toplevel):
         self.wait_window(self)
 
     def _accept(self):
-        self.result = self.name_var.get()
+        if self.provider_var.get():
+            self.result = (self.name_var.get(), self.provider_var.get())
+        self.destroy()
+
+
+class LoginDialog(tk.Toplevel):
+    """Waits while the vendor's own login runs.
+
+    Shows whatever the command prints, because the line that matters arrives
+    first: both vendors print a URL to open by hand when they cannot launch a
+    browser, which is normal under WSL and over SSH.
+
+    ``succeeded`` is True only on a clean exit.
+    """
+
+    def __init__(self, parent, provider, profile_name, theme):
+        super().__init__(parent)
+        self.title(f"Sign in to {provider.display_name}")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.configure(bg=theme["window"])
+        self.succeeded = False
+        self._process = None
+
+        body = tk.Frame(self, bg=theme["window"], padx=GAP_L, pady=GAP_L)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(body, text=f"Signing in as '{profile_name}'", font=theme.name,
+                 bg=theme["window"], fg=theme["text"], anchor="w").pack(fill="x")
+        self.status = tk.Label(
+            body, font=theme.body, bg=theme["window"], fg=theme["muted"],
+            anchor="w", justify="left", wraplength=360,
+            text="Your browser should have opened. Complete the sign-in there.")
+        self.status.pack(fill="x", pady=(GAP_XS, GAP_S))
+
+        self.output = tk.Text(body, height=6, width=52, font=theme.body,
+                              relief="flat", bg=theme["card"], fg=theme["muted"],
+                              highlightthickness=1,
+                              highlightbackground=theme["border"], wrap="word")
+        self.output.pack(fill="both", expand=True)
+        self.output.config(state="disabled")
+
+        buttons = tk.Frame(body, bg=theme["window"])
+        buttons.pack(fill="x", pady=(GAP_M, 0))
+        self.close = ttk.Button(buttons, text="Cancel",
+                                style="Shambles.TButton", command=self._cancel)
+        self.close.pack(side="right")
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.grab_set()
+        self.after(0, lambda: self._start(provider))
+        self.wait_window(self)
+
+    def _start(self, provider):
+        try:
+            self._process = login.LoginProcess(login.command(provider))
+            # Both callbacks fire on a worker thread; `after` marshals them
+            # back. Touching Tk from that thread would corrupt the interpreter
+            # lock and hang the window.
+            self._process.start(
+                on_line=lambda line: self.after(0, self._append, line),
+                on_exit=lambda code: self.after(0, self._finish, code))
+        except ShamblesError as exc:
+            self._append(str(exc))
+            self._finish(1)
+
+    def _append(self, line):
+        try:
+            self.output.config(state="normal")
+            self.output.insert("end", line + "\n")
+            self.output.see("end")
+            self.output.config(state="disabled")
+        except tk.TclError:
+            pass  # the dialog closed while a line was in flight
+
+    def _finish(self, code):
+        self.succeeded = (code == 0)
+        if self.succeeded:
+            self.destroy()
+            return
+        try:
+            self.status.config(text="Sign-in did not complete. The profile was "
+                                    "created but has no login yet.")
+            self.close.config(text="Close", command=self.destroy)
+        except tk.TclError:
+            pass
+
+    def _cancel(self):
+        if self._process is not None:
+            self._process.cancel()
+        self.succeeded = False
         self.destroy()
 
 
 class ShamblesApp(tk.Tk):
-    def __init__(self, paths=None):
+    def __init__(self, paths=None, providers=None, platform=None):
         super().__init__()
         self.paths = paths or Paths.real()
+        self.providers = (providers if providers is not None
+                          else provider_registry.all_providers())
+        self.platform = platform or sys.platform
         scale_for_display(self)
         self.theme = Theme(self)
         t = self.theme
@@ -209,30 +330,11 @@ class ShamblesApp(tk.Tk):
         self.configure(bg=t["window"])
         self.resizable(False, False)
 
-        # -- header ------------------------------------------------------
-        head = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
-        head.pack(fill="x")
-        self.caption = tk.Label(head, text="ACTIVE PROFILE", font=t.caption,
-                                bg=t["window"], fg=t["faint"], anchor="w")
-        self.caption.pack(fill="x")
-        self.title_label = tk.Label(head, font=t.title, bg=t["window"],
-                                    fg=t["text"], anchor="w", justify="left",
-                                    wraplength=WINDOW_WIDTH - 2 * GAP_L)
-        self.title_label.pack(fill="x", pady=(GAP_XS, 0))
-        self.subtitle = tk.Label(head, font=t.body, bg=t["window"],
-                                 fg=t["muted"], anchor="w", justify="left")
-        self.subtitle.pack(fill="x")
-
-        # -- profile cards -----------------------------------------------
-        self.rows = tk.Frame(self, bg=t["window"], padx=GAP_L)
+        self.rows = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
         self.rows.pack(fill="both", expand=True)
 
-        # -- footer ------------------------------------------------------
         footer = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
         footer.pack(fill="x")
-        self.save_button = ttk.Button(footer, text="Save Current Account",
-                                      style="Shambles.TButton", command=self.on_save)
-        self.save_button.pack(side="left")
         ttk.Button(footer, text="＋  Add Account", style="Accent.TButton",
                    command=self.on_add).pack(side="right")
         self.eject_button = ttk.Button(footer, text="Eject",
@@ -240,8 +342,8 @@ class ShamblesApp(tk.Tk):
                                        command=self.on_eject)
         self.eject_button.pack(side="right", padx=(0, GAP_S))
         Tooltip(self.eject_button,
-                "Stop using Shambles and hand ~/.claude back as a stock "
-                "Claude Code install. Nothing is deleted.", t)
+                "Stop using Shambles and hand every account back as a stock "
+                "install. Nothing is deleted.", t)
 
         self.minsize(WINDOW_WIDTH, 0)
 
@@ -250,10 +352,13 @@ class ShamblesApp(tk.Tk):
         self._install_signal_handlers()
         self._pump_signals()
         self._repair_legacy_layout()
+        self._migrate_store()
         self.refresh()
 
+    # -- startup repairs --------------------------------------------------
+
     def _repair_legacy_layout(self):
-        """Convert the pre-1.0 layout on sight.
+        """Convert the pre-1.0 symlink layout on sight.
 
         Deliberately not a choice. That layout gave every account its own copy
         of ~/.claude, so switching hid your session history -- there is no
@@ -277,9 +382,35 @@ class ShamblesApp(tk.Tk):
             f"{plan.merged_files} files brought over from {others} into one "
             f"shared ~/.claude. Every account can now see every session, and "
             f"switching will not hide them again.\n\n"
-            f"Nothing was deleted. The old copies are still in "
-            f"~/.claude-profiles/ if you want to check them, and you can "
-            f"delete those folders once you are satisfied.",
+            f"Nothing was deleted. The old copies are still on disk if you "
+            f"want to check them.",
+            parent=self)
+
+    def _migrate_store(self):
+        """Move a v1.0 store into the provider-scoped layout, unprompted.
+
+        Not offered as a choice, for the same reason the history merge is not:
+        the old layout cannot hold a second provider, so staying on it is not
+        an option anyone would pick knowingly. Nothing is deleted -- the old
+        store stays on disk and the dialog says where.
+        """
+        if not migrate.store_migration_needed(self.paths):
+            return
+        try:
+            plan = migrate.migrate_store(self.paths)
+        except ShamblesError as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
+            return
+        if not plan.profiles:
+            return
+        messagebox.showinfo(
+            WINDOW_TITLE,
+            f"Your profiles moved to {plan.dest}.\n\n"
+            f"{len(plan.profiles)} account(s) are now filed under the provider "
+            f"they belong to, which is what lets Shambles hold Codex accounts "
+            f"alongside Claude ones.\n\n"
+            f"Nothing was deleted — the old {plan.source} is still there, and "
+            f"you can remove it once you are satisfied.",
             parent=self)
 
     # -- shutdown ---------------------------------------------------------
@@ -326,65 +457,101 @@ class ShamblesApp(tk.Tk):
 
     def refresh(self):
         """Re-read everything from disk. No cached view state, ever."""
-        t = self.theme
-        current = state.inspect(self.paths)
-
-        lines = header_text(self.paths, current).split("\n")
-        managed = current.kind == state.MANAGED
-        self.caption.config(text="ACTIVE ACCOUNT" if managed else "STATUS")
-        self.title_label.config(
-            text=lines[0],
-            font=t.title if managed else t.name,
-            fg=t["text"] if managed else t["warn"])
-        self.subtitle.config(text=lines[1] if len(lines) > 1 else "")
-
-        savable = current.kind in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED)
-        self.save_button.config(state="normal" if savable else "disabled")
-
         for child in self.rows.winfo_children():
             child.destroy()
 
-        found = profiles.discover(self.paths, current.profile, switcher.now_ms())
+        for provider in self.providers:
+            # Rotating providers go stale in the background; correct that
+            # before reading, so the row and the stash agree.
+            switcher.restash_active(self.paths, provider, platform=self.platform)
+
+            current = state.inspect(self.paths, provider, platform=self.platform)
+            self._render_group(provider, current)
+
+            override = state.config_dir_override(provider, home=self.paths.home)
+            if override:
+                self._render_override_banner(provider, override)
+
+    def _render_group(self, provider, current):
+        t = self.theme
+        heading = tk.Frame(self.rows, bg=t["window"])
+        heading.pack(fill="x", pady=(GAP_M, GAP_XS))
+
+        warned = current.kind not in (state.MANAGED, state.UNMANAGED)
+        tk.Label(heading, text=group_heading(provider, current), font=t.caption,
+                 bg=t["window"], fg=t["warn"] if warned else t["faint"],
+                 anchor="w", justify="left",
+                 wraplength=WINDOW_WIDTH - 2 * GAP_L).pack(side="left")
+
+        if current.kind in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED):
+            ttk.Button(heading, text="Save current login",
+                       style="Shambles.TButton",
+                       command=lambda p=provider: self.on_save(p)).pack(side="right")
+
+        # The install hint is additive, not a replacement for the list. Saved
+        # profiles stay switchable without the vendor binary -- switching
+        # copies a file and runs nothing -- so hiding them would take away
+        # something that still works.
+        if not login.available(provider):
+            self._render_missing_vendor(provider)
+
+        found = profiles.discover(self.paths, provider, current.profile,
+                                  switcher.now_ms(), platform=self.platform)
         if not found:
-            tk.Label(self.rows, text="No profiles yet.", font=t.body,
-                     bg=t["window"], fg=t["faint"]).pack(anchor="w")
+            tk.Label(self.rows, text="No accounts yet.", font=t.body,
+                     bg=t["window"], fg=t["faint"], anchor="w").pack(fill="x")
             return
 
         for profile in found:
-            self._render_card(profile)
-
-        override = state.config_dir_override(self.paths)
-        if override:
-            self._render_override_banner(override)
+            self._render_card(provider, profile)
 
         if current.kind == state.MISSING_PROFILE:
             ttk.Button(self.rows, text="Forget that profile",
                        style="Shambles.TButton",
-                       command=self.on_forget_marker).pack(anchor="w", pady=(GAP_S, 0))
+                       command=lambda p=provider: self.on_forget_marker(p)
+                       ).pack(anchor="w", pady=(GAP_S, 0))
 
-    def _render_override_banner(self, target: str):
-        """CLAUDE_CONFIG_DIR is set, so the CLI reads a tree Shambles never
-        touches. Switches still work in VS Code -- the extension host does not
-        inherit shell environment variables -- but a terminal `claude` would
-        silently ignore them, which looks like Shambles doing nothing."""
+    def _render_missing_vendor(self, provider):
+        """Say why signing in is unavailable, without hiding what still works.
+
+        'No accounts yet' beside an uninstalled CLI would be a lie of
+        omission: the user would only discover the binary is missing at the
+        moment they expected a browser.
+        """
         t = self.theme
+        card = tk.Frame(self.rows, bg=t["card"], padx=GAP_M, pady=GAP_M)
+        card.pack(fill="x", pady=(0, GAP_S))
+        tk.Label(card, bg=t["card"], fg=t["muted"], font=t.body, anchor="w",
+                 justify="left", wraplength=WINDOW_WIDTH - 4 * GAP_L,
+                 text=(f"{login.binary(provider)} is not on your PATH. "
+                       f"Install it to add {provider.display_name} accounts — "
+                       f"Shambles runs it to sign you in.\n"
+                       f"Switching between accounts you already saved still "
+                       f"works.")).pack(fill="x")
+
+    def _render_override_banner(self, provider, target: str):
+        """The provider's config-dir variable is set, so a terminal reads a
+        tree Shambles never touches. VS Code is unaffected -- neither extension
+        host inherits shell environment variables, which is why this tool
+        exists."""
+        t = self.theme
+        name = provider.spec.get("config_dir", {}).get("env", "the config dir")
         card = tk.Frame(self.rows, bg=t["chip_gone_bg"], padx=GAP_M, pady=GAP_M)
         card.pack(fill="x", pady=(0, GAP_S))
-        tk.Label(card, text="⚠  CLAUDE_CONFIG_DIR is set", font=t.name,
+        tk.Label(card, text=f"⚠  {name} is set", font=t.name,
                  bg=t["chip_gone_bg"], fg=t["chip_gone_fg"], anchor="w",
                  justify="left").pack(fill="x")
         tk.Label(card, bg=t["chip_gone_bg"], fg=t["chip_gone_fg"], font=t.body,
                  anchor="w", justify="left",
                  wraplength=WINDOW_WIDTH - 4 * GAP_L,
-                 text=(f"Your environment points the claude CLI at:\n{target}\n\n"
-                       "Shambles swaps the login inside ~/.claude, so switches "
-                       "will not affect that terminal. VS Code is unaffected — "
-                       "the extension host does not read shell variables.\n\n"
-                       "Unset it in your shell profile to use Shambles from the "
-                       "CLI."),
+                 text=(f"Your environment points {provider.display_name} at:\n"
+                       f"{target}\n\nShambles swaps the login in the default "
+                       f"location, so switches will not affect that terminal. "
+                       f"VS Code is unaffected. Unset it in your shell profile "
+                       f"to use Shambles from the CLI."),
                  ).pack(fill="x", pady=(GAP_XS, 0))
 
-    def _render_card(self, profile):
+    def _render_card(self, provider, profile):
         """One profile as a bordered card, accented when it is the active one."""
         t = self.theme
         bg = t["card_active"] if profile.active else t["card"]
@@ -407,7 +574,8 @@ class ShamblesApp(tk.Tk):
         name = tk.Label(top, text=profile.name, font=t.name, bg=bg,
                         fg=t["text"], cursor="hand2")
         name.pack(side="left")
-        name.bind("<Double-Button-1>", lambda _e, p=profile: self.on_rename_prompt(p.name))
+        name.bind("<Double-Button-1>",
+                  lambda _e, p=profile: self.on_rename_prompt(provider, p.name))
         Tooltip(name, RENAME_HINT, t)
 
         if profile.active:
@@ -415,17 +583,18 @@ class ShamblesApp(tk.Tk):
                      fg=t["accent"]).pack(side="left", padx=(GAP_S, 0))
         else:
             ttk.Button(top, text="Switch", style="Switch.TButton",
-                       command=lambda p=profile: self.on_switch(p.name)).pack(side="right")
+                       command=lambda p=profile: self.on_switch(provider, p.name)
+                       ).pack(side="right")
             # Inactive profiles only. The active one has no ✕ at all, so the
             # login you are currently using cannot be deleted by a misclick.
             remove = ttk.Button(top, text="✕", style="Danger.TButton", width=2,
-                                command=lambda p=profile: self.on_remove(p.name))
+                                command=lambda p=profile: self.on_remove(provider, p.name))
             # Sits inboard of Switch: the rightmost slot is the easiest to hit,
             # and that should belong to the action used constantly rather than
             # the one that destroys a login. The gap is deliberate too.
             remove.pack(side="right", padx=(0, GAP_M))
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
-                            "deleted and that account needs a new /login.", t)
+                            "deleted and that account needs a new sign-in.", t)
 
         bottom = tk.Frame(card, bg=bg)
         bottom.pack(fill="x", pady=(GAP_XS, 0))
@@ -440,10 +609,11 @@ class ShamblesApp(tk.Tk):
             chip.pack(side="left", padx=(GAP_S, 0))
             Tooltip(chip, expiry_tooltip(profile), t)
 
-        if profile.warning:
+        warning = profiles.warning(profile)
+        if warning:
             badge = tk.Label(bottom, text="⚠", font=t.body, bg=bg, fg=t["warn"])
             badge.pack(side="left", padx=(GAP_S, 0))
-            Tooltip(badge, profile.warning, t)
+            Tooltip(badge, warning, t)
 
     # -- actions ----------------------------------------------------------
 
@@ -456,70 +626,115 @@ class ShamblesApp(tk.Tk):
         finally:
             self.refresh()
 
-    def on_switch(self, name):
-        self._guarded(lambda: switcher.switch(self.paths, name))
+    def on_switch(self, provider, name):
+        self._guarded(lambda: switcher.switch(self.paths, provider, name,
+                                              platform=self.platform))
 
-    def on_rename_prompt(self, old_name):
+    def on_rename_prompt(self, provider, old_name):
         new_name = simpledialog.askstring(
             "Rename profile", "New name:", initialvalue=old_name, parent=self)
         if new_name is None or new_name.strip() == old_name:
             return
-        self._guarded(
-            lambda: switcher.rename_profile(self.paths, old_name, new_name))
+        self._guarded(lambda: switcher.rename_profile(self.paths, provider,
+                                                      old_name, new_name))
 
-    def on_forget_marker(self):
-        self._guarded(lambda: switcher.forget_active_marker(self.paths))
+    def on_forget_marker(self, provider):
+        self._guarded(lambda: switcher.forget_active_marker(self.paths, provider))
 
-    def on_remove(self, name):
+    def on_remove(self, provider, name):
         if not messagebox.askyesno(
                 "Remove Profile",
                 f"Are you sure you want to delete the profile '{name}'? "
                 "This will permanently destroy its stored login token.",
                 parent=self):
             return
-        self._guarded(lambda: switcher.remove_profile(self.paths, name))
+        self._guarded(lambda: switcher.remove_profile(self.paths, provider, name,
+                                                      platform=self.platform))
+
+    def on_save(self, provider):
+        name = simpledialog.askstring(
+            f"Save Current {provider.display_name} Account", "Profile name:",
+            initialvalue="Default", parent=self)
+        if name is not None:
+            self._guarded(lambda: switcher.save_current_account(
+                self.paths, provider, name, platform=self.platform))
 
     def on_eject(self):
-        """Hand the machine back as a stock Claude Code install."""
-        plan = eject.survey(self.paths)
-        others = (f"\n\nLogins for {', '.join(plan.other_profiles)} stay on "
-                  f"disk — they are only recoverable through a new "
-                  f"verification email, so removing them is your call."
-                  if plan.other_profiles else "")
+        """Hand the machine back as a stock install for every provider."""
+        plan = eject.survey(self.paths, self.providers, platform=self.platform)
+        parked = sorted({n for e in plan.providers for n in e.other_profiles})
+        others = (f"\n\nLogins for {', '.join(parked)} stay on disk — they are "
+                  f"only recoverable through a new verification email, so "
+                  f"removing them is your call." if parked else "")
         if not messagebox.askokcancel(
                 WINDOW_TITLE,
                 "Stop using Shambles?\n\n"
-                "~/.claude keeps its current login, history, plugins and "
-                "settings, and goes back to being an ordinary Claude Code "
-                f"install. Nothing is deleted.{others}\n\nContinue?",
+                "Every account keeps its current login, history, plugins and "
+                f"settings, and goes back to being an ordinary install. "
+                f"Nothing is deleted.{others}\n\nContinue?",
                 parent=self):
             return
         try:
-            done = eject.run(self.paths)
+            done = eject.run(self.paths, self.providers, platform=self.platform)
         except ShamblesError as exc:
             messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
             return
         messagebox.showinfo(WINDOW_TITLE, eject.summary(done), parent=self)
         self.refresh()
 
-    def on_save(self):
-        name = simpledialog.askstring("Save Current Account", "Profile name:",
-                                      initialvalue="Default", parent=self)
-        if name is not None:
-            self._guarded(lambda: switcher.save_current_account(self.paths, name))
+    # -- adding an account ------------------------------------------------
+
+    def add_account_options(self):
+        """Every provider, paired with whether its CLI can actually be run."""
+        return [(provider, login.available(provider))
+                for provider in self.providers]
+
+    def stash_after_login(self, provider, name) -> bool:
+        """File whatever the vendor just wrote under the new profile.
+
+        Returns whether a credential was found. The vendor writes to its own
+        live location; this is the step that makes it a Shambles profile.
+        """
+        try:
+            switcher.stash_live_login(self.paths, provider, name,
+                                      platform=self.platform)
+        except ShamblesError:
+            return False
+        return self.paths.credentials(provider.id, name).exists()
 
     def on_add(self):
-        current = state.inspect(self.paths)
-        dialog = AddAccountDialog(self, current.profile, self.theme)
+        options = self.add_account_options()
+        dialog = AddAccountDialog(self, options, self.theme)
         if dialog.result is None:
             return
-        self._guarded(
-            lambda: switcher.add_empty_account(self.paths, dialog.result))
-        messagebox.showinfo(
-            WINDOW_TITLE,
-            "Profile created and activated.\n\n"
-            "Run 'claude' in a terminal, then /login.",
-            parent=self)
+        name, provider_id = dialog.result
+        provider = next(p for p in self.providers if p.id == provider_id)
+
+        try:
+            created = switcher.add_empty_account(self.paths, provider, name,
+                                                 platform=self.platform)
+        except ShamblesError as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
+            self.refresh()
+            return
+
+        # The profile is active and empty. The vendor's own command fills it.
+        session = LoginDialog(self, provider, created, self.theme)
+        if session.succeeded and self.stash_after_login(provider, created):
+            messagebox.showinfo(
+                WINDOW_TITLE,
+                f"'{created}' is signed in and active.\n\n"
+                "Start a new session to pick it up — a running one keeps the "
+                "token it loaded at startup.",
+                parent=self)
+        else:
+            messagebox.showwarning(
+                WINDOW_TITLE,
+                f"'{created}' was created but has no login yet.\n\n"
+                f"{provider.login_hint()}\n\n"
+                "Switching to another profile is safe — nothing was lost.",
+                parent=self)
+        self.refresh()
 
 
 def run(paths=None) -> int:

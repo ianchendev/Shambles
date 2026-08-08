@@ -68,7 +68,7 @@ def test_apply_leaves_no_temp_file(paths):
 
 
 def test_sidecar_round_trip(paths):
-    sidecar = paths.account("Work")
+    sidecar = paths.account("claude", "Work")
     sidecar.parent.mkdir(parents=True)
     configjson.write_sidecar(sidecar, {"oauthAccount": account("w@example.com")}, NOW)
 
@@ -79,7 +79,7 @@ def test_sidecar_round_trip(paths):
 
 
 def test_read_missing_sidecar_returns_empty(paths):
-    assert configjson.read_sidecar(paths.account("Ghost")) == {}
+    assert configjson.read_sidecar(paths.account("claude", "Ghost")) == {}
 
 
 def test_backup_copies_and_returns_path(paths):
@@ -166,9 +166,13 @@ def test_a_leftover_temp_file_does_not_expose_the_next_write(tmp_path, monkeypat
     would take the next write's full plaintext payload before anything
     restricted it.
 
-    Observed via ``os.fstat`` on the descriptor right after the real
-    ``os.write`` returns -- the vantage point that catches the bytes at rest
-    regardless of which call is meant to have fixed the mode by then.
+    Observed at the ``chmod`` call, filtered to regular non-empty files: the
+    one vantage point that catches the bytes at rest under both the old
+    buffered-text implementation and the current descriptor-based one. An
+    earlier version spied on ``os.write``, which the old code never called at
+    all -- so reverting the fix failed with "os.write was never called"
+    rather than with a loose mode, detecting an implementation change instead
+    of an exposure.
     """
     target = tmp_path / "config.json"
     tmp = target.with_name(target.name + configjson.TMP_SUFFIX)
