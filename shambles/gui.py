@@ -92,10 +92,18 @@ def group_heading(provider, current) -> str:
 
 
 def expiry_tooltip(profile) -> str:
-    """The exact date behind the short countdown chip."""
+    """The exact date behind a closing/closed chip with a known expiry."""
     when = datetime.datetime.fromtimestamp(profile.liveness.expires_at_ms / 1000)
-    verb = "expired" if profile.liveness.days_left < 0 else "expires"
+    days = profile.liveness.days_left
+    verb = "expired" if days is not None and days < 0 else "expires"
     return EXPIRY_TOOLTIP.format(verb=verb, date=when.strftime("%d %b %Y, %H:%M"))
+
+
+def chip_tooltip(profile) -> str:
+    """Tooltip for the face chip: date prose when known, else warning copy."""
+    if profile.liveness.expires_at_ms is not None:
+        return expiry_tooltip(profile)
+    return profiles.warning(profile) or ""
 
 
 class Tooltip:
@@ -657,10 +665,7 @@ class ShamblesApp(tk.Tk):
                   lambda _e, p=profile: self.on_rename_prompt(provider, p.name))
         Tooltip(name, RENAME_HINT, t)
 
-        if profile.active:
-            tk.Label(top, text="ACTIVE", font=t.caption, bg=bg,
-                     fg=t["accent"]).pack(side="left", padx=(GAP_S, 0))
-        else:
+        if not profile.active:
             ttk.Button(top, text="Switch", style="Switch.TButton",
                        command=lambda p=profile: self.on_switch(provider, p.name)
                        ).pack(side="right")
@@ -682,17 +687,12 @@ class ShamblesApp(tk.Tk):
 
         label = profiles.expiry_label(profile)
         if label:
-            fg_key, bg_key = CHIP_STYLES[profiles.expiry_severity(profile)]
+            severity = profiles.expiry_severity(profile)
+            fg_key, bg_key = CHIP_STYLES[severity]
             chip = tk.Label(bottom, text=f" {label} ", font=t.chip,
                             bg=t[bg_key], fg=t[fg_key], padx=GAP_S, pady=1)
             chip.pack(side="left", padx=(GAP_S, 0))
-            Tooltip(chip, expiry_tooltip(profile), t)
-
-        warning = profiles.warning(profile)
-        if warning:
-            badge = tk.Label(bottom, text="⚠", font=t.body, bg=bg, fg=t["warn"])
-            badge.pack(side="left", padx=(GAP_S, 0))
-            Tooltip(badge, warning, t)
+            Tooltip(chip, chip_tooltip(profile), t)
 
     # -- actions ----------------------------------------------------------
 
