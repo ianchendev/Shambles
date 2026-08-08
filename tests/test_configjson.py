@@ -201,3 +201,27 @@ def test_a_leftover_temp_file_does_not_expose_the_next_write(tmp_path, monkeypat
     assert observed.get("mode") == "600", (
         f"config was on disk at {observed.get('mode')} before being "
         f"restricted to 0600")
+
+
+@posix_modes_only
+def test_backups_are_locked_down_like_the_rest_of_the_store(paths):
+    """They are copies of ~/.claude.json: no token, but the account's email,
+    organisation and UUIDs. The README promises 0700 throughout the store, and
+    this directory was the one place that promise was not kept."""
+    make_claude_json(paths)
+    dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
+
+    assert oct(os.stat(paths.backup_dir).st_mode)[-3:] == "700"
+    assert oct(os.stat(dest).st_mode)[-3:] == "600"
+
+
+@posix_modes_only
+def test_a_loose_source_does_not_produce_a_loose_backup(paths):
+    """shutil.copy2 carries the source's mode across, so a config the vendor
+    happened to write 0644 would otherwise be snapshotted 0644."""
+    make_claude_json(paths)
+    os.chmod(paths.claude_json, 0o644)
+
+    dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
+
+    assert oct(os.stat(dest).st_mode)[-3:] == "600"
