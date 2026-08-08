@@ -215,10 +215,8 @@ class AddAccountDialog(tk.Toplevel):
         entry.pack(fill="x", pady=(GAP_XS, GAP_M), ipady=GAP_XS + 2)
 
         tk.Label(body, font=theme.body, bg=theme["window"], fg=theme["muted"],
-                 anchor="w", justify="left", wraplength=260,
-                 text=("Your settings, plugins and session history are shared "
-                       "with every account — only the login differs.\n\n"
-                       "Your browser will open so you can sign in."),
+                 anchor="w", justify="left",
+                 text="Browser will open to sign in.",
                  ).pack(fill="x")
 
         buttons = tk.Frame(body, bg=theme["window"])
@@ -598,6 +596,42 @@ class ShamblesApp(tk.Tk):
         canvas.bind("<Configure>", draw)
         return canvas
 
+    def _expandable_banner(self, *, bg, fg, summary, detail, summary_font=None):
+        """One-line summary with Details/Hide for the full explanation.
+
+        Always starts collapsed. ``refresh()`` rebuilds the tree, so expand
+        state is never persisted — that is intentional.
+        """
+        t = self.theme
+        card = tk.Frame(self.rows, bg=bg, padx=GAP_M, pady=GAP_M)
+        card.pack(fill="x", pady=(0, GAP_S))
+
+        top = tk.Frame(card, bg=bg)
+        top.pack(fill="x")
+        tk.Label(top, text=summary, font=summary_font or t.body, bg=bg, fg=fg,
+                 anchor="w", justify="left",
+                 wraplength=WINDOW_WIDTH - 6 * GAP_L).pack(side="left",
+                                                          fill="x", expand=True)
+
+        detail_label = tk.Label(
+            card, text=detail, font=t.body, bg=bg, fg=fg,
+            anchor="w", justify="left",
+            wraplength=WINDOW_WIDTH - 4 * GAP_L)
+        # Not packed until expanded.
+
+        def toggle():
+            if detail_label.winfo_ismapped():
+                detail_label.pack_forget()
+                toggle_btn.config(text="Details")
+            else:
+                detail_label.pack(fill="x", pady=(GAP_XS, 0))
+                toggle_btn.config(text="Hide")
+
+        toggle_btn = ttk.Button(top, text="Details", style="Shambles.TButton",
+                                command=toggle)
+        toggle_btn.pack(side="right", padx=(GAP_S, 0))
+        return card
+
     def _render_missing_vendor(self, provider):
         """Say why signing in is unavailable, without hiding what still works.
 
@@ -606,15 +640,15 @@ class ShamblesApp(tk.Tk):
         moment they expected a browser.
         """
         t = self.theme
-        card = tk.Frame(self.rows, bg=t["card"], padx=GAP_M, pady=GAP_M)
-        card.pack(fill="x", pady=(0, GAP_S))
-        tk.Label(card, bg=t["card"], fg=t["muted"], font=t.body, anchor="w",
-                 justify="left", wraplength=WINDOW_WIDTH - 4 * GAP_L,
-                 text=(f"{login.binary(provider)} is not on your PATH. "
-                       f"Install it to add {provider.display_name} accounts — "
-                       f"Shambles runs it to sign you in.\n"
-                       f"Switching between accounts you already saved still "
-                       f"works.")).pack(fill="x")
+        binary = login.binary(provider)
+        self._expandable_banner(
+            bg=t["card"], fg=t["muted"],
+            summary=f"{binary} not on PATH — can't add accounts",
+            detail=(f"Install {binary} to add {provider.display_name} accounts — "
+                    f"Shambles runs it to sign you in.\n"
+                    f"Switching between accounts you already saved still "
+                    f"works."),
+        )
 
     def _render_override_banner(self, provider, target: str):
         """The provider's config-dir variable is set, so a terminal reads a
@@ -623,20 +657,18 @@ class ShamblesApp(tk.Tk):
         exists."""
         t = self.theme
         name = provider.spec.get("config_dir", {}).get("env", "the config dir")
-        card = tk.Frame(self.rows, bg=t["chip_gone_bg"], padx=GAP_M, pady=GAP_M)
-        card.pack(fill="x", pady=(0, GAP_S))
-        tk.Label(card, text=f"⚠  {name} is set", font=t.name,
-                 bg=t["chip_gone_bg"], fg=t["chip_gone_fg"], anchor="w",
-                 justify="left").pack(fill="x")
-        tk.Label(card, bg=t["chip_gone_bg"], fg=t["chip_gone_fg"], font=t.body,
-                 anchor="w", justify="left",
-                 wraplength=WINDOW_WIDTH - 4 * GAP_L,
-                 text=(f"Your environment points {provider.display_name} at:\n"
-                       f"{target}\n\nShambles swaps the login in the default "
-                       f"location, so switches will not affect that terminal. "
-                       f"VS Code is unaffected. Unset it in your shell profile "
-                       f"to use Shambles from the CLI."),
-                 ).pack(fill="x", pady=(GAP_XS, 0))
+        # Keep the collapsed line short; full path lives in the expanded body.
+        path_hint = target if len(target) <= 40 else target[:37] + "…"
+        self._expandable_banner(
+            bg=t["chip_gone_bg"], fg=t["chip_gone_fg"],
+            summary=f"⚠  {name} is set — {path_hint}",
+            detail=(f"Your environment points {provider.display_name} at:\n"
+                    f"{target}\n\nShambles swaps the login in the default "
+                    f"location, so switches will not affect that terminal. "
+                    f"VS Code is unaffected. Unset it in your shell profile "
+                    f"to use Shambles from the CLI."),
+            summary_font=t.name,
+        )
 
     def _render_card(self, provider, profile):
         """One profile as a bordered card, accented when it is the active one."""

@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import ttk
 
 import pytest
 
@@ -50,6 +51,16 @@ def _labels(widget):
         if isinstance(child, tk.Label):
             found.append(child)
         found.extend(_labels(child))
+    return found
+
+
+def _buttons(widget):
+    """Every ``ttk.Button`` under ``widget``, depth-first."""
+    found = []
+    for child in widget.winfo_children():
+        if isinstance(child, ttk.Button):
+            found.append(child)
+        found.extend(_buttons(child))
     return found
 
 
@@ -145,12 +156,66 @@ def test_saved_profiles_stay_visible_when_the_vendor_is_missing(paths, make_app)
 
     rendered = _all_text(app.rows)
     assert "Side" in rendered
-    assert "not on your PATH" in rendered
+    assert "can't add accounts" in rendered
 
 
-def test_the_window_migrates_a_v1_store_on_open(paths, make_app):
+def test_missing_vendor_banner_starts_collapsed(paths, make_app):
+    make_profile(paths, "codex", "Side", email="c@example.com", active=True)
+    make_live_codex_login(paths, email="c@example.com")
+
+    app = make_app(paths)
+    app.refresh()
+    text = _all_text(app.rows)
+
+    assert "not on PATH — can't add accounts" in text
+    assert "Details" in text
+    # Detail copy exists on an unpacked Label; it must not be mapped yet.
+    assert not any(
+        "Switching between accounts you already saved still works" in str(lab.cget("text"))
+        and lab.winfo_ismapped()
+        for lab in _labels(app.rows)
+    )
+
+
+def test_missing_vendor_banner_expands_on_details(paths, make_app):
+    make_profile(paths, "codex", "Side", email="c@example.com", active=True)
+    make_live_codex_login(paths, email="c@example.com")
+
+    app = make_app(paths)
+    app.refresh()
+
+    details = next(b for b in _buttons(app.rows) if b.cget("text") == "Details")
+    details.invoke()
+    app.update_idletasks()
+
+    text = _all_text(app.rows)
+    assert "Switching between accounts you already saved still works" in text
+    assert "Hide" in text
+
+
+def test_add_account_dialog_omits_shared_history_paragraph(paths, make_app, monkeypatch):
+    # Patch only this dialog class — a blanket Toplevel.wait_window stub
+    # would also silence messagebox and hang later tests waiting on it.
+    monkeypatch.setattr(gui.AddAccountDialog, "wait_window",
+                        lambda self, *_a, **_k: None)
+    monkeypatch.setattr(gui.AddAccountDialog, "grab_set", lambda self: None)
+
+    app = make_app(paths)
+    dlg = gui.AddAccountDialog(app, app.add_account_options(), app.theme)
+    try:
+        text = _all_text(dlg)
+        assert "Browser will open to sign in" in text
+        assert "session history" not in text
+        assert "plugins" not in text
+    finally:
+        dlg.destroy()
+
+
+def test_the_window_migrates_a_v1_store_on_open(paths, make_app, monkeypatch):
     """The repair is automatic and unprompted, like the v1.0 history merge:
     there is no version of the old layout anyone wants."""
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: None)
     make_v1_profile(paths, "Work", email="w@example.com", active=True)
 
     make_app(paths)
