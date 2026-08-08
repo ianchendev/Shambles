@@ -56,10 +56,16 @@ def make_claude_json(paths, email="a@example.com", extra=None):
     return data
 
 
-def make_live_claude_login(paths, refresh_expires_ms=NOW + 30 * DAY_MS):
-    """Put a credentials file inside the shared ~/.claude."""
+def make_live_claude_login(paths, refresh_expires_ms=NOW + 30 * DAY_MS,
+                           access_token="tok"):
+    """Put a credentials file inside the shared ~/.claude.
+
+    ``access_token`` matches :func:`make_profile`'s per-profile value so a
+    caller can seed a live login that genuinely is the active profile's
+    credential, which is what it always is in reality.
+    """
     path = paths.claude_dir / ".credentials.json"
-    write_json(path, credentials(refresh_expires_ms))
+    write_json(path, credentials(refresh_expires_ms, access_token=access_token))
     return path
 
 
@@ -110,10 +116,18 @@ def make_live_codex_login(paths, **kwargs):
 
 def make_profile(paths, provider_id, name, *, email=None, token=True,
                  refresh_expires_ms=NOW + 30 * DAY_MS, active=False):
-    """Create a slim profile: a credential and, for Claude, a stashed identity."""
+    """Create a slim profile: a credential and, for Claude, a stashed identity.
+
+    The credential is made **distinguishable per profile**. Claude's tokens are
+    opaque and carry no identity, so without this every Claude profile would
+    hold byte-identical credentials and the round-trip test could not tell a
+    correct switch from one that swapped two accounts' tokens -- it would
+    compare a blob against an identical blob and pass either way.
+    """
     directory = paths.ensure_profile(provider_id, name)
     if token:
-        blob = (credentials(refresh_expires_ms) if provider_id == "claude"
+        blob = (credentials(refresh_expires_ms, access_token=f"tok-{name}")
+                if provider_id == "claude"
                 else codex_auth(email=email or "a@example.com",
                                 exp_ms=refresh_expires_ms))
         write_json(paths.credentials(provider_id, name), blob)
