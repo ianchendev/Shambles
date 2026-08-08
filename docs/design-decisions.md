@@ -1,9 +1,11 @@
 # Design decisions
 
-> **Status: mixed.** DD-1 through DD-3 describe principles the shipped v1.0
-> follows. **DD-4 is a proposal for multi-provider support that is not
-> implemented** — there is no provider or adapter layer in `shambles/`, and
-> Codex is not supported. Read it as a design intent, not a description.
+> **Status: implemented.** DD-1 through DD-3 describe principles the code
+> follows. **DD-4 is now built** — `shambles/providers/` and `shambles/stores/`
+> are the two layers it specifies, and Codex is a peer provider. DD-2 has been
+> **amended**: the vendor's login flow is now started by Shambles rather than
+> printed for the user to run. See
+> [the multi-provider design](superpowers/specs/2026-08-07-multi-provider-design.md).
 >
 > For shipped architecture see [TECH_SPEC.md](../TECH_SPEC.md); for the
 > credential-store research behind DD-4 see
@@ -66,7 +68,7 @@ wants them, but they are never the primary reading.
 
 ## DD-2 — Do not implement login inside the tool
 
-**Status: Leaning (not committed)**
+**Status: Decided — amended 2026-08-07, see below**
 
 ### Context
 
@@ -106,6 +108,27 @@ command.
   time an email is involved.
 - The tool never sees a password, never opens a browser, never holds a token it
   did not find already on disk.
+
+### Amendment, 2026-08-07 — the handoff is automated
+
+Shambles now *starts* the vendor's login command instead of printing it. The
+conclusion "do not implement login inside the tool" is unchanged and still
+absolute: no OAuth code, no client secret, no callback server, no network
+import. Both vendors ship a one-shot command that does all of that itself —
+`claude auth login` and `codex login` — so the tool spawns a binary the user
+already has and reads the file it leaves behind.
+
+The consequence bullet reading "never opens a browser" no longer holds, and was
+given up deliberately rather than by drift. What it was protecting — the
+absence of network reach and token handling — is untouched, and is now
+**asserted mechanically instead of promised**: `tests/test_login.py` walks the
+AST of every module in the package and fails on any `socket`, `urllib`,
+`requests`, `http` or `ssl` import.
+
+The lapsed-profile handoff survives as the fallback, which is what makes this
+safe to automate: when the vendor's binary is not on PATH the provider is
+offered but disabled with the reason, and when its login exits non-zero the
+dialog names the exact command to run by hand.
 
 ### Connected item: subprocess is permitted; one README sentence goes stale
 
@@ -200,9 +223,15 @@ are never presented as things to manage, and there is no "refresh", "repair" or
 
 ## DD-4 — Provider facts are data; adapters are two thin orthogonal layers
 
-> **NOT IMPLEMENTED.** v1.0 supports Claude Code on Linux/WSL only, through a
-> single hardcoded path. Nothing below exists in the codebase. Retained as the
-> shape multi-provider support would take if it is ever built.
+> **IMPLEMENTED.** `shambles/stores/` and `shambles/providers/` are the two
+> layers below, and `shambles/providers/<id>.json` the data files. The core —
+> `switcher`, `state`, `profiles`, `gui` — talks only to the `Provider`
+> protocol and never learns a provider's name.
+>
+> Two departures from the text below. The store is `~/.shambles/<provider>/`,
+> not `~/.shambles/<name>` as sketched. And `KeychainStore` / `CredmanStore`
+> ship unreferenced: only `FileStore` is wired, because neither macOS nor
+> Windows could be verified.
 
 **Status: Decided**
 

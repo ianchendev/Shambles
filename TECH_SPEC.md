@@ -1,15 +1,56 @@
 # Shambles — Technical Specification
 
-Architectural reference for the Claude Code account switcher.
+Architectural reference for the account switcher.
+
+> **Partially superseded by multi-provider support (2026-08-07).** Sections
+> describing a single hardcoded Claude path, the `~/.claude-profiles/` store,
+> or `~/.claude` as the only credential location now describe v1.0 rather than
+> the current code. What changed, and why, is in
+> [docs/superpowers/specs/2026-08-07-multi-provider-design.md](docs/superpowers/specs/2026-08-07-multi-provider-design.md);
+> the layering it implements is DD-4. The §-numbered mechanism below —
+> the switch ordering, the atomic-write discipline, the state machine, the
+> concurrency caveat — is unchanged and still authoritative.
 
 | | |
 |---|---|
-| **Version** | 1.0 (post-redesign) |
-| **Target** | Claude Code 2.1.x — CLI and VS Code extension |
-| **Platforms** | Linux and WSL2 confirmed. Windows unverified — see §1.11. macOS unsupported |
+| **Version** | 1.1 (multi-provider) |
+| **Target** | Claude Code 2.1.x and Codex 0.147.x — CLI and VS Code extension |
+| **Platforms** | Linux and WSL2 confirmed for Claude. Codex unverified everywhere — no install was available. Windows unverified — see §1.11. macOS unsupported |
 | **Runtime** | Python 3.10+, Tkinter. No third-party dependencies |
-| **Source** | ~1,800 lines across 13 modules |
-| **Tests** | 169 cases, all passing on Linux and Windows |
+| **Source** | ~3,740 lines across 24 modules |
+| **Tests** | 303 cases, all passing |
+
+## 0. What multi-provider support changed
+
+Two orthogonal layers, per DD-4. The core never learns a provider's name.
+
+| Layer | Question it answers | Varies by |
+|---|---|---|
+| `shambles/stores/` | *Where do the bytes live?* | platform |
+| `shambles/providers/` | *What do the bytes mean?* | vendor |
+
+| Concern | v1.0 | Now |
+|---|---|---|
+| Profile store | `~/.claude-profiles/<Name>/` | `~/.shambles/<provider>/<Name>/` |
+| Credential location | hardcoded `~/.claude/.credentials.json` | `provider.store(home, platform)` |
+| Identity | parsed `oauthAccount` directly | `provider.identity()` — sidecar for Claude, JWT for Codex |
+| Expiry | `refreshTokenExpiresAt`, one constant | `provider.liveness()`, `provider.warn_days` per vendor |
+| Login | printed a command for the user | spawns the vendor's own command; see §0.1 |
+| Window | one header, one list | one group per provider |
+
+**§0.1 Login.** `shambles/login.py` is the only module that spawns a process.
+It runs `claude auth login` or `codex login` — the vendor opens the browser and
+runs its own OAuth callback. Shambles adds no OAuth code and no network
+imports; `tests/test_login.py` asserts the latter by walking the package AST.
+
+**§0.2 Rotation.** Codex replaces its refresh token on every use, so a stashed
+snapshot goes stale while its profile is active. `switcher.restash_active`
+corrects that on each window refresh. It is a *display* fix: switching away was
+already safe, because `switch` stashes the outgoing login first.
+
+**§0.3 Migrations.** Two independent hops, both additive, both leaving the
+source on disk: the pre-1.0 symlink layout → a shared `~/.claude`, and
+`~/.claude-profiles/` → `~/.shambles/claude/`.
 
 ---
 
