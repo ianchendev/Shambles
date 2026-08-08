@@ -1,7 +1,11 @@
 # Shambles — Multi-provider Design
 
 **Date:** 2026-08-07
-**Status:** ACTIVE — design agreed, not yet implemented
+**Status:** IMPLEMENTED — shipped 2026-08-08, 13 tasks, suite green
+
+> Where this document and the code disagree, the code and its tests win. Two
+> things were corrected during implementation and are marked inline: §6.3 on
+> what re-stashing actually protects, and §8 on the empty-group placeholder.
 
 Extends Shambles from a Claude-only switcher to a two-provider one, adds a
 provider choice to Add Account, and replaces the "go run this in a terminal"
@@ -116,7 +120,7 @@ provides for Claude.
 | D4 | Store moves to **`~/.shambles/<provider>/<Name>/`** | `~/.claude-profiles/` becomes a lie the moment it holds Codex tokens. Migration cost is identical to any other layout — every option moves the directory. |
 | D5 | Migration **copies**, leaving the original on disk | Same posture as the v1.0 merge and as Eject: never make a refresh token unrecoverable as a side effect. |
 | D6 | **Per-group headings**; the global header is removed | Warnings are per-provider now. Keeping them in one header means rendering N states in a fixed space that grows with every provider. |
-| D7 | Providers are **probed on PATH** | "No Codex accounts yet" next to an uninstalled Codex is a lie of omission; the user finds out only when login fails. |
+| D7 | Providers are **probed on PATH** | An empty Codex group next to an uninstalled Codex is a lie of omission; the user would find out only when they expected a browser. |
 | D8 | `Save Current Account` moves into the group heading | The footer button has no provider context once there are two. |
 | D9 | Keep `credentials.json` / `account.json` filenames | `ClaudeProvider.identity()` already reads `<profile_dir>/account.json`. |
 
@@ -239,12 +243,23 @@ rotation invalidated the old refresh token.
 
 `restash_active(paths, provider, platform)` runs at the top of `gui.refresh()`
 for providers with `rotates=True`: if the live blob differs from the stashed
-copy, re-stash it. Without this, switching away from a Codex account that
-refreshed during use writes back a dead token and the account needs a fresh
-login — the exact outcome this tool exists to prevent.
+copy, re-stash it.
 
-Invisible to the user, load-bearing for correctness. This is DD-3's "silent work
-must still be correct work".
+> **Corrected during implementation.** This section originally claimed that
+> without re-stashing, *switching away* would write a dead token back over the
+> profile. That is wrong: `switch` stashes the outgoing login **first**, so a
+> rotation between switches is captured either way. The claim was tested and
+> the test passed identically with `restash_active` deleted — it was vacuous.
+>
+> What re-stashing actually corrects is the **display**. `profiles.discover`
+> reads each profile's stashed credential, including the active one, so a
+> Codex account whose token refreshed during use keeps showing its pre-refresh
+> email and countdown until something re-stashes it. Both facts now have a
+> test, written as before/after on one profile so neither passes with the
+> function removed.
+
+Invisible to the user, and still DD-3's "silent work must still be correct
+work" — just correct about a different thing than first written.
 
 ### 6.4 Store migration
 
@@ -284,17 +299,31 @@ Every message is user-facing prose. Tracebacks never reach the user — the rule
 │  ▌ Work       ACTIVE              29d      │
 │  ▌ Personal   [Switch] [✕]         4d      │
 │                                            │
-│ ── Codex ────────────────────────────────  │
-│    Codex CLI not found on PATH.            │
-│    Install it to add Codex accounts.       │
+│ ── Codex · No accounts saved yet ────────  │
+│  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │
+│  ╎     ＋   Add a Codex account         ╎  │
+│  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │
 │                                            │
 │           [Eject]  [＋ Add Account]        │
 └────────────────────────────────────────────┘
 ```
 
+- **An empty group renders a dashed placeholder**, not a line of grey text. It
+  occupies the space a profile card will occupy, so the section reads as a
+  place something goes rather than as one that failed to load. Clicking it
+  opens Add Account with that provider already chosen.
+  - Drawn on a `Canvas`: Tk's frame reliefs are all solid, and only canvas
+    items take a dash pattern. It redraws on `<Configure>` because the width
+    is unknown until Tk lays it out.
+  - When the vendor's CLI is missing the same box carries the install hint and
+    is **not** clickable — Add Account disables that provider, so an inviting
+    box would lead somewhere that refuses. That merges two boxes into one in
+    the state where there is no profile list for a hint to sit beside.
 - Group heading carries the provider name, its active account, and its warning
-  state inline. A provider whose state is `UNMANAGED` / `UNKNOWN` / `DRIFTED`
-  renders `Save current login` in its heading.
+  state inline. `Save current login` appears in the heading for a provider
+  whose state is `UNMANAGED` / `UNKNOWN` / `DRIFTED` **and** which has a live
+  credential — the state alone does not imply one, and a button whose only
+  outcome is a refusal is worse than no button.
 - Chip severity maps from `Liveness`, with the threshold per provider
   (`provider.warn_days`; Claude ~4 days, Codex ~10 — DD-1 requires this):
 
