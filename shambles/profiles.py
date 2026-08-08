@@ -16,12 +16,19 @@ from .providers import ABSENT, CLOSED, CLOSING, NEEDS_LOGIN, Liveness
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
 
-#: How loudly the UI draws the countdown chip.
+#: How loudly the UI draws the attention chip.
 EXPIRY_OK = "ok"
 EXPIRY_SOON = "soon"
 EXPIRY_GONE = "gone"
 
-SEVERITY = {CLOSING: EXPIRY_SOON, CLOSED: EXPIRY_GONE}
+SEVERITY = {CLOSING: EXPIRY_SOON, CLOSED: EXPIRY_GONE, ABSENT: EXPIRY_GONE}
+
+#: Face copy for the chip. Healthy / unknown accounts show none (DD-1).
+FACE_LABELS = {
+    CLOSING: "soon",
+    CLOSED: "needs login",
+    ABSENT: "needs login",
+}
 
 WARNINGS = {
     ABSENT: "No token here yet. Switch to this profile and log in.",
@@ -47,26 +54,16 @@ def warning(profile: Profile) -> str | None:
 
 
 def expiry_label(profile: Profile) -> str | None:
-    """Short countdown for the UI, e.g. ``"29d"`` or ``"expired 3d ago"``.
+    """Short face label for the attention chip, e.g. ``"soon"``.
 
-    ``None`` for a profile with no token and for one whose expiry could not be
-    determined -- the VS Code bundle writes Claude credentials without the
-    field, and inventing a number there would be worse than showing none.
+    Healthy accounts return ``None`` — DD-1: no duration on the face.
+    Countdown numbers stay out of this helper; tooltips format dates instead.
     """
-    days = profile.liveness.days_left
-    if days is None:
-        return None
-    if days < 0:
-        return f"expired {abs(days)}d ago"
-    if days == 0:
-        return "today"
-    return f"{days}d"
+    return FACE_LABELS.get(profile.liveness.state)
 
 
 def expiry_severity(profile: Profile) -> str | None:
-    if profile.liveness.days_left is None:
-        return None
-    return SEVERITY.get(profile.liveness.state, EXPIRY_OK)
+    return SEVERITY.get(profile.liveness.state)
 
 
 def needs_login(profile: Profile) -> bool:

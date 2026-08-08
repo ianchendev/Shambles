@@ -65,13 +65,14 @@ HOUR_MS = 3_600_000
 #: interesting cases are not expressible in days. Claude's warn window is one
 #: day (DD-1), so "closing" lives between 0 and 1 days out, and "today" means
 #: some hours from now -- an expiry of *exactly* now is closed, not closing.
+#: Face labels are state words (DD-1 / quieter UI), not countdown numbers.
 @pytest.mark.parametrize("offset_ms, state, label", [
-    (30 * DAY_MS, LIVE, "30d"),
-    (DAY_MS + HOUR_MS, CLOSING, "1d"),
-    (6 * HOUR_MS, CLOSING, "today"),
-    (-3 * DAY_MS, CLOSED, "expired 3d ago"),
+    (30 * DAY_MS, LIVE, None),
+    (DAY_MS + HOUR_MS, CLOSING, "soon"),
+    (6 * HOUR_MS, CLOSING, "soon"),
+    (-3 * DAY_MS, CLOSED, "needs login"),
 ])
-def test_the_countdown_reads_from_the_token(paths, claude, offset_ms, state, label):
+def test_the_face_label_follows_liveness_state(paths, claude, offset_ms, state, label):
     make_profile(paths, "claude", "Work", email="w@example.com",
                  refresh_expires_ms=NOW + offset_ms)
     found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
@@ -115,8 +116,17 @@ def test_a_profile_with_no_token_is_absent_not_expired(paths, claude):
     make_profile(paths, "claude", "Work", token=False)
     found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
     assert found.liveness.state == ABSENT
-    assert profiles.expiry_label(found) is None
+    assert profiles.expiry_label(found) == "needs login"
+    assert profiles.expiry_severity(found) == profiles.EXPIRY_GONE
     assert profiles.warning(found) is not None
+
+
+def test_expiry_severity_covers_absent_without_days(paths, claude):
+    """The chip still needs a colour when there is no countdown to draw from."""
+    make_profile(paths, "claude", "Work", token=False)
+    found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
+    assert found.liveness.days_left is None
+    assert profiles.expiry_severity(found) == profiles.EXPIRY_GONE
 
 
 def test_the_warn_threshold_is_per_provider(claude, codex):
