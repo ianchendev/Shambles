@@ -1,7 +1,7 @@
 # Shambles — Quieter UI Design
 
 **Date:** 2026-08-08
-**Status:** APPROVED — awaiting implementation plan
+**Status:** IMPLEMENTED — quieter cards, expandable banners, shorter Add Account
 
 Reduce day-to-day text on profile cards and long banners/dialogs, without
 changing the Tkinter layout model or the product’s switching behaviour. Group
