@@ -40,6 +40,11 @@ TOOLTIP_MARGIN = 8
 #: How often to hand control back to Python so pending signals get dispatched.
 SIGNAL_POLL_MS = 150
 
+#: The empty-slot placeholder: tall enough to read as a card-shaped gap, and
+#: dashed so it reads as a space to fill rather than as a real profile.
+PLACEHOLDER_HEIGHT = 62
+PLACEHOLDER_DASH = (3, 3)
+
 GROUP_STATES = {
     state.UNMANAGED: "No accounts saved yet",
     state.UNKNOWN: "⚠ Not sure which account is live",
@@ -158,7 +163,7 @@ class AddAccountDialog(tk.Toplevel):
     while a greyed one with a reason reads as an instruction.
     """
 
-    def __init__(self, parent, options, theme):
+    def __init__(self, parent, options, theme, preselect=None):
         super().__init__(parent)
         self.title("Add Account")
         self.resizable(False, False)
@@ -172,8 +177,12 @@ class AddAccountDialog(tk.Toplevel):
         tk.Label(body, text="PROVIDER", font=theme.caption,
                  bg=theme["window"], fg=theme["muted"]).pack(anchor="w")
 
-        first_available = next((p.id for p, ok in options if ok), None)
-        self.provider_var = tk.StringVar(value=first_available or "")
+        available = [p.id for p, ok in options if ok]
+        first_available = available[0] if available else None
+        # A preselection only wins if that provider can actually be used;
+        # otherwise the dialog would open on a disabled radio button.
+        chosen = preselect if preselect in available else first_available
+        self.provider_var = tk.StringVar(value=chosen or "")
         for provider, ok in options:
             label = (provider.display_name if ok
                      else f"{provider.display_name}  —  not installed")
@@ -483,23 +492,34 @@ class ShamblesApp(tk.Tk):
                  anchor="w", justify="left",
                  wraplength=WINDOW_WIDTH - 2 * GAP_L).pack(side="left")
 
-        if current.kind in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED):
+        # Offered only when there is genuinely a login to save. The state
+        # alone does not say: a machine with no profiles and no credential is
+        # UNMANAGED too, and the button would refuse the moment it was
+        # clicked. That refusal is correct -- switcher.save_current_account
+        # still raises -- but a control that exists only to say no is worse
+        # than no control.
+        savable = (current.kind in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED)
+                   and self._has_live_login(provider))
+        if savable:
             ttk.Button(heading, text="Save current login",
                        style="Shambles.TButton",
                        command=lambda p=provider: self.on_save(p)).pack(side="right")
 
+        found = profiles.discover(self.paths, provider, current.profile,
+                                  switcher.now_ms(), platform=self.platform)
+        usable = login.available(provider)
+
         # The install hint is additive, not a replacement for the list. Saved
         # profiles stay switchable without the vendor binary -- switching
         # copies a file and runs nothing -- so hiding them would take away
-        # something that still works.
-        if not login.available(provider):
+        # something that still works. With no profiles there is no list to sit
+        # beside, and the placeholder carries the same message in one box
+        # rather than two.
+        if not usable and found:
             self._render_missing_vendor(provider)
 
-        found = profiles.discover(self.paths, provider, current.profile,
-                                  switcher.now_ms(), platform=self.platform)
         if not found:
-            tk.Label(self.rows, text="No accounts yet.", font=t.body,
-                     bg=t["window"], fg=t["faint"], anchor="w").pack(fill="x")
+            self._render_placeholder(provider, usable=usable)
             return
 
         for profile in found:
@@ -510,6 +530,65 @@ class ShamblesApp(tk.Tk):
                        style="Shambles.TButton",
                        command=lambda p=provider: self.on_forget_marker(p)
                        ).pack(anchor="w", pady=(GAP_S, 0))
+
+    def _has_live_login(self, provider) -> bool:
+        """Whether this provider is signed in right now.
+
+        Read from the store rather than inferred from ``State.live_email``: a
+        credential whose identity cannot be resolved -- Claude with no
+        ``~/.claude.json`` yet -- is still a login worth saving.
+        """
+        try:
+            store = provider.store(home=self.paths.home, platform=self.platform)
+            return store.read() is not None
+        except ShamblesError:
+            return False
+
+    def _render_placeholder(self, provider, *, usable: bool):
+        """The empty slot a first account would fill.
+
+        A dashed outline rather than a line of grey text: it occupies the
+        space a profile card will occupy, so the section reads as a place
+        something goes rather than as a section that failed to load. Clicking
+        it opens Add Account with this provider already chosen, which is the
+        only thing anyone would want from an empty slot.
+
+        Drawn on a Canvas because Tk's frame reliefs are all solid; only
+        canvas items take a dash pattern.
+        """
+        t = self.theme
+        canvas = tk.Canvas(self.rows, height=PLACEHOLDER_HEIGHT,
+                           bg=t["window"], highlightthickness=0, bd=0)
+        canvas.pack(fill="x", pady=(0, GAP_S))
+
+        if usable:
+            label = f"＋   Add a {provider.display_name} account"
+            ink = t["accent"]
+            canvas.config(cursor="hand2")
+            canvas.bind("<Button-1>", lambda _e, p=provider: self.on_add(p))
+            Tooltip(canvas, f"Sign in to {provider.display_name} and save it "
+                            f"as your first profile here.", t)
+        else:
+            # Nothing to click: Add Account disables a provider whose CLI is
+            # absent, so an inviting box would lead somewhere that refuses.
+            label = (f"{login.binary(provider)} is not on your PATH — install "
+                     f"it to add {provider.display_name} accounts")
+            ink = t["faint"]
+
+        def draw(_event=None):
+            canvas.delete("all")
+            width = canvas.winfo_width()
+            # Inset by one pixel so the dashes are not clipped by the edge.
+            canvas.create_rectangle(1, 1, width - 2, PLACEHOLDER_HEIGHT - 2,
+                                    dash=PLACEHOLDER_DASH, outline=t["border"])
+            canvas.create_text(width // 2, PLACEHOLDER_HEIGHT // 2,
+                               text=label, font=t.body, fill=ink)
+
+        # Width is unknown until Tk lays the canvas out, and changes if the
+        # window is resized, so the drawing follows the widget rather than
+        # being done once at pack time.
+        canvas.bind("<Configure>", draw)
+        return canvas
 
     def _render_missing_vendor(self, provider):
         """Say why signing in is unavailable, without hiding what still works.
@@ -702,9 +781,16 @@ class ShamblesApp(tk.Tk):
             return False
         return self.paths.credentials(provider.id, name).exists()
 
-    def on_add(self):
+    def on_add(self, provider=None):
+        """Add an account, optionally starting on a chosen provider.
+
+        ``provider`` comes from clicking a group's empty placeholder, where
+        the user has already said which one they mean. The footer button
+        passes nothing and the dialog picks the first available.
+        """
         options = self.add_account_options()
-        dialog = AddAccountDialog(self, options, self.theme)
+        dialog = AddAccountDialog(self, options, self.theme,
+                                  preselect=provider.id if provider else None)
         if dialog.result is None:
             return
         name, provider_id = dialog.result

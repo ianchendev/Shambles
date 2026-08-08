@@ -1,5 +1,8 @@
+import tkinter as tk
+
 import pytest
 
+from conftest import posix_only
 from helpers import (make_claude_json, make_live_claude_login,
                      make_live_codex_login, make_profile, make_v1_profile)
 from shambles import gui, providers, state
@@ -16,13 +19,24 @@ def codex():
 
 
 def _all_text(widget):
-    """Every string rendered anywhere under a widget."""
+    """Every string rendered anywhere under a widget.
+
+    Canvas items are included: the empty-slot placeholder draws its label as a
+    canvas item rather than as a Label, so a walk that only read ``-text``
+    options would report an empty group as blank.
+    """
     found = []
     for child in widget.winfo_children():
         try:
             found.append(str(child.cget("text")))
         except Exception:
             pass
+        if isinstance(child, tk.Canvas):
+            for item in child.find_all():
+                try:
+                    found.append(str(child.itemcget(item, "text")))
+                except tk.TclError:
+                    pass  # a rectangle has no text
         # append, not extend: _all_text returns a string, and extending a list
         # with one splits it into individual characters.
         found.append(_all_text(child))
@@ -100,7 +114,115 @@ def test_the_window_migrates_a_v1_store_on_open(paths, make_app):
 def test_an_empty_machine_renders_without_error(paths, make_app):
     app = make_app(paths)
     app.refresh()
-    assert "No accounts yet." in _all_text(app.rows)
+    assert _all_text(app.rows).strip()
+
+
+# -- the empty-slot placeholder ----------------------------------------
+
+def _placeholders(app):
+    return [w for w in app.rows.winfo_children() if isinstance(w, tk.Canvas)]
+
+
+def test_a_provider_with_no_accounts_gets_a_dotted_placeholder(paths, make_app,
+                                                              fake_vendor):
+    """An empty group should read as a space something goes in, not as a
+    section that failed to load.
+
+    ``fake_vendor`` is taken without creating anything: it pins PATH to an
+    empty directory, so what the developer happens to have installed cannot
+    change the result.
+    """
+    app = make_app(paths)
+    app.refresh()
+    app.update_idletasks()
+
+    boxes = _placeholders(app)
+    assert len(boxes) == 2, "one placeholder per provider, both empty here"
+
+    outlines = [item for box in boxes for item in box.find_all()
+                if box.type(item) == "rectangle"]
+    assert outlines, "placeholder drew no box"
+    for box in boxes:
+        for item in box.find_all():
+            if box.type(item) == "rectangle":
+                assert box.itemcget(item, "dash"), "the box must be dashed"
+
+
+def test_the_placeholder_disappears_once_an_account_exists(paths, make_app,
+                                                          fake_vendor):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.refresh()
+    app.update_idletasks()
+
+    rendered = _all_text(app.rows)
+    assert "Add a Claude Code account" not in rendered, "the filled group kept its slot"
+    assert len(_placeholders(app)) == 1, "only the empty Codex group keeps one"
+
+
+@posix_only
+def test_an_installed_provider_invites_adding_an_account(paths, make_app,
+                                                         fake_vendor):
+    fake_vendor("claude")
+    fake_vendor("codex")
+    app = make_app(paths)
+    app.refresh()
+    app.update_idletasks()
+
+    rendered = _all_text(app.rows)
+    assert "Add a Claude Code account" in rendered
+    assert "Add a Codex account" in rendered
+    for box in _placeholders(app):
+        assert box.cget("cursor") == "hand2", "an addable slot should look clickable"
+
+
+def test_a_missing_vendor_placeholder_says_so_and_is_not_clickable(paths, make_app,
+                                                                  fake_vendor):
+    """Add Account disables a provider whose CLI is absent, so an inviting box
+    would lead somewhere that refuses."""
+    app = make_app(paths)
+    app.refresh()
+    app.update_idletasks()
+
+    rendered = _all_text(app.rows)
+    assert "not on your PATH" in rendered
+    for box in _placeholders(app):
+        assert box.cget("cursor") != "hand2"
+
+
+def test_clicking_the_placeholder_preselects_that_provider(paths, make_app,
+                                                           monkeypatch):
+    """The only thing anyone wants from an empty slot."""
+    seen = {}
+
+    class FakeDialog:
+        def __init__(self, parent, options, theme, preselect=None):
+            seen["preselect"] = preselect
+            self.result = None
+
+    monkeypatch.setattr(gui, "AddAccountDialog", FakeDialog)
+    app = make_app(paths)
+    app.on_add(providers.load("codex"))
+
+    assert seen["preselect"] == "codex"
+
+
+def test_the_footer_button_preselects_nothing(paths, make_app, monkeypatch):
+    seen = {}
+
+    class FakeDialog:
+        def __init__(self, parent, options, theme, preselect=None):
+            seen["preselect"] = preselect
+            self.result = None
+
+    monkeypatch.setattr(gui, "AddAccountDialog", FakeDialog)
+    app = make_app(paths)
+    app.on_add()
+
+    assert seen["preselect"] is None
 
 
 # -- add account -------------------------------------------------------
@@ -132,3 +254,32 @@ def test_stash_after_login_reports_false_when_nothing_was_written(paths, make_ap
 
     assert app.stash_after_login(codex, "Fresh") is False
     assert not paths.credentials("codex", "Fresh").exists()
+
+
+def test_save_is_not_offered_when_there_is_nothing_to_save(paths, make_app):
+    """A control whose only outcome is a refusal is worse than no control."""
+    app = make_app(paths)
+    app.refresh()
+    assert "Save current login" not in _all_text(app.rows)
+
+
+def test_save_is_offered_when_a_login_exists_outside_any_profile(paths, make_app):
+    """The state this button is for: signed in, but Shambles does not know it."""
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.refresh()
+
+    assert "Save current login" in _all_text(app.rows)
+
+
+def test_save_is_offered_for_a_credential_with_no_readable_identity(paths, make_app):
+    """~/.claude.json may not exist yet. The token is still worth saving, so
+    this must not key off the displayed email."""
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.refresh()
+
+    assert "Save current login" in _all_text(app.rows)
