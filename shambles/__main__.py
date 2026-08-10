@@ -14,15 +14,25 @@ import sys
 from shambles import __version__
 
 USAGE = """\
-shambles — switch between Claude Code accounts
+shambles — switch between Claude and Codex accounts
 
-  shambles              open the window
-  shambles --version    print the version
-  shambles --help       show this message
+  shambles                       open the window
+  shambles list                  show every account and its state
+  shambles list --json           emit the machine-readable contract
+  shambles switch <provider> <account>
+  shambles --version             print the version
+  shambles --help                show this message
 
 Profiles live in ~/.claude-profiles/. The active one is whichever
 ~/.claude currently points at.
 """
+
+#: Subcommands answered on stdout instead of by opening a window.
+#:
+#: Not merely a convenience: a Windows tray app manages a different Claude Code
+#: install from the one inside WSL, and only a CLI running inside WSL can reach
+#: that one. The macOS menu bar app consumes `list --json` for the same reason.
+COMMANDS = ("list", "switch")
 
 TK_MISSING = """\
 Shambles needs Tkinter, which is not installed.
@@ -45,6 +55,15 @@ def main(argv=None) -> int:
     if "--help" in argv or "-h" in argv:
         print(USAGE, end="")
         return 0
+
+    # Checked before Tkinter is imported so the CLI works on a headless box,
+    # over SSH, and inside WSL. Scans every token rather than only the first:
+    # global flags may precede the subcommand, as in
+    # `shambles --home /tmp/x list --json`, and testing argv[0] alone sent that
+    # to the window where it died on missing Tkinter.
+    if any(token in COMMANDS for token in argv):
+        from shambles.app.cli import main as cli_main
+        return cli_main(argv)
 
     try:
         import tkinter  # noqa: F401

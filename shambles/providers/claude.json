@@ -1,0 +1,95 @@
+{
+  "id": "claude",
+  "display_name": "Claude Code",
+  "surfaces": [
+    {
+      "id": "terminal",
+      "label": "Terminal",
+      "detail": "Claude Code CLI"
+    },
+    {
+      "id": "vscode",
+      "label": "VS Code",
+      "detail": "anthropic.claude-code"
+    }
+  ],
+  "surfaces_note": "one switch moves all of these at once \u2014 they share one credential store, so the UI must show them together",
+  "config_dir": {
+    "env": "CLAUDE_CONFIG_DIR",
+    "default": "~/.claude"
+  },
+  "store": {
+    "darwin": {
+      "kind": "keychain",
+      "service_template": "Claude Code{oauth_suffix}-credentials{config_dir_hash}",
+      "oauth_suffix_env": "CLAUDE_CODE_OAUTH_CLIENT_ID",
+      "oauth_suffix_when_set": "-custom-oauth",
+      "hash_suppress_env": "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+      "account_env": "USER",
+      "account_fallback": "claude-code-user",
+      "account_pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "linux": {
+      "kind": "file",
+      "path": "{config_dir}/.credentials.json",
+      "mode": "0600"
+    },
+    "win32": {
+      "kind": "credman",
+      "service_template": "Claude Code{oauth_suffix}-credentials{config_dir_hash}",
+      "account": "claude-code-user",
+      "chunk_size": 2000
+    }
+  },
+  "liveness": {
+    "kind": "field",
+    "pointer": "claudeAiOauth.refreshTokenExpiresAt",
+    "unit": "epoch_ms",
+    "optional": true,
+    "optional_note": "absent from credentials written by the VS Code extension bundle; a missing value means UNKNOWN, never CLOSED"
+  },
+  "identity": {
+    "kind": "sidecar",
+    "path": "~/.claude.json",
+    "email": "oauthAccount.emailAddress",
+    "display_name": "oauthAccount.displayName",
+    "org": "oauthAccount.organizationName",
+    "plan": "oauthAccount.organizationRateLimitTier",
+    "plan_note": "NOT claudeAiOauth.subscriptionType, which read 'team' for a Max 5x account"
+  },
+  "companion": {
+    "path": "~/.claude.json",
+    "keys": [
+      "oauthAccount",
+      "cachedUsageUtilization"
+    ],
+    "note": "keys absent from the incoming profile are deleted, not left holding the previous account's identity"
+  },
+  "policy": {
+    "rotates": false,
+    "warn_fraction": 0.25,
+    "warn_days_floor": 1,
+    "warn_note": "The refresh window is NOT a constant: 3.55 days measured on macOS/Max 5x, 28.3 days on Linux/Team. A fixed threshold is therefore wrong under one regime or the other, so CLOSING is computed as a fraction of this blob's own window, with a floor so a very short window still warns at all."
+  },
+  "login": {
+    "hint": "Run 'claude' in a terminal, then /login. Use a terminal rather than VS Code \u2014 the extension may still hold a handle on the profile."
+  },
+  "provenance": {
+    "client_versions": [
+      "2.1.220",
+      "2.1.221",
+      "2.1.222"
+    ],
+    "measured": "2026-08-06",
+    "platforms_executed": [
+      "darwin"
+    ],
+    "platforms_from_source_only": [
+      "linux",
+      "win32"
+    ],
+    "observed_window_days": 4.0,
+    "observed_on_plan": "claude_max (Max 5x)",
+    "sample_size": 1
+  }
+}

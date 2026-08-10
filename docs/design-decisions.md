@@ -1,14 +1,5 @@
 # Design decisions
 
-> **Status: mixed.** DD-1 through DD-3 describe principles the shipped v1.0
-> follows. **DD-4 is a proposal for multi-provider support that is not
-> implemented** — there is no provider or adapter layer in `shambles/`, and
-> Codex is not supported. Read it as a design intent, not a description.
->
-> For shipped architecture see [TECH_SPEC.md](../TECH_SPEC.md); for the
-> credential-store research behind DD-4 see
-> [token-storage.md](token-storage.md).
-
 Recorded decisions and their rationale, for the cross-platform, multi-provider
 switcher scoped in [#2](https://github.com/ianchendev/Shambles/issues/2).
 Evidence for the claims below is in [token-storage.md](token-storage.md).
@@ -49,13 +40,34 @@ a duration**. The user-facing vocabulary is about whether the switch will work:
 The raw timestamps stay available in tooltips or a details view for anyone who
 wants them, but they are never the primary reading.
 
+### Correction: the window is not a constant
+
+This decision was first written against a single sample — 3.55 days, macOS, Max
+5x — and drew the wrong conclusion from it. A second measurement on Linux with
+two Team accounts gives **28.3 days** (see the "Second measurement" section of
+[token-storage.md](token-storage.md)).
+
+So **no fixed threshold can be right**: one day is permanently amber under the
+28-day regime, and seven days is permanently amber under the 4-day one. Which
+variable moves it — plan tier, platform, or a server-side change between the two
+measurements — cannot be separated from two samples.
+
+What survives is the shape of the answer, and it is enough to build on. Both
+timestamps share a mint instant in every blob measured, so **the window width is
+recoverable from the credential itself**: the gap between `expiresAt` and
+`refreshTokenExpiresAt`, plus the access-token lifetime. The threshold is
+therefore a **fraction of that width** (25%, with a one-day floor) rather than a
+number of days, which tracks whatever the server is currently issuing without
+this code knowing which regime it is in.
+
+Codex has no paired timestamps, so its width cannot be recovered and the floor is
+all there is — two days, roughly a quarter of its measured ten-day access-token
+lifetime.
+
 ### Consequences
 
-- [`profiles.EXPIRY_WARN_DAYS = 7`](../shambles/profiles.py) is wrong twice over:
-  it is longer than the entire window, so everything renders amber permanently,
-  and it is expressed in the units this decision moves away from. It becomes an
-  internal threshold feeding a state label, and its value needs to drop to
-  roughly 1–1.5 days.
+- The threshold lives in each provider's spec as `warn_fraction` and
+  `warn_days_floor`, not as a shared constant.
 - The "window closed" state must be a **first-class UI state**, not an error.
   At a four-day window it will be common, not exceptional — a user rotating three
   accounts weekly will meet it constantly.
@@ -166,11 +178,6 @@ happens silently. Access tokens, refresh tokens, expiry timestamps and org UUIDs
 are never presented as things to manage, and there is no "refresh", "repair" or
 "manage tokens" affordance.
 
-> **As shipped:** upheld for tokens — none is ever displayed. v1.0 does add
-> Save, Add, Rename and Eject alongside Switch. None manages a token: they
-> create, name or hand back profiles. The countdown chip surfaces an expiry
-> *date* but offers no action on it, which is the distinction DD-1 draws.
-
 ### Consequences
 
 - **No token is ever displayed.** Not truncated, not masked, not in a details
@@ -199,10 +206,6 @@ are never presented as things to manage, and there is no "refresh", "repair" or
 ---
 
 ## DD-4 — Provider facts are data; adapters are two thin orthogonal layers
-
-> **NOT IMPLEMENTED.** v1.0 supports Claude Code on Linux/WSL only, through a
-> single hardcoded path. Nothing below exists in the codebase. Retained as the
-> shape multi-provider support would take if it is ever built.
 
 **Status: Decided**
 
@@ -245,9 +248,14 @@ Provider            what bytes mean — provider-shaped, platform-blind
 ```
 
 The declarative half of each Provider lives in
-[`docs/providers/<id>.json`](providers/) — paths, service-name templates, JSON
-pointers, expiry semantics, login commands. The code half is only what cannot be
-data: JWT decoding, Windows chunk reassembly, the `~/.claude.json` splice.
+[`shambles/providers/<id>.json`](../shambles/providers/) — paths, service-name
+templates, JSON pointers, expiry semantics, login commands. The code half is only
+what cannot be data: JWT decoding, Windows chunk reassembly, the
+`~/.claude.json` splice.
+
+Those specs ship **inside the package**, not under `docs/`, because they are read
+at runtime and there must be exactly one copy. A documentation copy would be a
+second source of truth, which is the drift this design exists to prevent.
 
 **The core never learns a provider's name.** `switcher`, `state` and `gui` talk
 only to the `Provider` interface.
@@ -283,8 +291,8 @@ A layer diagram does not make a system swappable. Two things do:
    passing a suite that already exists.**
 2. **The spec file is the same file the documentation renders from.** Facts cannot
    drift from docs because there is one copy. A JSON Schema in
-   `docs/providers/schema.json`, validated in CI, catches typos in the one place
-   that now matters.
+   `tests/test_spec.py`, run in CI, catches a spec that is malformed or fails to
+   ship as package data — the latter being invisible until runtime.
 
 The research already proved these facts drift: the Keychain service name became
 computed rather than constant, and `refreshTokenExpiresAt` is absent from the VS
@@ -306,7 +314,7 @@ The repo is 1745 readable lines. The failure mode here is a framework.
 ### Consequences
 
 - The profile store layout becomes provider-scoped —
-  `~/.shambles/<provider>/<name>/` — and the 1.x migration in
+  `~/.shambles/<provider>/<name>/` — and the pre-1.0 migration in
   [`migrate.py`](../shambles/migrate.py) gains a second hop.
 - `Profile` grows a `provider` field; `EXPIRY_WARN_DAYS` becomes per-provider
   (DD-1 already requires this: Claude ~4 days, Codex ~10).
@@ -315,8 +323,162 @@ The repo is 1745 readable lines. The failure mode here is a framework.
 
 ---
 
+## DD-5 — Native shells over one CLI, and what the panel can actually offer
+
+**Status: Decided**
+
+### The capability the UI has to be honest about
+
+Research settled what can and cannot be switched independently, and it is less
+than it looks:
+
+| | Store | Independently switchable |
+|---|---|---|
+| Claude Code CLI | Keychain `Claude Code-credentials` | ← one store |
+| VS Code `anthropic.claude-code` | **the same item** | ← one store |
+| Claude Desktop | its own `config.json` + cookie jar | yes, if built |
+| Codex CLI · VS Code `openai.chatgpt` · ChatGPT.app | one `auth.json` | ← one store |
+
+Neither VS Code extension keeps credentials: both ship and execute the CLI's own
+binary, and neither has a `secret://` row in VS Code's SecretStorage. So "switch
+just VS Code" is not a feature that was skipped — it does not exist.
+
+Codex cannot be split at all. `CODEX_HOME` would do it, but `LSEnvironment` in
+ChatGPT.app's `Info.plist` is inside a hardened-runtime signature (Team ID
+`2DC432GLL2`), so setting it there breaks launching and is reverted by updates.
+Splitting only VS Code works but relocates the whole `~/.codex` tree — the same
+history-splitting bug this project exists to fix.
+
+**Consequence for the panel**: it shows credential stores, not applications, and
+each group carries pills naming every surface it moves. That is what makes
+"switching Codex also changed ChatGPT.app" need no explanation.
+
+### Shells
+
+Swift for macOS, native for Windows, over one Python core reached through
+`shambles list --json`. Two native shells rather than one cross-platform one,
+because a menu bar and a tray are genuinely different designs, not one list
+rendered twice.
+
+The CLI is not a convenience layer invented for the shells. A Windows tray app
+manages a different Claude Code install from the one inside WSL, and only a CLI
+running inside WSL can reach that one — so it has to exist regardless, and the
+shells consume what was already required. It also keeps the boundary observable:
+whatever the panel shows, `shambles list --json` prints, which separates a
+rendering bug from a logic bug without a debugger.
+
+`.menuBarExtraStyle(.window)` settles NSMenu vs a hand-rolled NSPanel. Menu items
+cannot hold progress bars and the quota gauges need them; the window style gives
+a real SwiftUI view without reimplementing click-outside, keyboard and
+multi-screen behaviour.
+
+Resident but **inert**: no timer, no polling. The panel reads on open. A process
+writing on a schedule would turn the race with a running session — which rewrites
+`~/.claude.json` on its own schedule, with no lock to wait on — from a moment into
+a permanent condition.
+
+### The line the shells may not cross
+
+Everything displayed is decided in `shambles/app/snapshot.py`, where it is
+tested. A shell that computes "can I switch to this" from an expiry timestamp
+has created a second implementation of a tested rule. The check is mechanical: a
+grep over `macos/Sources/ShamblesUI` for `Date`, `TimeInterval` or reset-time
+arithmetic must come back empty.
+
+Provider names are never switched on exhaustively. Surface icons are a lookup
+with a fallback, so a third provider needs no change in either shell.
+
+---
+
+## DD-6 — Quota is read from vendor by-products, and may fail
+
+**Status: Decided**
+
+Both sources are by-products rather than interfaces. Claude Code writes
+`cachedUsageUtilization` into `~/.claude.json` for its own display. Codex writes
+nothing — it reads `x-codex-*` headers off each API response, shows them live and
+discards them — but logs whole responses into `logs_2.sqlite`, so the headers are
+recoverable.
+
+**Neither requires the network.** Going online to fetch fresher figures was
+considered and rejected: it would mean holding the user's token and making
+requests on their behalf, which destroys the README's central claim, and the
+verification cost is asymmetric — today anyone can confirm this tool cannot reach
+a vendor in about thirty seconds.
+
+`UsageSource` therefore gets a weaker contract than anything else here: **it may
+never raise, and `None` is a normal result.** An upstream change breaks a
+decoration, not the tool. Tests feed each source corrupt, empty and
+wrong-shaped input and assert `None`.
+
+Three facts the UI must respect:
+
+- **Codex has no five-hour window.** Every observed `window-minutes` was 10080.
+- **A percentage whose `resets_at` has passed is blanked, not shown.** Someone
+  decides whether to switch accounts on the strength of it.
+- **Codex figures are only as recent as the last time Codex ran** — five days
+  stale on the machine this was measured on, which is normal, not broken.
+
+---
+
+## DD-7 — The switch flow, ordered by the failure each step prevents
+
+**Status: Decided** — implemented in `shambles/app/actions.py`.
+
+```
+1. refuse           target exists; companion parses
+2. back up          the companion file
+3. capture          stash the live credential into the outgoing profile
+4. install          write the incoming credential (or clear it)
+5. splice           write the incoming identity
+6. record           update the active marker
+```
+
+**Everything that can refuse happens before anything moves.** Splicing onto a
+config that failed to parse would replace every project, MCP server and machine
+ID with two keys. Claude Code rewrites that file on its own schedule, so a read
+landing mid-write is the ordinary cause, not an exotic one.
+
+**Capture precedes install**, so switching away can never strand an account.
+
+**The credential is written before the identity**, and the order is not
+arbitrary. Both leave a window if the process dies between them, but they are not
+equally bad. Credential first means you are signed in as the new account while
+the panel still shows the old name — visibly wrong, harmless. Identity first
+means the panel shows the new account while requests still bill the old one, and
+the user spends someone else's quota believing otherwise.
+
+### Rotation, and why a sync step exists
+
+Codex mints a replacement refresh token on every use and invalidates the old one,
+so a snapshot taken at the last switch is dead once the user runs Codex again.
+Restoring it would present an already-invalidated token and cost them a login.
+
+`sync_active()` copies the live credential into the active profile whenever it
+differs. It runs on every panel open — a read and a comparison, writing only on a
+difference — and **writes only inside the profile library, never to a vendor
+path**, so keeping snapshots fresh cannot race a running session. That constraint
+has its own test.
+
+### Still open
+
+Detecting a running Claude Code or Codex session and warning before a switch.
+Last-writer-wins on `~/.claude.json` is real and there is no lock to wait on, so
+the only available move is advisory. Not built.
+
+---
+
 ## Open items
 
+- **Linux's Tk window: keep or drop?** Still undecided. Keeping it costs
+  nothing — the code and its tests already exist — and Linux/WSL is the only
+  platform this project has ever been verified on, so the recommendation is to
+  keep it until the macOS build has users.
+- **Claude Desktop support** would deliver the one thing DD-5 cannot: a
+  different account in the editor and in the chat app. It needs safeStorage
+  decryption and the app quit during a switch. Not started.
+- **Windows shell language** is a separate decision from macOS and does not have
+  to match it. Any client of the `--json` contract will do.
 - **DD-2 is a leaning, not a commitment.** Revisit if the lapsed state proves
   common enough to be genuinely painful — a four-day window makes that plausible.
 - **Update README line 229 in the same change that ships macOS support** — not
