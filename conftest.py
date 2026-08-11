@@ -37,11 +37,21 @@ def make_app():
     """
     created = []
 
-    def _make(paths):
+    def _make(paths, *, platform="linux"):
+        """Build the window against a synthetic home.
+
+        The platform is pinned rather than inherited. These tests exercise
+        rendering, and the fake home holds file-backed credentials -- but on
+        Windows the provider spec resolves to the credential manager, so the
+        window would look past the fixture at the real machine and report the
+        user as signed out. Which store a platform picks is covered by the
+        store and provider contract suites; it is not what a rendering test
+        should be re-deciding.
+        """
         tk = pytest.importorskip("tkinter")
         from shambles.gui import ShamblesApp
         try:
-            app = ShamblesApp(paths)
+            app = ShamblesApp(paths, platform=platform)
         except tk.TclError as exc:
             pytest.skip(f"no usable display: {exc}")
         created.append(app)
