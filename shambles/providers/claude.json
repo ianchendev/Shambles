@@ -2,8 +2,16 @@
   "id": "claude",
   "display_name": "Claude Code",
   "surfaces": [
-    "Claude Code CLI",
-    "VS Code extension anthropic.claude-code"
+    {
+      "id": "terminal",
+      "label": "Terminal",
+      "detail": "Claude Code CLI"
+    },
+    {
+      "id": "vscode",
+      "label": "VS Code",
+      "detail": "anthropic.claude-code"
+    }
   ],
   "config_dir": {
     "env": "CLAUDE_CONFIG_DIR",
@@ -93,5 +101,6 @@
     "observed_window_days": 4.0,
     "observed_on_plan": "claude_max (Max 5x)",
     "sample_size": 1
-  }
+  },
+  "surfaces_note": "one switch moves both \u2014 they share one credential store, so a shell must show them together or 'why did VS Code change too' needs explaining"
 }
