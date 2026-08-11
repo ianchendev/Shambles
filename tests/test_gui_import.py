@@ -186,7 +186,7 @@ def test_missing_vendor_banner_expands_on_details(paths, make_app):
 
     details = next(b for b in _buttons(app.rows) if b.cget("text") == "Details")
     details.invoke()
-    app.update_idletasks()
+    app.update()
 
     text = _all_text(app.rows)
     assert "Switching between accounts you already saved still works" in text
@@ -247,7 +247,7 @@ def test_a_provider_with_no_accounts_gets_a_dotted_placeholder(paths, make_app,
     """
     app = make_app(paths)
     app.refresh()
-    app.update_idletasks()
+    app.update()
 
     boxes = _placeholders(app)
     assert len(boxes) == 2, "one placeholder per provider, both empty here"
@@ -269,7 +269,7 @@ def test_the_placeholder_disappears_once_an_account_exists(paths, make_app,
 
     app = make_app(paths)
     app.refresh()
-    app.update_idletasks()
+    app.update()
 
     rendered = _all_text(app.rows)
     assert "Add a Claude Code account" not in rendered, "the filled group kept its slot"
@@ -283,7 +283,7 @@ def test_an_installed_provider_invites_adding_an_account(paths, make_app,
     fake_vendor("codex")
     app = make_app(paths)
     app.refresh()
-    app.update_idletasks()
+    app.update()
 
     rendered = _all_text(app.rows)
     assert "Add a Claude Code account" in rendered
@@ -298,7 +298,7 @@ def test_a_missing_vendor_placeholder_says_so_and_is_not_clickable(paths, make_a
     would lead somewhere that refuses."""
     app = make_app(paths)
     app.refresh()
-    app.update_idletasks()
+    app.update()
 
     rendered = _all_text(app.rows)
     assert "not on your PATH" in rendered
