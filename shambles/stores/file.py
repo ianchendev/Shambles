@@ -12,6 +12,13 @@ from .base import StoreUnavailableError
 
 TMP_SUFFIX = ".shambles-tmp"
 
+#: Windows opens descriptors in text mode by default and rewrites every "\n"
+#: as "\r\n" on the way out. A credential is bytes, not text: a token
+#: containing a newline would come back a different length than it went in,
+#: which is precisely the round trip this project exists to keep exact.
+#: O_BINARY does not exist on POSIX, where there is nothing to turn off.
+BINARY_FLAG = getattr(os, "O_BINARY", 0)
+
 
 @dataclass(frozen=True)
 class FileStore:
@@ -56,7 +63,8 @@ class FileStore:
             except OSError:
                 pass  # Windows cannot express this; the file mode still applies
             tmp = self.path.with_name(self.path.name + TMP_SUFFIX)
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, self.mode)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | BINARY_FLAG,
+                         self.mode)
             try:
                 if hasattr(os, "fchmod"):
                     os.fchmod(fd, self.mode)
