@@ -1,4 +1,4 @@
-"""Converting the pre-1.0 layout, where each profile held a full ~/.claude.
+"""Converting the 1.x layout, where each profile held a full ~/.claude.
 
 That design gave every account its own ``projects/`` directory, so switching
 accounts also switched your session history and weeks of transcripts appeared

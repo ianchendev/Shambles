@@ -147,6 +147,15 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
             # A profile never signed into: clear the login so the vendor
             # prompts for one rather than reusing the last account.
             retry.with_retry(store.delete, f"clear {store.describe()}", sleep=sleep)
+
+        # The marker moves with the login, not after the identity write.
+        # Anything that fails below leaves the two still agreeing, so the
+        # window reads the result as DRIFTED -- an identity that lags -- rather
+        # than as a marker naming a profile whose login has already been
+        # replaced. That second reading is the dangerous one: restash_active
+        # would copy the incoming login into the outgoing profile's store and
+        # destroy the account just switched away from.
+        state.write_active(paths, provider.id, target_name)
     except StoreUnavailableError:
         raise
     except OSError as exc:
@@ -157,7 +166,6 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     provider.companion_write(
         configjson.read_sidecar(paths.account(provider.id, target_name)),
         home=paths.home)
-    state.write_active(paths, provider.id, target_name)
     return state.inspect(paths, provider, platform=platform)
 
 

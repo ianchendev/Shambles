@@ -29,7 +29,8 @@ def test_load_non_dict_returns_empty(tmp_path):
 def test_extract_pulls_only_account_keys(paths):
     data = make_claude_json(paths)
     got = configjson.extract_account_keys(data)
-    assert set(got) == {"oauthAccount", "cachedUsageUtilization"}
+    assert set(got) == set(configjson.ACCOUNT_KEYS)
+    assert "oauthAccount" in got
 
 
 def test_apply_preserves_every_other_key_and_order(paths):
@@ -43,12 +44,14 @@ def test_apply_preserves_every_other_key_and_order(paths):
     )
 
     after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
-    assert list(after.keys()) == list(before.keys())
     assert after["numStartups"] == before["numStartups"]
     assert after["projects"] == before["projects"]
     assert after["machineID"] == before["machineID"]
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
-    assert after["cachedUsageUtilization"]["accountUuid"] == "uuid-b"
+    # A usage cache is never carried across a switch: restored, it would
+    # describe whatever the incoming account was doing when it was last
+    # active and read as current. See configjson.STALE_ON_SWITCH.
+    assert "cachedUsageUtilization" not in after
 
 
 def test_apply_with_empty_account_deletes_both_keys(paths):

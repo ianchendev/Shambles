@@ -214,8 +214,14 @@ class ClaudeProvider:
         block = self.spec["companion"]
         path = specmod.expand(block["path"], home=home)
         config = _read_json(path)
+        stale = set(block.get("stale_on_switch", ()))
         for key in block["keys"]:
-            if key in data:
+            # Stashed for the card, never restored. A usage cache carried
+            # across a switch describes what the account was doing whenever it
+            # was last active and would read as current.
+            if key in stale:
+                config.pop(key, None)
+            elif key in data:
                 config[key] = data[key]
             else:
                 config.pop(key, None)

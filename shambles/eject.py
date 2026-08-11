@@ -20,6 +20,12 @@ from . import state, switcher
 from .errors import ShamblesError
 from .stores.base import StoreUnavailableError
 
+#: Shambles' own artefacts inside ~/.claude. Only ever the sidecar left by the
+#: 1.x layout; everything else there belongs to Claude Code. Kept even though
+#: migration already unlinks it -- a user who ejects before ever migrating
+#: would otherwise be left with it, and the removal is idempotent.
+OWN_FILES_IN_CLAUDE = (".shambles.json",)
+
 
 class EjectError(ShamblesError):
     """Ejecting could not complete safely."""
@@ -102,6 +108,12 @@ def run(paths, providers, *, platform: str = sys.platform,
         # Remove Shambles' own bookkeeping. Nothing here belongs to the vendor
         # and nothing here is a credential.
         switcher.forget_active_marker(paths, provider)
+
+    for name in OWN_FILES_IN_CLAUDE:
+        target = paths.claude_dir / name
+        if target.exists():
+            target.unlink()
+            plan.removed.append(str(target))
 
     return plan
 
