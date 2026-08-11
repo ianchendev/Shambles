@@ -1,564 +1,312 @@
-"""Switching accounts moves the login and nothing else."""
-
 import json
-import os
 
 import pytest
 
-from helpers import (DAY_MS, NOW, make_claude_json, make_live_login,
-                     make_profile)
-from shambles import configjson, state, switcher
-from shambles.errors import (AlreadyManagedError, ConfigUnreadableError,
-                             ProfileNotFoundError, ShamblesError)
+from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
+                     make_live_codex_login, make_profile)
+from shambles import providers, state, switcher
+from shambles.errors import AlreadyManagedError, ProfileNotFoundError
 
-from conftest import posix_modes_only
-
-
-def _fixed(ms=NOW):
-    return lambda: ms
+PROVIDER_IDS = ["claude", "codex"]
 
 
-# ---- the whole point: history is never touched --------------------------
-
-def test_session_history_survives_a_switch(paths):
-    """The regression this redesign exists for. History lives in
-    ~/.claude/projects and is shared by every account; switching must leave
-    every transcript exactly where it was."""
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-
-    sessions = paths.claude_dir / "projects" / "-repo"
-    sessions.mkdir(parents=True)
-    (sessions / "a.jsonl").write_text("session one")
-    (sessions / "b.jsonl").write_text("session two")
-
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-
-    assert (sessions / "a.jsonl").read_text() == "session one"
-    assert (sessions / "b.jsonl").read_text() == "session two"
-    assert state.inspect(paths).profile == "Personal"
+@pytest.fixture(params=PROVIDER_IDS)
+def provider(request):
+    return providers.load(request.param)
 
 
-def test_plugins_and_settings_are_shared_too(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-    (paths.claude_dir / "settings.json").write_text('{"theme": "dark"}')
-    (paths.claude_dir / "plugins").mkdir()
-    (paths.claude_dir / "plugins" / "x.js").write_text("plugin")
+def seed_live(paths, provider, email):
+    """Put a live login in place, matching what the active profile holds.
 
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-
-    assert (paths.claude_dir / "settings.json").read_text() == '{"theme": "dark"}'
-    assert (paths.claude_dir / "plugins" / "x.js").read_text() == "plugin"
-
-
-# ---- the login itself ----------------------------------------------------
-
-def test_switch_installs_the_target_credentials(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True,
-                 refresh_expires_ms=NOW + 10 * DAY_MS)
-    make_profile(paths, "Personal", email="me@example.com",
-                 refresh_expires_ms=NOW + 20 * DAY_MS)
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths, refresh_expires_ms=NOW + 10 * DAY_MS)
-
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-
-    live = json.loads(paths.live_credentials.read_text())
-    assert live["claudeAiOauth"]["refreshTokenExpiresAt"] == NOW + 20 * DAY_MS
+    Those two are the same bytes in reality: a profile's stash *is* a copy of
+    the live credential, made when it was last active. The fixtures have to
+    agree on that or the round-trip test measures fixture drift rather than
+    the copy -- ``make_profile`` builds Codex tokens 30 days out while
+    ``make_live_codex_login`` defaults to 10.
+    """
+    if provider.id == "claude":
+        make_claude_json(paths, email=email)
+        return make_live_claude_login(paths, access_token="tok-Work")
+    return make_live_codex_login(paths, email=email, exp_ms=NOW + 30 * DAY_MS)
 
 
-def test_switch_splices_the_incoming_identity(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
+# -- the core promise ---------------------------------------------------
 
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+def test_credentials_survive_a_round_trip_unmodified(paths, provider):
+    """Work -> Personal -> Work leaves the credential byte-identical.
 
-    config = configjson.load(paths.claude_json)
-    assert config["oauthAccount"]["emailAddress"] == "me@example.com"
-    assert config["projects"] == {"/some/dir": {"allowedTools": []}}
+    THE load-bearing test. If this regresses the tool stops solving the
+    problem it exists for: a mutated refresh token costs a verification
+    email, which is the entire thing being avoided. Parametrized over every
+    provider, per DD-4 -- adding a provider means passing this suite.
+    """
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    make_profile(paths, provider.id, "Personal", email="p@example.com")
+    seed_live(paths, provider, "w@example.com")
+
+    before = paths.credentials(provider.id, "Work").read_bytes()
+
+    switcher.switch(paths, provider, "Personal", platform="linux", sleep=lambda _: None)
+    switcher.switch(paths, provider, "Work", platform="linux", sleep=lambda _: None)
+
+    assert paths.credentials(provider.id, "Work").read_bytes() == before
+
+
+def test_the_outgoing_login_is_stashed_before_the_incoming_one_lands(paths, provider):
+    """Switching away is never lossy, even to a profile with no token."""
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    make_profile(paths, provider.id, "Empty", token=False)
+    live = seed_live(paths, provider, "w@example.com")
+    original = live.read_bytes()
+
+    switcher.switch(paths, provider, "Empty", platform="linux", sleep=lambda _: None)
+
+    assert paths.credentials(provider.id, "Work").read_bytes() == original
+
+
+def test_switching_to_a_never_logged_in_profile_clears_the_live_login(paths, provider):
+    """Cleared, not left holding the previous account -- otherwise the vendor
+    silently keeps using the account you just switched away from."""
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    make_profile(paths, provider.id, "Empty", token=False)
+    seed_live(paths, provider, "w@example.com")
+
+    switcher.switch(paths, provider, "Empty", platform="linux", sleep=lambda _: None)
+
+    store = provider.store(home=paths.home, platform="linux")
+    assert store.read() is None
+
+
+def test_the_active_marker_follows_the_switch(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    make_profile(paths, provider.id, "Personal", email="p@example.com")
+    seed_live(paths, provider, "w@example.com")
+
+    switcher.switch(paths, provider, "Personal", platform="linux", sleep=lambda _: None)
+
+    assert state.read_active(paths, provider.id) == "Personal"
+
+
+def test_switching_one_provider_leaves_the_other_alone(paths):
+    claude, codex = providers.load("claude"), providers.load("codex")
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "codex", "Side", email="c@example.com", active=True)
+    make_profile(paths, "codex", "Other", email="o@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+    make_live_codex_login(paths, email="c@example.com")
+
+    claude_before = (paths.claude_dir / ".credentials.json").read_bytes()
+    switcher.switch(paths, codex, "Other", platform="linux", sleep=lambda _: None)
+
+    assert (paths.claude_dir / ".credentials.json").read_bytes() == claude_before
+    assert state.read_active(paths, "claude") == "Work"
+
+
+# -- claude's companion splice -----------------------------------------
+
+def test_the_splice_preserves_every_unrelated_key(paths):
+    """~/.claude.json holds every project, MCP server and machine ID. A switch
+    replaces two keys and nothing else."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Personal", email="p@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    switcher.switch(paths, claude, "Personal", platform="linux", sleep=lambda _: None)
+
+    config = json.loads(paths.claude_json.read_text(encoding="utf-8"))
+    assert config["numStartups"] == 42
     assert config["machineID"] == "machine"
+    assert config["projects"] == {"/some/dir": {"allowedTools": []}}
+    assert config["oauthAccount"]["emailAddress"] == "p@example.com"
 
 
-def test_switch_stashes_the_outgoing_login(paths):
-    """Switching away must not lose the account you are leaving."""
-    make_profile(paths, "Work", email="work@example.com", active=True,
-                 token=False)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths, refresh_expires_ms=NOW + 15 * DAY_MS)
+def test_an_unreadable_config_aborts_before_anything_moves(paths):
+    """Splicing onto unparseable JSON would replace every project and MCP
+    server with two keys. Refuse first, move nothing."""
+    from shambles.errors import ConfigUnreadableError
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Personal", email="p@example.com")
+    make_live_claude_login(paths)
+    paths.claude_json.write_text("{ this is not json", encoding="utf-8")
 
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-
-    stashed = json.loads(paths.credentials("Work").read_text())
-    assert stashed["claudeAiOauth"]["refreshTokenExpiresAt"] == NOW + 15 * DAY_MS
-    assert configjson.read_sidecar(paths.account("Work"))[
-        "oauthAccount"]["emailAddress"] == "work@example.com"
-
-
-def test_switching_to_a_profile_with_no_login_clears_credentials(paths):
-    """So Claude Code prompts for a login instead of reusing the last one."""
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Fresh", token=False)
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-
-    switcher.switch(paths, "Fresh", now_ms_fn=_fixed())
-
-    assert not paths.live_credentials.exists()
-
-
-@posix_modes_only
-def test_credentials_are_owner_only(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-
-    import os
-    import stat
-    mode = stat.S_IMODE(os.stat(paths.live_credentials).st_mode)
-    assert mode == 0o600, f"credentials world-readable: {oct(mode)}"
-
-
-def test_switch_to_a_missing_profile_raises(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_claude_json(paths, email="work@example.com")
-    with pytest.raises(ProfileNotFoundError):
-        switcher.switch(paths, "Nope", now_ms_fn=_fixed())
-
-
-def test_corrupt_config_aborts_before_anything_moves(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_live_login(paths)
-    paths.claude_json.write_text('{"projects": {trunc')
-    before = paths.claude_json.read_text()
+    live_before = (paths.claude_dir / ".credentials.json").read_bytes()
 
     with pytest.raises(ConfigUnreadableError):
-        switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+        switcher.switch(paths, claude, "Personal", platform="linux", sleep=lambda _: None)
 
-    assert state.read_active(paths) == "Work", "marker moved despite the abort"
-    assert paths.claude_json.read_text() == before
+    assert (paths.claude_dir / ".credentials.json").read_bytes() == live_before
+    assert state.read_active(paths, "claude") == "Work"
 
 
-def test_switch_backs_up_the_config_first(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
+def test_codex_needs_no_companion_and_writes_none(paths):
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="c@example.com", active=True)
+    make_profile(paths, "codex", "Other", email="o@example.com")
+    make_live_codex_login(paths, email="c@example.com")
 
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+    switcher.switch(paths, codex, "Other", platform="linux", sleep=lambda _: None)
 
-    snaps = list(paths.backup_dir.glob("claude.json.*"))
-    assert len(snaps) == 1
-    assert configjson.load(snaps[0])["oauthAccount"]["emailAddress"] == \
-        "work@example.com"
+    assert not paths.claude_json.exists()
 
 
-# ---- saving and adding ---------------------------------------------------
+# -- guards -------------------------------------------------------------
 
-def test_save_current_account_captures_the_live_login(paths):
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths, refresh_expires_ms=NOW + 12 * DAY_MS)
-
-    name = switcher.save_current_account(paths, "Work", now_ms_fn=_fixed())
-
-    assert name == "Work"
-    assert state.read_active(paths) == "Work"
-    saved = json.loads(paths.credentials("Work").read_text())
-    assert saved["claudeAiOauth"]["refreshTokenExpiresAt"] == NOW + 12 * DAY_MS
-    assert configjson.read_sidecar(paths.account("Work"))[
-        "oauthAccount"]["emailAddress"] == "work@example.com"
-
-
-def test_save_leaves_history_alone(paths):
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-    sessions = paths.claude_dir / "projects" / "-repo"
-    sessions.mkdir(parents=True)
-    (sessions / "a.jsonl").write_text("keep me")
-
-    switcher.save_current_account(paths, "Work", now_ms_fn=_fixed())
-
-    assert (sessions / "a.jsonl").read_text() == "keep me"
-
-
-def test_save_refuses_when_already_managed(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-    with pytest.raises(AlreadyManagedError):
-        switcher.save_current_account(paths, "Again", now_ms_fn=_fixed())
-
-
-def test_save_refuses_with_no_login_present(paths):
-    make_claude_json(paths, email="work@example.com")
-    paths.claude_dir.mkdir(parents=True, exist_ok=True)
-    with pytest.raises(AlreadyManagedError):
-        switcher.save_current_account(paths, "Work", now_ms_fn=_fixed())
-
-
-def test_add_empty_account_activates_a_blank_login(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-
-    switcher.add_empty_account(paths, "Personal", now_ms_fn=_fixed())
-
-    assert state.read_active(paths) == "Personal"
-    assert not paths.live_credentials.exists()
-    # and the account we left is still recoverable
-    assert paths.credentials("Work").exists()
-
-
-def test_add_refuses_to_discard_an_unsaved_login(paths):
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-    with pytest.raises(AlreadyManagedError):
-        switcher.add_empty_account(paths, "Personal", now_ms_fn=_fixed())
-
-
-def test_rename_moves_the_marker_too(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_claude_json(paths, email="work@example.com")
-
-    switcher.rename_profile(paths, "Work", "Day Job")
-
-    assert state.read_active(paths) == "Day Job"
-    assert paths.credentials("Day Job").exists()
-    assert not paths.profile_dir("Work").exists()
-
-
-# ---- transient locks, the Windows antivirus/indexer case ----------------
-
-def _flaky_copyfile(monkeypatch, failures):
-    """Make shutil.copyfile fail `failures` times, then work."""
-    import shutil
-    real = shutil.copyfile
-    state_ = {"n": 0}
-
-    def flaky(src, dst, *a, **k):
-        state_["n"] += 1
-        if state_["n"] <= failures:
-            raise PermissionError(13, "The process cannot access the file")
-        return real(src, dst, *a, **k)
-
-    monkeypatch.setattr(shutil, "copyfile", flaky)
-    return state_
-
-
-def _two_profiles(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-
-
-def test_a_briefly_locked_credentials_file_is_retried(paths, monkeypatch):
-    """A running Claude Code, an antivirus scan or the Windows indexer can hold
-    the file for a moment. Giving up on the first refusal turns a hiccup into a
-    failed switch."""
-    _two_profiles(paths)
-    calls = _flaky_copyfile(monkeypatch, failures=2)
-
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed(), sleep=lambda _s: None)
-
-    assert calls["n"] > 2, "did not retry"
-    assert state.inspect(paths).profile == "Personal"
-
-
-def test_a_permanently_locked_file_reports_cleanly(paths, monkeypatch):
-    """Never a raw OSError: the GUI only renders ShamblesError, so anything
-    else reaches the user as a silent stderr traceback."""
-    _two_profiles(paths)
-    _flaky_copyfile(monkeypatch, failures=99)
-
-    with pytest.raises(ShamblesError):
-        switcher.switch(paths, "Personal", now_ms_fn=_fixed(),
-                        sleep=lambda _s: None)
-
-
-def test_a_lock_while_stashing_the_outgoing_login_is_caught(paths, monkeypatch):
-    """The outgoing stash runs before the incoming copy and was outside the
-    error handling, so a lock there escaped as a bare PermissionError."""
-    _two_profiles(paths)
-    _flaky_copyfile(monkeypatch, failures=99)
-
-    with pytest.raises(ShamblesError):
-        switcher.switch(paths, "Personal", now_ms_fn=_fixed(),
-                        sleep=lambda _s: None)
-
-
-def test_a_failed_switch_leaves_the_marker_alone(paths, monkeypatch):
-    """If the login could not be installed, the app must not claim otherwise."""
-    _two_profiles(paths)
-    _flaky_copyfile(monkeypatch, failures=99)
-
-    with pytest.raises(ShamblesError):
-        switcher.switch(paths, "Personal", now_ms_fn=_fixed(),
-                        sleep=lambda _s: None)
-
-    assert state.read_active(paths) == "Work"
-
-
-def test_save_current_account_survives_a_transient_lock(paths, monkeypatch):
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
-    _flaky_copyfile(monkeypatch, failures=2)
-
-    switcher.save_current_account(paths, "Work", now_ms_fn=_fixed(),
-                                  sleep=lambda _s: None)
-
-    assert paths.credentials("Work").exists()
-
-
-@posix_modes_only
-def test_switching_keeps_the_store_owner_only(paths):
-    import stat
-    _two_profiles(paths)
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-    for d in (paths.profiles_dir, paths.profile_dir("Personal")):
-        assert stat.S_IMODE(d.stat().st_mode) == 0o700, f"{d} is {oct(d.stat().st_mode)}"
-
-
-# ---- removing a profile -------------------------------------------------
-
-def test_remove_deletes_the_profile_directory(paths):
-    _two_profiles(paths)
-    assert paths.credentials("Personal").exists()
-
-    switcher.remove_profile(paths, "Personal")
-
-    assert not paths.profile_dir("Personal").exists()
-    assert state.profile_names(paths) == ["Work"]
-
-
-def test_remove_refuses_the_active_profile(paths):
-    """The UI hides the button, but the guard belongs here too -- hiding a
-    control is not a safety property."""
-    _two_profiles(paths)
-    with pytest.raises(ShamblesError):
-        switcher.remove_profile(paths, "Work")
-    assert paths.credentials("Work").exists()
-
-
-def test_remove_refuses_an_unknown_profile(paths):
-    _two_profiles(paths)
+def test_switching_to_a_missing_profile_is_refused(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
     with pytest.raises(ProfileNotFoundError):
-        switcher.remove_profile(paths, "Nope")
+        switcher.switch(paths, provider, "Ghost", platform="linux", sleep=lambda _: None)
 
 
-def test_remove_refuses_a_name_that_escapes_the_store(paths):
-    """Defence against a name that resolves outside ~/.claude-profiles."""
-    _two_profiles(paths)
-    for hostile in ("..", "../..", "Personal/../..", "/etc"):
-        with pytest.raises(ShamblesError):
-            switcher.remove_profile(paths, hostile)
-    assert paths.claude_dir.exists()
+def test_removing_the_active_profile_is_refused(paths, provider):
+    """Enforced in code, not only by hiding the button. Hiding a control is
+    not a safety property."""
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    with pytest.raises(AlreadyManagedError):
+        switcher.remove_profile(paths, provider, "Work", platform="linux")
 
 
-def test_remove_leaves_everything_else_alone(paths):
-    _two_profiles(paths)
-    sessions = paths.claude_dir / "projects" / "-repo"
-    sessions.mkdir(parents=True)
-    (sessions / "a.jsonl").write_text("keep me")
-
-    switcher.remove_profile(paths, "Personal")
-
-    assert (sessions / "a.jsonl").read_text() == "keep me"
-    assert paths.live_credentials.exists()
-    assert state.inspect(paths).kind == state.MANAGED
-    assert state.read_active(paths) == "Work"
+def test_a_name_escaping_the_store_is_refused(paths, provider):
+    """remove_profile deletes a tree, so it re-checks rather than trusting how
+    the name arrived."""
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    with pytest.raises(ProfileNotFoundError):
+        switcher.remove_profile(paths, provider, "..", platform="linux")
 
 
-def test_remove_does_not_disturb_the_config(paths):
-    _two_profiles(paths)
-    before = configjson.load(paths.claude_json)
-    switcher.remove_profile(paths, "Personal")
-    assert configjson.load(paths.claude_json) == before
+def test_add_creates_an_empty_profile_and_activates_it(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    seed_live(paths, provider, "w@example.com")
+
+    switcher.add_empty_account(paths, provider, "Fresh", platform="linux",
+                               sleep=lambda _: None)
+
+    assert state.read_active(paths, provider.id) == "Fresh"
+    assert provider.store(home=paths.home, platform="linux").read() is None
 
 
-def test_switching_still_works_after_a_removal(paths):
-    make_profile(paths, "Work", email="work@example.com", active=True)
-    make_profile(paths, "Personal", email="me@example.com")
-    make_profile(paths, "Third", email="third@example.com")
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths)
+def test_saving_the_current_account_captures_the_live_login(paths, provider):
+    live = seed_live(paths, provider, "w@example.com")
 
-    switcher.remove_profile(paths, "Personal")
-    switcher.switch(paths, "Third", now_ms_fn=_fixed())
+    switcher.save_current_account(paths, provider, "Work", platform="linux",
+                                  sleep=lambda _: None)
 
-    assert state.inspect(paths).profile == "Third"
-    assert state.live_email(paths) == "third@example.com"
+    assert paths.credentials(provider.id, "Work").read_bytes() == live.read_bytes()
+    assert state.read_active(paths, provider.id) == "Work"
 
 
-# ---- usage is stashed for display, never for restoring ------------------
-
-def test_switching_away_stashes_the_usage_figures(paths):
-    """So an idle profile's card can still say what it looked like."""
-    _two_profiles(paths)
-    configjson.write_atomic(paths.claude_json, {
-        **configjson.load(paths.claude_json),
-        "cachedUsageUtilization": {
-            "fetchedAtMs": NOW, "utilization": {"limits": [
-                {"kind": "weekly_all", "percent": 92, "severity": "warning"}]}}})
-
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-
-    stashed = configjson.load(paths.account("Work")).get("usage")
-    assert stashed, "Work's figures were not kept for its card"
-    assert stashed["utilization"]["limits"][0]["percent"] == 92
+def test_renaming_carries_the_active_marker(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    switcher.rename_profile(paths, provider, "Work", "Job", sleep=lambda _: None)
+    assert state.read_active(paths, provider.id) == "Job"
+    assert paths.profile_dir(provider.id, "Job").is_dir()
 
 
-def test_the_stashed_usage_is_never_spliced_back(paths):
-    """The whole point of the split: a card may show a stale number with its
-    age attached, but ~/.claude.json must never receive one."""
-    _two_profiles(paths)
-    configjson.write_atomic(paths.account("Personal"), {
-        "oauthAccount": {"emailAddress": "me@example.com"},
-        "usage": {"fetchedAtMs": 1, "utilization": {"limits": [
-            {"kind": "session", "percent": 3, "severity": "normal"}]}}})
+# -- rotation -----------------------------------------------------------
 
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
+def test_a_rotating_provider_restashes_a_refreshed_credential(paths):
+    """Codex rotates on every use, so the stashed copy goes stale the moment
+    the live one refreshes. Switching away would then write back a dead
+    refresh token and cost a verification email."""
+    from helpers import codex_auth, write_json
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="c@example.com", active=True)
+    live = make_live_codex_login(paths, email="c@example.com",
+                                 exp_ms=NOW + 30 * DAY_MS)
 
-    assert "cachedUsageUtilization" not in configjson.load(paths.claude_json)
+    # The vendor refreshes during use, rotating the refresh token.
+    rotated = codex_auth(email="c@example.com", exp_ms=NOW + 30 * DAY_MS)
+    rotated["tokens"]["refresh_token"] = "refresh-2"
+    write_json(live, rotated)
 
+    assert switcher.restash_active(paths, codex, platform="linux") is True
 
-def test_stashing_with_no_usage_present_is_fine(paths):
-    """Right after a previous switch the cache is gone, so there is nothing to
-    capture. That must not fail the switch."""
-    _two_profiles(paths)
-    cfg = configjson.load(paths.claude_json)
-    cfg.pop("cachedUsageUtilization", None)
-    configjson.write_atomic(paths.claude_json, cfg)
-
-    switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-
-    assert configjson.load(paths.account("Work")).get("usage") in (None, {})
+    stashed = json.loads(paths.credentials("codex", "Work").read_text())
+    assert stashed["tokens"]["refresh_token"] == "refresh-2"
 
 
-# ---- keeping the active profile's stored token current ------------------
+def test_restash_is_a_no_op_when_nothing_changed(paths):
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="c@example.com", active=True)
+    blob = paths.credentials("codex", "Work").read_bytes()
+    (paths.home / ".codex").mkdir(parents=True, exist_ok=True)
+    (paths.home / ".codex" / "auth.json").write_bytes(blob)
 
-def test_sync_updates_a_superseded_stash(paths):
-    """Refresh tokens rotate. Claude Code refreshes in place while an account
-    is active, so the copy stashed at switch-in time goes stale behind us."""
-    _two_profiles(paths)
-    paths.live_credentials.write_text('{"claudeAiOauth": {"refreshToken": "NEW"}}')
-
-    assert switcher.sync_active_credentials(paths, "Work") is True
-    assert "NEW" in paths.credentials("Work").read_text()
+    assert switcher.restash_active(paths, codex, platform="linux") is False
 
 
-def test_sync_is_a_no_op_when_they_already_match(paths):
-    """Runs on every window refresh, so it must not rewrite a secret needlessly."""
-    _two_profiles(paths)
-    switcher.sync_active_credentials(paths, "Work")
-    assert switcher.sync_active_credentials(paths, "Work") is False
+def test_a_non_rotating_provider_is_never_restashed(paths):
+    """Claude's refresh token does not rotate, so the live file drifting from
+    the stash is normal and re-stashing would be pointless writes."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="something-else")
+
+    assert switcher.restash_active(paths, claude, platform="linux") is False
 
 
-def test_sync_does_nothing_without_a_live_login(paths):
-    _two_profiles(paths)
-    paths.live_credentials.unlink()
-    assert switcher.sync_active_credentials(paths, "Work") is False
-    assert paths.credentials("Work").exists(), "stash must survive"
+def test_restash_does_nothing_without_an_active_profile(paths):
+    codex = providers.load("codex")
+    make_live_codex_login(paths, email="c@example.com")
+    assert switcher.restash_active(paths, codex, platform="linux") is False
 
 
-def test_sync_needs_a_named_profile(paths):
-    _two_profiles(paths)
-    assert switcher.sync_active_credentials(paths, None) is False
+def test_without_restash_the_active_row_shows_a_stale_token(paths):
+    """What re-stashing actually corrects.
+
+    Switching away is *already* safe -- ``switch`` stashes the outgoing login
+    first, so a rotation between switches is captured either way. What is not
+    covered is the display: ``profiles.discover`` reads each profile's stashed
+    credential, including the active one, so a Codex account whose token
+    refreshed during use keeps showing the pre-refresh email and countdown
+    until something re-stashes it.
+
+    Written as a before/after on the same profile, because a test that only
+    asserted the "after" state would pass with ``restash_active`` deleted --
+    an earlier version of this test did exactly that.
+    """
+    from shambles import profiles
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="old@example.com", active=True,
+                 refresh_expires_ms=NOW + 3 * DAY_MS)
+    make_live_codex_login(paths, email="new@example.com",
+                          exp_ms=NOW + 30 * DAY_MS)
+
+    def row():
+        return profiles.discover(paths, codex, "Work", NOW, platform="linux")[0]
+
+    stale = row()
+    assert (stale.email, stale.liveness.days_left) == ("old@example.com", 3)
+
+    assert switcher.restash_active(paths, codex, platform="linux") is True
+
+    fresh = row()
+    assert (fresh.email, fresh.liveness.days_left) == ("new@example.com", 30)
 
 
-@posix_modes_only
-def test_a_synced_stash_stays_owner_only(paths):
-    import stat
-    _two_profiles(paths)
-    paths.live_credentials.write_text('{"claudeAiOauth": {"refreshToken": "NEW"}}')
-    switcher.sync_active_credentials(paths, "Work")
-    mode = stat.S_IMODE(os.stat(paths.credentials("Work")).st_mode)
-    assert mode == 0o600, oct(mode)
+def test_switching_away_captures_a_rotation_even_without_restash(paths):
+    """The guarantee that makes restash a display fix rather than a data fix.
 
+    Recorded because it is easy to assume re-stashing is what protects the
+    token on switch-away. It is not -- ``switch`` stashing the outgoing login
+    is. Both matter; conflating them produced a vacuous test once already.
+    """
+    from helpers import codex_auth, write_json
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="c@example.com", active=True)
+    make_profile(paths, "codex", "Other", email="o@example.com")
+    live = make_live_codex_login(paths, email="c@example.com",
+                                 exp_ms=NOW + 30 * DAY_MS)
 
-def test_a_failure_after_the_login_lands_does_not_overwrite_the_old_profile(paths,
-                                                                            monkeypatch):
-    """switch() installs the target's login, then splices identity, then moves
-    the marker. If the splice fails, the marker still names the outgoing
-    profile while ~/.claude holds the incoming login -- and the window's
-    refresh would then copy that login into the outgoing profile's store,
-    destroying the account you switched away from."""
-    make_profile(paths, "Work", email="work@example.com", active=True,
-                 refresh_expires_ms=NOW + 10 * DAY_MS)
-    make_profile(paths, "Personal", email="me@example.com",
-                 refresh_expires_ms=NOW + 20 * DAY_MS)
-    make_claude_json(paths, email="work@example.com")
-    make_live_login(paths, refresh_expires_ms=NOW + 10 * DAY_MS)
+    rotated = codex_auth(email="c@example.com", exp_ms=NOW + 30 * DAY_MS)
+    rotated["tokens"]["refresh_token"] = "refresh-2"
+    write_json(live, rotated)
 
-    work_before = paths.credentials("Work").read_bytes()
+    switcher.switch(paths, codex, "Other", platform="linux", sleep=lambda _: None)
 
-    def boom(*a, **k):
-        raise ConfigUnreadableError("config went unreadable mid-switch")
-    monkeypatch.setattr(configjson, "apply_account_keys", boom)
-
-    with pytest.raises(ShamblesError):
-        switcher.switch(paths, "Personal", now_ms_fn=_fixed())
-
-    # whatever state we are left in, a refresh must not corrupt a profile
-    current = state.inspect(paths)
-    if current.kind == state.MANAGED:
-        switcher.sync_active_credentials(paths, current.profile)
-
-    assert paths.credentials("Work").read_bytes() == work_before, \
-        "the outgoing profile's stored login was overwritten"
-
-
-def test_a_refresh_after_any_partial_failure_corrupts_nothing(paths, monkeypatch):
-    """Sweep: whatever step of switch() blows up, a refresh afterwards must
-    leave every stored login and every identity intact."""
-    import shambles.usage as usage_mod
-
-    targets = ["apply_account_keys", "backup"]
-    for broken in targets:
-        for name in list(state.profile_names(paths)):
-            import shutil as _sh
-            _sh.rmtree(paths.profile_dir(name))
-        make_profile(paths, "Work", email="work@example.com", active=True,
-                     refresh_expires_ms=NOW + 10 * DAY_MS)
-        make_profile(paths, "Personal", email="me@example.com",
-                     refresh_expires_ms=NOW + 20 * DAY_MS)
-        make_claude_json(paths, email="work@example.com")
-        make_live_login(paths, refresh_expires_ms=NOW + 10 * DAY_MS)
-
-        before = {n: paths.credentials(n).read_bytes()
-                  for n in ("Work", "Personal")}
-
-        with monkeypatch.context() as mp:
-            mp.setattr(configjson, broken,
-                       lambda *a, **k: (_ for _ in ()).throw(
-                           ConfigUnreadableError("boom")))
-            try:
-                switcher.switch(paths, "Personal", now_ms_fn=_fixed(),
-                                sleep=lambda _s: None)
-            except ShamblesError:
-                pass
-
-        current = state.inspect(paths)
-        usage_mod.capture_live(paths, current.profile, now_ms=NOW)
-        if current.kind == state.MANAGED:
-            switcher.sync_active_credentials(paths, current.profile)
-
-        for n in ("Work", "Personal"):
-            live_now = paths.credentials(n).read_bytes()
-            marker = state.read_active(paths)
-            # the profile that ended up active may legitimately be resynced to
-            # the live login; every other profile must be byte-identical
-            if n != marker:
-                assert live_now == before[n], (
-                    f"{broken} left '{n}' corrupted")
+    kept = json.loads(paths.credentials("codex", "Work").read_text())
+    assert kept["tokens"]["refresh_token"] == "refresh-2"

@@ -1,11 +1,17 @@
 # Shambles
 
-Switch between Claude Code accounts without waiting for a verification email.
+Switch between Claude Code accounts — and Codex accounts — without waiting for
+a verification email.
 
 Claude Code hardcodes its config path to `~/.claude` and the VS Code extension
 host ignores environment variables, so there is no supported way to run more
-than one account. Shambles keeps each account's login in
-`~/.claude-profiles/<Name>/` and swaps just that one file into place.
+than one account. Codex has the same problem: `~/.codex/auth.json` is a single
+file holding a single account. Shambles keeps each account's login in
+`~/.shambles/<provider>/<Name>/` and swaps just that one file into place.
+
+Adding an account opens your browser to sign in. Shambles does not implement
+that — it runs the vendor's own `claude auth login` or `codex login`, which
+opens the browser and handles the OAuth itself. See [Is this safe?](#is-this-safe).
 
 `~/.claude` itself is never moved or replaced. Your session history, plugins,
 settings and project trust stay exactly where they are and are shared by every
@@ -54,12 +60,20 @@ python3 shambles.py          # or: python3 -m shambles
 
 ### Before you install, check it applies to you
 
-| You run Claude Code in… | Status |
-|---|---|
-| Linux desktop | **Supported** — binary or pipx |
-| WSL (Ubuntu etc.) | **Supported** — the **Linux** build, run **inside WSL** |
-| Windows natively | **Unverified, probably not working** — see below |
-| macOS | **Not supported** — see Platform notes |
+| Where you run it | Claude Code | Codex |
+|---|---|---|
+| Linux desktop | **Supported** | **Unverified** — see below |
+| WSL (Ubuntu etc.) | **Supported** — the **Linux** build, run **inside WSL** | **Unverified** |
+| Windows natively | **Unverified, probably not working** — see below | **Unverified** |
+| macOS | **Not supported** — see Platform notes | **Unverified** |
+
+**About Codex.** Codex support is built and tested, but only against fixtures:
+no Codex install was available on the development machine, and the research its
+adapter is built from was done on macOS with Linux and Windows read from source
+rather than executed. The file it swaps is `~/.codex/auth.json`, the same path
+on every platform. Treat it as unverified until someone confirms a real switch
+takes effect. The contract tests every provider must pass are in
+`tests/contract/`.
 
 **About Windows.** Claude Code does not use the same credential store on every
 platform. On Linux it writes `~/.claude/.credentials.json`, which is the file
@@ -76,9 +90,8 @@ the one in your WSL home directory. If you use Claude Code inside WSL, install
 inside WSL.
 
 **Windows needs Developer Mode** (Settings → System → For developers) only when
-migrating from a Shambles 1.x layout, which used symlinks. Ordinary switching
-needs no special privileges — but see the Windows caveat above before relying
-on it.
+migrating from a pre-1.0 layout, which used symlinks. Ordinary switching needs
+no special privileges — but see the Windows caveat above before relying on it.
 
 ## CLI or VS Code extension — both
 
@@ -179,7 +192,7 @@ Categories=Development;Utility;
 ### First run
 
 Click **Save Current Account** and name it (e.g. `Work`). Shambles copies the
-login out of `~/.claude` into `~/.claude-profiles/Work/` and records it as
+login out of `~/.claude` into `~/.shambles/claude/Work/` and records it as
 active. Nothing moves and nothing is deleted — `~/.claude` is left exactly as
 it was.
 
@@ -225,7 +238,7 @@ To use Shambles from the terminal, remove the variable from your shell profile.
 
 ## Leaving cleanly
 
-Do **not** uninstall by deleting `~/.claude-profiles/`. That folder holds the
+Do **not** uninstall by deleting `~/.shambles/`. That folder holds the
 refresh tokens for every account you saved, and each one is only recoverable
 through a fresh verification email.
 
@@ -259,12 +272,13 @@ machine-scoped and stays shared, which is how Claude Code behaves on its own.
 | Path | Treatment |
 |---|---|
 | `~/.claude/.credentials.json` | swapped — this is the only file that moves |
-| `~/.claude.json` | `oauthAccount` spliced; `cachedUsageUtilization` cleared so the usage meter refetches |
+| `~/.claude.json` | only `oauthAccount` and `cachedUsageUtilization` spliced |
 | `~/.claude/projects/`, `plugins/`, `file-history/`, `settings.json` | **never touched** |
-| `~/.claude-profiles/<Name>/credentials.json` | that account's tokens |
-| `~/.claude-profiles/<Name>/account.json` | that account's identity |
-| `~/.claude-profiles/active` | which profile is live |
-| `~/.claude-profiles/.shambles-backups/` | last 10 copies of `~/.claude.json` |
+| `~/.codex/auth.json` | swapped — Codex's whole login, identity included |
+| `~/.shambles/<provider>/<Name>/credentials.json` | that account's tokens |
+| `~/.shambles/claude/<Name>/account.json` | that account's identity (Claude only) |
+| `~/.shambles/<provider>/active` | which profile is live, per provider |
+| `~/.shambles/.backups/` | last 10 copies of `~/.claude.json` |
 
 `~/.claude` is an ordinary directory and is never replaced. Session history,
 plugins, project trust, MCP servers and settings are all **shared across every
@@ -274,7 +288,7 @@ directories. A profile is about half a kilobyte.
 ## Where the tokens live
 
 ```
-~/.claude-profiles/<Name>/credentials.json           mode 600
+~/.shambles/<provider>/<Name>/credentials.json       mode 600
   claudeAiOauth.accessToken             ~8 hour life, refreshed silently
   claudeAiOauth.refreshToken            the thing that saves you the email
   claudeAiOauth.expiresAt               epoch ms
@@ -287,95 +301,10 @@ The **email is not in that file**. It lives in `~/.claude.json` under
 one key on every switch. Without it you would swap the token but keep
 displaying the previous account's name.
 
-Directory permissions: `~/.claude-profiles/` and each profile inside it are
+Directory permissions: `~/.shambles/` and each directory inside it are
 created `700`, and every credentials file is written `600`. On Windows `chmod`
 cannot express either, so there the files rely on the user profile's own ACLs —
 the same protection Claude Code's own `.credentials.json` gets.
-
-## Usage at a glance
-
-Each card carries the two figures that decide which account to reach for:
-
-```
-Admin                                       [✕] [Switch]
-admin@example.com                  28d
-
-session   ▇▇▇▇▇▇░░░░░░░░░░░░░░░░░░░░░░░░░░   49%
-week      ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇░░░░   90%
-
-Ian-Work  ACTIVE
-me@example.com                     27d
-
-usage appears once you run Claude
-```
-
-Each row ends in an **info icon** carrying the detail — the exact percentage, when the
-window resets, and how fresh the figure is. Only that icon reacts to the
-pointer; the label, bar and value do not, so moving across a card does not set
-tooltips off.
-
-Bars are full-width rows beneath the identity, so they line up down the window
-whatever a name or address happens to be. **A bar turns red at 80%**, the same
-threshold the VS Code extension uses, so the two never disagree on screen.
-Below that it is the ordinary accent — unless Claude Code itself flags the
-bucket, in which case its warning shows through rather than being painted over.
-
-**⟳ re-reads the figures on disk.** It opens local files and nothing else — no
-network call, no credential written, no marker moved, nothing a running Claude
-Code session can notice. Claude Code updates those figures as you work, so
-press it after a session to pick up what it has written.
-
-Only the **signed-in** account can have current figures. Claude Code caches
-usage for whoever is logged in, and there is no way to ask the server about a
-second account without using that account's token — which would rotate it and
-leave the copy Shambles holds dead. Other accounts therefore show their last
-known figures with an age, and never anything newer.
-
-An account with no figures yet says so rather than leaving a gap. That happens
-in two cases:
-
-- **Just after a switch.** Shambles clears the usage cache so Claude Code
-  refetches for the account you moved to, and the account has not reported yet.
-- **An account never used while Shambles was open.**
-
-In both, the line reads *usage appears once you run Claude*, and figures show up
-on the next refresh. Shambles records the active account's numbers whenever it
-sees them, so a profile keeps its last known figures once it has been used.
-
-Showing nothing rather than a guess is deliberate. An earlier version restored
-each profile's stashed figures into `~/.claude.json` on switch, which made the
-VS Code meter display hours-old numbers as though they were current.
-
-## Sizing and readability
-
-Body text renders at **16px minimum**, which is the floor every current
-accessibility guideline converges on — WCAG itself sets no minimum, requiring
-instead that text survive a 200% resize, but 16px is the practical consensus.
-Tk sizes fonts in points and multiplies by its scaling factor, so that means a
-12pt body.
-
-Shambles picks the scaling factor rather than trusting the display:
-
-| Framebuffer width | Factor | Why |
-|---|---|---|
-| ≥ 2560px | 1.6 | A 96dpi report on a panel that wide is not credible — WSLg and many Linux setups report a flat 96dpi whatever the hardware |
-| below that | 1.35 | Just above the 96dpi default, enough to put 12pt on the 16px floor |
-| already scaled | left alone | A desktop doing fractional scaling reports a higher figure; raising it again would double-scale |
-
-Override it if your display needs something else:
-
-```bash
-SHAMBLES_SCALE=1.9 shambles
-```
-
-Values outside 1.0–4.0 are ignored, so a typo cannot produce an unusable
-window.
-
-The window is a fixed width and Tk labels do not truncate, so a long profile
-name is elided with the full value on hover rather than stretching the window.
-The card list scrolls once it would otherwise push the footer past 80% of
-screen height — about five accounts on a 1080p display, more on anything
-taller.
 
 ## Checking token health
 
@@ -412,14 +341,28 @@ For a countdown without opening the app:
 
 ```bash
 .venv/bin/python -c "
-import json,datetime,pathlib
-for d in sorted(p for p in (pathlib.Path.home()/'.claude-profiles').iterdir()
-                if p.is_dir() and p.name[0]!='.'):
-    c = d/'credentials.json'
-    if not c.exists(): print(f'{d.name:<14} no token'); continue
-    ms = json.loads(c.read_text())['claudeAiOauth']['refreshTokenExpiresAt']
-    t = datetime.datetime.fromtimestamp(ms/1000)
-    print(f'{d.name:<14} {(t-datetime.datetime.now()).days:>3}d left')"
+import base64,json,datetime,pathlib
+
+def expiry(blob):
+    'Claude records the deadline; Codex hides it in a JWT claim.'
+    if 'claudeAiOauth' in blob:
+        return blob['claudeAiOauth'].get('refreshTokenExpiresAt')
+    token = blob.get('tokens', {}).get('access_token', '')
+    payload = token.split('.')[1] if token.count('.') >= 2 else ''
+    if not payload: return None
+    claims = json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+    return claims.get('exp', 0) * 1000
+
+root = pathlib.Path.home()/'.shambles'
+for provider in sorted(p for p in root.iterdir() if p.is_dir() and p.name[0]!='.'):
+    for d in sorted(p for p in provider.iterdir() if p.is_dir()):
+        c = d/'credentials.json'
+        label = f'{provider.name}/{d.name}'
+        if not c.exists(): print(f'{label:<22} no token'); continue
+        ms = expiry(json.loads(c.read_text()))
+        if not ms: print(f'{label:<22} unknown'); continue
+        t = datetime.datetime.fromtimestamp(ms/1000)
+        print(f'{label:<22} {(t-datetime.datetime.now()).days:>3}d left')"
 ```
 
 Two things worth understanding:
@@ -434,12 +377,21 @@ Two things worth understanding:
 
 ## Is this safe?
 
-**It is entirely local and cannot touch your Claude account.** The complete
-import list across the application is `json`, `os`, `shutil`, `sys`, `time`,
-`pathlib`, `dataclasses`, `tkinter`. There is no `socket`, no `urllib`, no
-`requests`, no `subprocess`. It cannot reach Anthropic's servers, so it cannot
-affect your login, billing, rate limits or organisation membership. It only
-moves bytes between directories on your own disk.
+**It is entirely local and cannot touch your Claude or OpenAI account.**
+
+**No network.** There is no `socket`, no `urllib`, no `requests`. It cannot
+reach Anthropic's or OpenAI's servers, so it cannot affect your login,
+billing, rate limits or organisation membership. It only moves bytes between
+directories on your own disk. That is not a promise — `tests/test_login.py`
+walks the AST of every module in the package and fails on any networking
+import.
+
+**It executes exactly one kind of external program:** the vendor's own login
+command — `claude auth login` or `codex login` — and only when you click Add
+Account. **Shambles implements no part of signing in.** That command opens
+your browser and runs its own callback server; Shambles waits for it to
+finish and then files the credential it wrote. No password, no token in
+flight, and nothing held that was not already on your disk.
 
 What protects your data:
 
@@ -530,7 +482,7 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pytest
 ```
 
-139 tests. Every one runs against a synthetic home in `tmp_path`. None reads or
+303 tests. Every one runs against a synthetic home in `tmp_path`. None reads or
 writes your real `~/.claude`.
 
 CI runs the suite on Linux and Windows across Python 3.10 and 3.12, under
@@ -540,9 +492,13 @@ attaches them to a GitHub Release — but only after the suite passes on both.
 
 The load-bearing test is
 `tests/test_switch.py::test_credentials_survive_a_round_trip_unmodified` — it
-asserts that `Work → Personal → Work` leaves `.credentials.json` byte-identical,
-`refreshToken` and `refreshTokenExpiresAt` included. If that regresses, the tool
-stops solving the problem it exists for.
+asserts that `Work → Personal → Work` leaves the credential byte-identical,
+refresh token and expiry included. It is parametrized over every provider, so
+adding a third means passing a suite that already exists. If it regresses, the
+tool stops solving the problem it exists for.
+
+Nothing here runs a real `claude` or `codex`. The login tests drive a `/bin/sh`
+stand-in placed on `PATH`, so no browser opens and nothing authenticates.
 
 ## Platform notes
 
@@ -565,10 +521,14 @@ installation from the one in a WSL home directory.
 
 | Document | What it is |
 |---|---|
-| [CHANGELOG.md](CHANGELOG.md) | What changed in each release, and the known limitations of the current one |
-| [TECH_SPEC.md](TECH_SPEC.md) | **Definitive** architecture reference for shipped v1.0 — mechanism, concurrency, permissions, token lifecycle, test coverage |
+| [docs/superpowers/specs/2026-08-07-multi-provider-design.md](docs/superpowers/specs/2026-08-07-multi-provider-design.md) | **Current** design: the provider/store layering, Codex as a peer, and the browser login handoff |
+| [TECH_SPEC.md](TECH_SPEC.md) | Architecture reference. Its §-numbered mechanism is authoritative; its single-provider paths describe v1.0 and are superseded — the banner says which |
 | [docs/token-storage.md](docs/token-storage.md) | Field research into how Claude and Codex store credentials across macOS, Windows and Linux. Covers platforms this tool does not yet support |
-| [docs/design-decisions.md](docs/design-decisions.md) | Recorded decisions and rationale. DD-1–DD-3 describe shipped behaviour; DD-4 is an unimplemented proposal |
+| [docs/design-decisions.md](docs/design-decisions.md) | Recorded decisions and rationale. DD-4 is implemented; DD-2 is amended — the tool now starts the vendor's login rather than printing it |
 
-Where a document disagrees with TECH_SPEC about what the tool does today,
-TECH_SPEC wins.
+Where two documents disagree about what the tool does today, the
+multi-provider design wins on anything provider-shaped — paths, layering,
+login, the store layout — and TECH_SPEC wins on mechanism: switch ordering,
+atomic writes, permissions, the state machine, concurrency.
+
+The tests win over both.

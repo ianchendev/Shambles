@@ -169,8 +169,8 @@ def test_capture_records_the_live_figures_for_the_active_profile(paths):
     from helpers import account, make_claude_json, make_profile, write_json
     from shambles import configjson
 
-    make_profile(paths, "Work")
-    write_json(paths.account("Work"),
+    make_profile(paths, "claude", "Work")
+    write_json(paths.account("claude", "Work"),
                {"oauthAccount": account("work@example.com", uuid="uuid-a")})
     make_claude_json(paths, email="work@example.com", extra={
         "cachedUsageUtilization": {"fetchedAtMs": NOW, "accountUuid": "uuid-a",
@@ -178,9 +178,9 @@ def test_capture_records_the_live_figures_for_the_active_profile(paths):
                                        {"kind": "session", "percent": 30,
                                         "severity": "normal"}]}}})
 
-    assert usage.capture_live(paths, "Work", now_ms=NOW) is True
+    assert usage.capture_live(paths, "claude", "Work", now_ms=NOW) is True
 
-    stashed = configjson.load(paths.account("Work"))["usage"]
+    stashed = configjson.load(paths.account("claude", "Work"))["usage"]
     assert stashed["utilization"]["limits"][0]["percent"] == 30
 
 
@@ -190,54 +190,54 @@ def test_capture_refuses_a_blob_belonging_to_another_account(paths):
     from helpers import account, make_claude_json, make_profile, write_json
     from shambles import configjson
 
-    make_profile(paths, "Work")
-    write_json(paths.account("Work"),
+    make_profile(paths, "claude", "Work")
+    write_json(paths.account("claude", "Work"),
                {"oauthAccount": account("work@example.com", uuid="uuid-a")})
     make_claude_json(paths, email="work@example.com", extra={
         "cachedUsageUtilization": {"fetchedAtMs": NOW, "accountUuid": "SOMEONE-ELSE",
                                    "utilization": {"limits": []}}})
 
-    assert usage.capture_live(paths, "Work", now_ms=NOW) is False
-    assert "usage" not in configjson.load(paths.account("Work"))
+    assert usage.capture_live(paths, "claude", "Work", now_ms=NOW) is False
+    assert "usage" not in configjson.load(paths.account("claude", "Work"))
 
 
 def test_capture_does_nothing_without_a_live_blob(paths):
     from helpers import account, make_claude_json, make_profile, write_json
-    make_profile(paths, "Work")
-    write_json(paths.account("Work"), {"oauthAccount": account("w@example.com")})
+    make_profile(paths, "claude", "Work")
+    write_json(paths.account("claude", "Work"), {"oauthAccount": account("w@example.com")})
     make_claude_json(paths, email="w@example.com")
     cfg = paths.claude_json.read_text().replace('"cachedUsageUtilization"', '"gone"')
     paths.claude_json.write_text(cfg)
-    assert usage.capture_live(paths, "Work", now_ms=NOW) is False
+    assert usage.capture_live(paths, "claude", "Work", now_ms=NOW) is False
 
 
 def test_capture_does_not_rewrite_an_identical_figure(paths):
     """Called on every window refresh, so it must not churn the file."""
     from helpers import account, make_claude_json, make_profile, write_json
-    make_profile(paths, "Work")
-    write_json(paths.account("Work"),
+    make_profile(paths, "claude", "Work")
+    write_json(paths.account("claude", "Work"),
                {"oauthAccount": account("work@example.com", uuid="uuid-a")})
     make_claude_json(paths, email="work@example.com", extra={
         "cachedUsageUtilization": {"fetchedAtMs": NOW, "accountUuid": "uuid-a",
                                    "utilization": {"limits": []}}})
 
-    assert usage.capture_live(paths, "Work", now_ms=NOW) is True
-    assert usage.capture_live(paths, "Work", now_ms=NOW) is False, "rewrote it"
+    assert usage.capture_live(paths, "claude", "Work", now_ms=NOW) is True
+    assert usage.capture_live(paths, "claude", "Work", now_ms=NOW) is False, "rewrote it"
 
 
 def test_capture_preserves_the_rest_of_the_sidecar(paths):
     from helpers import account, make_claude_json, make_profile, write_json
     from shambles import configjson
-    make_profile(paths, "Work")
-    write_json(paths.account("Work"),
+    make_profile(paths, "claude", "Work")
+    write_json(paths.account("claude", "Work"),
                {"oauthAccount": account("work@example.com", uuid="uuid-a"),
                 "stashed_at": 123})
     make_claude_json(paths, email="work@example.com", extra={
         "cachedUsageUtilization": {"fetchedAtMs": NOW, "accountUuid": "uuid-a",
                                    "utilization": {"limits": []}}})
 
-    usage.capture_live(paths, "Work", now_ms=NOW)
+    usage.capture_live(paths, "claude", "Work", now_ms=NOW)
 
-    d = configjson.load(paths.account("Work"))
+    d = configjson.load(paths.account("claude", "Work"))
     assert d["oauthAccount"]["emailAddress"] == "work@example.com"
     assert d["stashed_at"] == 123

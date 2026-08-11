@@ -1,15 +1,56 @@
 # Shambles — Technical Specification
 
-Architectural reference for the Claude Code account switcher.
+Architectural reference for the account switcher.
+
+> **Partially superseded by multi-provider support (2026-08-07).** Sections
+> describing a single hardcoded Claude path, the `~/.claude-profiles/` store,
+> or `~/.claude` as the only credential location now describe v1.0 rather than
+> the current code. What changed, and why, is in
+> [docs/superpowers/specs/2026-08-07-multi-provider-design.md](docs/superpowers/specs/2026-08-07-multi-provider-design.md);
+> the layering it implements is DD-4. The §-numbered mechanism below —
+> the switch ordering, the atomic-write discipline, the state machine, the
+> concurrency caveat — is unchanged and still authoritative.
 
 | | |
 |---|---|
-| **Version** | 2.0.0 |
-| **Target** | Claude Code 2.1.x — CLI and VS Code extension |
-| **Platforms** | Linux and WSL2 confirmed. Windows unverified — see §1.11. macOS unsupported |
+| **Version** | 1.1 (multi-provider) |
+| **Target** | Claude Code 2.1.x and Codex 0.147.x — CLI and VS Code extension |
+| **Platforms** | Linux and WSL2 confirmed for Claude. Codex unverified everywhere — no install was available. Windows unverified — see §1.11. macOS unsupported |
 | **Runtime** | Python 3.10+, Tkinter. No third-party dependencies |
-| **Source** | 2,678 lines across 14 modules |
-| **Tests** | 272 cases from 247 functions, passing on Linux and Windows |
+| **Source** | ~3,740 lines across 24 modules |
+| **Tests** | 303 cases, all passing |
+
+## 0. What multi-provider support changed
+
+Two orthogonal layers, per DD-4. The core never learns a provider's name.
+
+| Layer | Question it answers | Varies by |
+|---|---|---|
+| `shambles/stores/` | *Where do the bytes live?* | platform |
+| `shambles/providers/` | *What do the bytes mean?* | vendor |
+
+| Concern | v1.0 | Now |
+|---|---|---|
+| Profile store | `~/.claude-profiles/<Name>/` | `~/.shambles/<provider>/<Name>/` |
+| Credential location | hardcoded `~/.claude/.credentials.json` | `provider.store(home, platform)` |
+| Identity | parsed `oauthAccount` directly | `provider.identity()` — sidecar for Claude, JWT for Codex |
+| Expiry | `refreshTokenExpiresAt`, one constant | `provider.liveness()`, `provider.warn_days` per vendor |
+| Login | printed a command for the user | spawns the vendor's own command; see §0.1 |
+| Window | one header, one list | one group per provider |
+
+**§0.1 Login.** `shambles/login.py` is the only module that spawns a process.
+It runs `claude auth login` or `codex login` — the vendor opens the browser and
+runs its own OAuth callback. Shambles adds no OAuth code and no network
+imports; `tests/test_login.py` asserts the latter by walking the package AST.
+
+**§0.2 Rotation.** Codex replaces its refresh token on every use, so a stashed
+snapshot goes stale while its profile is active. `switcher.restash_active`
+corrects that on each window refresh. It is a *display* fix: switching away was
+already safe, because `switch` stashes the outgoing login first.
+
+**§0.3 Migrations.** Two independent hops, both additive, both leaving the
+source on disk: the pre-1.0 symlink layout → a shared `~/.claude`, and
+`~/.claude-profiles/` → `~/.shambles/claude/`.
 
 ---
 
@@ -63,7 +104,7 @@ The central design decision, and the one the original implementation got wrong.
 |---|---|---|
 | `~/.claude/.credentials.json` | **account** | The OAuth grant itself |
 | `oauthAccount` in `~/.claude.json` | **account** | Identity: email, org, `accountUuid` |
-| `cachedUsageUtilization` | **account cache** | Keyed by `accountUuid`. Cleared on every switch, never restored — see §1.12 |
+| `cachedUsageUtilization` | **account** | Keyed by `accountUuid`; foreign copies show wrong figures |
 | `~/.claude/projects/` | machine | Keyed by **project path**, not by account |
 | `~/.claude/plugins/`, `file-history/`, `todos/`, `shell-snapshots/`, `session-env/`, `plans/` | machine | Workspace state |
 | `~/.claude/settings.json`, `history.jsonl` | machine | User preferences, prompt history |
@@ -75,7 +116,7 @@ behaves: one `~/.claude`, one history, regardless of who is signed in.
 
 ### 1.4 Mechanism: targeted replace, not root symlink
 
-**Superseded design (1.x).** `~/.claude` was a symlink retargeted between
+**Superseded design (pre-1.0).** `~/.claude` was a symlink retargeted between
 `~/.claude-profiles/<Name>/`, each holding a full copy of the directory:
 
 ```
@@ -99,8 +140,7 @@ replaced, renamed or deleted. A switch performs exactly three writes:
 
 ```
 1.  ~/.claude/.credentials.json          <- copied from the target profile
-2.  oauthAccount in ~/.claude.json       <- spliced
-    cachedUsageUtilization               <- deleted, never restored
+2.  oauthAccount + cachedUsageUtilization in ~/.claude.json   <- spliced
 3.  ~/.claude-profiles/active            <- marker updated
 ```
 
@@ -158,19 +198,16 @@ A profile is roughly **500 bytes**. Under the previous design it was 208 MB.
 
 | Module | Lines | Responsibility |
 |---|---|---|
-| `gui.py` | 793 | Tkinter window |
-| `switcher.py` | 285 | Switch, save, add, rename, remove, token sync |
-| `theme.py` | 276 | Palette, type scale, DPI scaling, glyph detection |
-| `migrate.py` | 219 | One-way conversion from the 1.x layout |
-| `usage.py` | 213 | Parsing and ageing the cached usage figures |
-| `profiles.py` | 202 | Discovery, token state, expiry arithmetic, name validation |
-| `configjson.py` | 160 | Parse, splice and back up `~/.claude.json` |
-| `state.py` | 138 | Which account is live; six-state classification |
-| `eject.py` | 134 | Restoring a stock installation |
 | `paths.py` | 113 | Every path, derived from an injectable home root |
-| `__main__.py` | 60 | Entry point, `--version`, `--help` |
-| `errors.py` | 46 | Typed exceptions carrying user-facing text |
+| `state.py` | 109 | Which account is live; six-state classification |
+| `switcher.py` | 194 | Switch, save, add, rename |
+| `configjson.py` | 145 | Parse, splice and back up `~/.claude.json` |
+| `profiles.py` | 172 | Discovery, token state, expiry arithmetic, name validation |
+| `migrate.py` | 219 | One-way conversion from the pre-1.0 layout |
 | `retry.py` | 36 | Transient-lock retry |
+| `errors.py` | 46 | Typed exceptions carrying user-facing text |
+| `gui.py` | 430 | Tkinter window |
+| `theme.py` | 131 | Palette, fonts, DPI scaling |
 
 `Path.home()` is called in exactly one place — `Paths.real()` — so the entire
 application can be pointed at a temporary directory under test.
@@ -229,63 +266,6 @@ Idempotent, and refuses on the legacy layout — ejecting a symlinked
 `~/.claude` would leave a dangling link.
 
 Nothing in eject deletes a credentials file.
-
-### 1.12 Usage figures are a cache, not identity
-
-`cachedUsageUtilization` in `~/.claude.json` is what the VS Code extension reads
-to render the usage meter. It is keyed by `accountUuid` and carries its own
-`fetchedAtMs`.
-
-Shambles originally treated it as identity: stash it with the outgoing profile,
-restore it with the incoming one. That is wrong in a way that only shows up
-after a few switches, and was reported as "the usage display looks a bit off".
-
-Measured on a live installation:
-
-| Source | Fetched at | five_hour / seven_day | Age at switch |
-|---|---|---|---|
-| live `~/.claude.json` | 2026-08-07 09:15 | 22% / 87% | current |
-| stash `Admin` | 2026-08-06 09:39 | 11% / 57% | ~7.5 h |
-| stash `Ian-Work` | 2026-08-06 15:56 | 98% / 92% | — |
-
-Switching to `Admin` at 17:12 restored a blob fetched at 09:39, so the meter
-reported **11% / 57%** — Admin's figures from seven and a half hours earlier —
-until the extension happened to refetch. A running VS Code window makes this
-worse, because nothing forces a refetch at startup.
-
-The original requirement was only that the *outgoing* account's figures must
-not linger under the incoming account. Deleting satisfies that and cannot go
-stale:
-
-```python
-ACCOUNT_KEYS    = ("oauthAccount",)          # identity: carried
-STALE_ON_SWITCH = ("cachedUsageUtilization",)  # cache: always deleted
-```
-
-The key is still captured per profile, but under Shambles' own `usage` name in
-`account.json` and **only for display**. `configjson.read_sidecar` returns
-`ACCOUNT_KEYS` alone, so nothing under `usage` can reach `~/.claude.json` even
-by accident, and `STALE_ON_SWITCH` clears the config key regardless.
-
-`shambles.usage` parses that blob into at most two bars, preferring the cache's
-`limits` array because it carries Claude Code's own `severity`. `Bar.severity`
-holds that raw verdict; `Bar.display_severity` applies a **red floor at
-`RED_AT = 80`**, matching the extension's meter so the two cannot disagree on
-screen. The floor never *downgrades* — a bucket Claude Code flags below 80%
-still renders amber — and an unrecognised severity renders as the worst case
-rather than guessing. `fill_fraction` clamps to 0..1 so an over-quota account
-saturates the track instead of drawing past it.
-
-`usage.capture_live()` runs on every window refresh and records the active
-account's live blob into its own profile. Without it a profile only learned its
-figures at the moment you switched *away*, so the account actually in use was
-the one guaranteed to render blank — reported as "I switched to Ian-Work but
-can't see the bars". It refuses any blob whose `accountUuid` does not match the
-profile's stored identity, since `~/.claude.json` can still hold the previous
-account's cache immediately after a switch, and writes only when the figure has
-moved so a per-refresh call does not churn the file. The active profile reads the live config; the
-rest read their stash and render greyed out with an age label, so a figure
-nobody has refreshed cannot pass for a current one.
 
 ### 1.11 Platform reach is narrower than the build matrix suggests
 
@@ -731,50 +711,6 @@ without it. Users wanting longer retention should set `cleanupPeriodDays` in
 easily mistaken for switching-related loss.
 
 ---
-
-### 1.13 Sizing
-
-Type is scaled to a 16px body minimum — the practical floor across current
-accessibility guidance, and 12pt at Tk's point-to-pixel conversion. The
-previous 11pt rendered 14.9px.
-
-`theme.scaling_for()` is a pure function of the reported factor, the
-framebuffer width and an optional `SHAMBLES_SCALE` override, so the decision is
-testable without a display. A framebuffer at or above 2560px reporting 96dpi is
-treated as a misreport rather than a coarse panel; an already-scaled desktop
-reporting a higher factor is left alone to avoid double-scaling.
-
-Pixel spacing is sized alongside the type. Tk scales points, not pixels, so
-padding left at its old values would have tightened as the text grew.
-
-Decorative glyphs are chosen at runtime, not hardcoded. Tk substitutes a box
-for a glyph the font lacks and reports nothing, so a character picked on one
-machine renders as tofu on another — Ubuntu has no U+24D8, which is exactly how
-the info icon shipped broken. `theme.glyph()` measures each candidate against
-U+FFFF, a permanent noncharacter no font defines, and takes the first that
-differs; every icon has a plain ASCII fallback. The probe must be a single
-codepoint: a two-character one measures two glyphs, can never equal one missing
-glyph, and disables detection silently.
-
-Hover detail lives on a per-row info icon rather than the row itself. Binding a
-whole row meant every element under the pointer raised a tooltip as it crossed
-a card, which read as twitchy; `Tooltip._show` also now closes any other tooltip
-first, since crossing from an expiry chip onto a bar could leave two overlapping
-on screen.
-
-The freshness note is chosen by whether the profile is active. The same figure
-means different things in the two cases: on an idle profile it is frozen at the
-moment you left, but on the account you are signed in as it is simply
-unrefreshed, and telling the user it "has not been signed in since" about the
-account they are signed in as was plainly wrong.
-
-Two fixed-window hazards are handled rather than assumed away. Tk labels do not
-truncate, so `theme.elide()` shortens a profile name to a measured pixel budget
-with the full value on hover — a character cap was tried first and had to be
-re-guessed the moment the type scale moved. And the card list scrolls once it
-would push the footer past `MAX_HEIGHT_FRACTION` of screen height: the window
-has no resize handle, so a footer off the bottom takes Eject and Add Account
-with it.
 
 ## 5. Test Coverage Summary
 
