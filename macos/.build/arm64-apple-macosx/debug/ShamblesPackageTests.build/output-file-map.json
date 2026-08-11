@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/primary.swiftdeps"
+  },
+  "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.derived/runner.swift": {
+    "dependencies": "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/runner.d",
+    "object": "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/runner.swift.o",
+    "swiftmodule": "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/runner~partial.swiftmodule",
+    "swift-dependencies": "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/runner.swiftdeps",
+    "diagnostics": "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/runner.dia"
+  }
+}

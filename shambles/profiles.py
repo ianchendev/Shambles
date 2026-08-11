@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import state
+from . import configjson, state, usage as usage_mod
 from .errors import ProfileNameError
 from .providers import ABSENT, CLOSED, CLOSING, NEEDS_LOGIN, Liveness
 
@@ -46,6 +46,10 @@ class Profile:
     org: str | None
     plan: str | None
     liveness: Liveness
+    #: Session and weekly figures for the card. Live for the active profile,
+    #: stashed-and-aged for the rest; empty when neither is available, which
+    #: is every profile of a provider that publishes no usage at all.
+    usage: "usage_mod.Usage" = usage_mod.EMPTY
 
 
 def warning(profile: Profile) -> str | None:
@@ -75,6 +79,34 @@ def list_profile_names(paths, provider_id: str) -> list[str]:
     return sorted(state.profile_names(paths, provider_id), key=str.casefold)
 
 
+def resolve_usage(paths, provider, name: str, active_name: str | None):
+    """Usage figures for one profile.
+
+    The active profile reads the vendor's own live cache, which it keeps
+    current. Everyone else reads what was stashed when they were last active,
+    which the UI renders with its age attached -- see :mod:`shambles.usage`
+    for why a stashed figure is never trusted silently.
+
+    Only Claude publishes anything readable; every other provider returns
+    empty, which the card treats as a supported state rather than a gap.
+    """
+    companion = provider.spec.get("companion")
+    if not companion:
+        return usage_mod.EMPTY
+
+    if active_name is not None and name == active_name:
+        live = usage_mod.parse(
+            configjson.load(paths.claude_json).get("cachedUsageUtilization"))
+        if live:
+            return live
+
+    stashed = configjson.load(paths.account(provider.id, name))
+    # stash_live_login writes whatever companion_read returned, so the key is
+    # the vendor's own rather than a name of ours.
+    return usage_mod.parse(stashed.get("cachedUsageUtilization")
+                           or stashed.get("usage"))
+
+
 def discover(paths, provider, active_name: str | None, now_ms: int, *,
              platform: str = sys.platform) -> list[Profile]:
     found = []
@@ -97,6 +129,7 @@ def discover(paths, provider, active_name: str | None, now_ms: int, *,
             org=identity.org,
             plan=identity.plan,
             liveness=provider.liveness(blob, now_ms=now_ms),
+            usage=resolve_usage(paths, provider, name, active_name),
         ))
     return found
 
