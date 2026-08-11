@@ -47,7 +47,7 @@ Homepage = "https://github.com/ianchendev/Shambles"
 Issues = "https://github.com/ianchendev/Shambles/issues"
 
 [tool.setuptools]
-packages = ["shambles", "shambles.providers", "shambles.stores"]
+packages = ["shambles", "shambles.app", "shambles.providers", "shambles.stores"]
 
 # Provider specs are data, not code, so they need declaring explicitly or they
 # ship missing and every provider fails to load at runtime.
