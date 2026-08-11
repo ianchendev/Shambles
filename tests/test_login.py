@@ -71,9 +71,16 @@ def test_cancelling_terminates_the_child(codex, fake_vendor):
                   on_exit=lambda code: (codes.append(code), done.set()))
     process.cancel(grace=2.0)
 
+    # Ten seconds against the fake's thirty-second sleep is the real
+    # assertion: it only completes because cancel actually stopped the child.
     assert done.wait(timeout=10)
     assert process.running is False
-    assert codes and codes[0] != 0
+    assert codes, "the exit callback must still fire for a cancelled login"
+    # Deliberately not asserting a non-zero code. terminate() signals the
+    # shell wrapping the fake, and what a shell reports after SIGTERM while
+    # waiting on a child differs between dash, bash and their versions -- it
+    # was 0 on Ubuntu/3.10 and non-zero on 3.12 with the same code under test.
+    # The exit code of a stand-in is not the behaviour worth pinning.
 
 
 def test_a_missing_binary_raises_a_readable_error(codex, monkeypatch):

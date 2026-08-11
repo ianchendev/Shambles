@@ -244,3 +244,15 @@ def test_a_leftover_temp_file_does_not_expose_the_next_write(tmp_path, monkeypat
     assert observed.get("mode") == "600", (
         f"credential landed at {observed.get('mode')} while a leftover "
         f"temp file's old permissions still applied")
+
+
+def test_a_credential_is_written_without_newline_translation(tmp_path):
+    """Windows opens descriptors in text mode and rewrites every "\\n" as
+    "\\r\\n". A credential is bytes: a token containing a newline would come
+    back longer than it went in, which the round-trip suite caught on Windows
+    and no POSIX runner ever would."""
+    store = FileStore(tmp_path / "creds.json", 0o600)
+    payload = b'{\n  "token": "a\\nb"\n}\n'
+    store.write(payload)
+    assert store.path.read_bytes() == payload
+    assert b"\r\n" not in store.path.read_bytes()

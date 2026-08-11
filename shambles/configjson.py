@@ -33,6 +33,12 @@ STALE_ON_SWITCH = ("cachedUsageUtilization",)
 BACKUP_RETENTION = 10
 TMP_SUFFIX = ".shambles-tmp"
 
+#: Windows descriptors default to text mode and rewrite every "\n" as
+#: "\r\n". Harmless for JSON's validity, but the payload is already encoded
+#: bytes by the time it reaches os.write, so translating it means the file on
+#: disk is not what was serialised. No such mode exists on POSIX.
+BINARY_FLAG = getattr(os, "O_BINARY", 0)
+
 
 def load(path) -> dict:
     """Parse a JSON object, returning ``{}`` for anything unusable.
@@ -66,7 +72,8 @@ def write_atomic(path, config: dict) -> None:
     path = Path(path)
     tmp = path.with_name(path.name + TMP_SUFFIX)
     payload = (json.dumps(config, indent=2) + "\n").encode("utf-8")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | BINARY_FLAG,
+                 0o600)
     try:
         if hasattr(os, "fchmod"):
             os.fchmod(fd, 0o600)
