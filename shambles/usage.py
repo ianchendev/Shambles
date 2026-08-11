@@ -181,7 +181,7 @@ def parse(blob) -> Usage:
                  fetched_at_ms=int(fetched) if fetched else None)
 
 
-def capture_live(paths, active_name, *, now_ms) -> bool:
+def capture_live(paths, provider_id, active_name, *, now_ms) -> bool:
     """Record the active account's live figures into its own profile.
 
     Without this a profile only learns its usage at the moment you switch
@@ -200,7 +200,7 @@ def capture_live(paths, active_name, *, now_ms) -> bool:
     if not isinstance(live, dict):
         return False
 
-    sidecar = configjson.load(paths.account(active_name))
+    sidecar = configjson.load(paths.account(provider_id, active_name))
     expected = (sidecar.get("oauthAccount") or {}).get("accountUuid")
     if not expected or live.get("accountUuid") != expected:
         return False
@@ -209,5 +209,5 @@ def capture_live(paths, active_name, *, now_ms) -> bool:
         return False
 
     sidecar["usage"] = live
-    configjson.write_atomic(paths.account(active_name), sidecar)
+    configjson.write_atomic(paths.account(provider_id, active_name), sidecar)
     return True

@@ -1,7 +1,10 @@
 import json
+import os
+import stat
 
 import pytest
 
+from conftest import posix_modes_only
 from helpers import NOW, account, make_claude_json, write_json
 from shambles import configjson
 from shambles.errors import ConfigUnreadableError
@@ -23,12 +26,11 @@ def test_load_non_dict_returns_empty(tmp_path):
     assert configjson.load(arr) == {}
 
 
-def test_extract_pulls_only_the_identity(paths):
-    """Usage figures are deliberately not captured -- they are a cache with a
-    server-side truth, and a stashed copy is stale the moment it is written."""
+def test_extract_pulls_only_account_keys(paths):
     data = make_claude_json(paths)
     got = configjson.extract_account_keys(data)
-    assert set(got) == {"oauthAccount"}
+    assert set(got) == set(configjson.ACCOUNT_KEYS)
+    assert "oauthAccount" in got
 
 
 def test_apply_preserves_every_other_key_and_order(paths):
@@ -36,19 +38,23 @@ def test_apply_preserves_every_other_key_and_order(paths):
     before = json.loads(paths.claude_json.read_text(encoding="utf-8"))
 
     configjson.apply_account_keys(
-        paths.claude_json, {"oauthAccount": account("new@example.com")})
+        paths.claude_json,
+        {"oauthAccount": account("new@example.com"),
+         "cachedUsageUtilization": {"accountUuid": "uuid-b"}},
+    )
 
     after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
-    # cachedUsageUtilization is dropped on purpose, so compare the rest
-    expected = [k for k in before if k != "cachedUsageUtilization"]
-    assert list(after.keys()) == expected
     assert after["numStartups"] == before["numStartups"]
     assert after["projects"] == before["projects"]
     assert after["machineID"] == before["machineID"]
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
+    # A usage cache is never carried across a switch: restored, it would
+    # describe whatever the incoming account was doing when it was last
+    # active and read as current. See configjson.STALE_ON_SWITCH.
+    assert "cachedUsageUtilization" not in after
 
 
-def test_apply_with_empty_account_deletes_identity_and_cache(paths):
+def test_apply_with_empty_account_deletes_both_keys(paths):
     make_claude_json(paths)
     configjson.apply_account_keys(paths.claude_json, {})
     after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
@@ -65,7 +71,7 @@ def test_apply_leaves_no_temp_file(paths):
 
 
 def test_sidecar_round_trip(paths):
-    sidecar = paths.account("Work")
+    sidecar = paths.account("claude", "Work")
     sidecar.parent.mkdir(parents=True)
     configjson.write_sidecar(sidecar, {"oauthAccount": account("w@example.com")}, NOW)
 
@@ -76,7 +82,7 @@ def test_sidecar_round_trip(paths):
 
 
 def test_read_missing_sidecar_returns_empty(paths):
-    assert configjson.read_sidecar(paths.account("Ghost")) == {}
+    assert configjson.read_sidecar(paths.account("claude", "Ghost")) == {}
 
 
 def test_backup_copies_and_returns_path(paths):
@@ -155,44 +161,70 @@ def test_preserves_every_unrelated_key_when_splicing(paths):
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
 
 
-# ---- usage figures are a cache, not identity ----------------------------
-# cachedUsageUtilization carries its own fetchedAtMs and is refetched from the
-# server. Restoring a profile's stashed copy re-displays whatever the numbers
-# were when that profile was last active -- hours or days out of date -- which
-# is worse than having none, because the UI cannot tell stale from current.
+@posix_modes_only
+def test_a_leftover_temp_file_does_not_expose_the_next_write(tmp_path, monkeypatch):
+    """Same defect as ``FileStore.write``, in ``write_atomic``'s own temp
+    file: ``O_CREAT``'s mode argument is ignored when the file already
+    exists, so a ``*.shambles-tmp`` left at a loose mode by a crashed run
+    would take the next write's full plaintext payload before anything
+    restricted it.
 
-def test_switching_clears_cached_usage_rather_than_restoring_it(paths):
-    stale = {"oauthAccount": account("work@example.com"),
-             "cachedUsageUtilization": {"fetchedAtMs": 1, "accountUuid": "uuid-a",
-                                        "utilization": {"five_hour": {"utilization": 11}}}}
-    write_json(paths.account("Work"), stale)
-    make_claude_json(paths, email="someone@example.com")
+    Observed at the ``chmod`` call, filtered to regular non-empty files: the
+    one vantage point that catches the bytes at rest under both the old
+    buffered-text implementation and the current descriptor-based one. An
+    earlier version spied on ``os.write``, which the old code never called at
+    all -- so reverting the fix failed with "os.write was never called"
+    rather than with a loose mode, detecting an implementation change instead
+    of an exposure.
+    """
+    target = tmp_path / "config.json"
+    tmp = target.with_name(target.name + configjson.TMP_SUFFIX)
+    tmp.write_bytes(b"stale content from a crashed run")
+    os.chmod(tmp, 0o644)
 
-    configjson.apply_account_keys(
-        paths.claude_json, configjson.read_sidecar(paths.account("Work")))
+    observed = {}
+    real_chmod = os.chmod
 
-    after = configjson.load(paths.claude_json)
-    assert after["oauthAccount"]["emailAddress"] == "work@example.com"
-    assert "cachedUsageUtilization" not in after, \
-        "restored a stale usage cache; Claude Code should refetch instead"
+    def spy(path, mode, *args, **kwargs):
+        try:
+            info = os.stat(path)
+            if stat.S_ISREG(info.st_mode) and info.st_size:
+                observed.setdefault("mode", oct(info.st_mode)[-3:])
+        except OSError:
+            pass
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "chmod", spy)
+    previous = os.umask(0o022)
+    try:
+        configjson.write_atomic(target, {"oauthAccount": {"emailAddress": "a@b.com"}})
+    finally:
+        os.umask(previous)
+
+    assert observed.get("mode") == "600", (
+        f"config was on disk at {observed.get('mode')} before being "
+        f"restricted to 0600")
 
 
-def test_the_outgoing_accounts_usage_never_lingers(paths):
-    """The original reason this key was handled at all: leaving account A's
-    figures behind shows the wrong account's usage under account B."""
-    make_claude_json(paths, email="a@example.com")
-    assert "cachedUsageUtilization" in configjson.load(paths.claude_json)
+@posix_modes_only
+def test_backups_are_locked_down_like_the_rest_of_the_store(paths):
+    """They are copies of ~/.claude.json: no token, but the account's email,
+    organisation and UUIDs. The README promises 0700 throughout the store, and
+    this directory was the one place that promise was not kept."""
+    make_claude_json(paths)
+    dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
 
-    configjson.apply_account_keys(
-        paths.claude_json, {"oauthAccount": account("b@example.com")})
-
-    assert "cachedUsageUtilization" not in configjson.load(paths.claude_json)
+    assert oct(os.stat(paths.backup_dir).st_mode)[-3:] == "700"
+    assert oct(os.stat(dest).st_mode)[-3:] == "600"
 
 
-def test_stashing_does_not_capture_usage(paths):
-    """No point stashing what is never restored."""
-    make_claude_json(paths, email="work@example.com")
-    captured = configjson.extract_account_keys(
-        configjson.load(paths.claude_json))
-    assert "oauthAccount" in captured
-    assert "cachedUsageUtilization" not in captured
+@posix_modes_only
+def test_a_loose_source_does_not_produce_a_loose_backup(paths):
+    """shutil.copy2 carries the source's mode across, so a config the vendor
+    happened to write 0644 would otherwise be snapshotted 0644."""
+    make_claude_json(paths)
+    os.chmod(paths.claude_json, 0o644)
+
+    dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
+
+    assert oct(os.stat(dest).st_mode)[-3:] == "600"

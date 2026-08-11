@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import configjson, state
 from .errors import ShamblesError
+from .paths import ACCOUNT_NAME, CREDENTIALS_NAME
 
 #: Directories inside a profile that hold machine-scoped state and must be
 #: merged rather than picked from one profile. ``plugins`` belongs here for the
@@ -39,6 +40,10 @@ MERGE_JSONL = ("history.jsonl",)
 #: the profile store during migration, after which it is redundant -- and
 #: ~/.claude should look exactly like a stock install.
 LEGACY_SIDECAR = ".shambles.json"
+
+#: The provider every pre-1.0 and v1.0 profile belongs to. There was only one;
+#: both migrations file everything they find under it.
+V1_PROVIDER = "claude"
 
 
 class MigrationError(ShamblesError):
@@ -66,23 +71,40 @@ def _session_count(profile_dir: Path) -> int:
     return sum(1 for _ in projects.rglob("*.jsonl"))
 
 
+def legacy_names(paths) -> list[str]:
+    """Profile directories in the **pre-1.0** store.
+
+    Not :func:`state.profile_names`: that reads the provider-scoped store this
+    migration is trying to reach, which is empty at the point this runs. These
+    profiles live in ``~/.claude-profiles/<Name>/``, each a full copy of
+    ``~/.claude``.
+    """
+    try:
+        entries = sorted(p for p in paths.legacy_profiles_dir.iterdir()
+                         if p.is_dir())
+    except OSError:
+        return []
+    return [p.name for p in entries if not p.name.startswith(".")]
+
+
 def survey(paths) -> Plan:
     """Work out what a migration would do, without touching anything."""
-    names = state.profile_names(paths)
+    names = legacy_names(paths)
     if not names:
         raise MigrationError("No profiles found to migrate.")
 
-    ranked = sorted(names, key=lambda n: _session_count(paths.profile_dir(n)),
+    ranked = sorted(names,
+                    key=lambda n: _session_count(paths.legacy_profiles_dir / n),
                     reverse=True)
     plan = Plan(base=ranked[0], others=ranked[1:])
 
-    base_dir = paths.profile_dir(plan.base)
+    base_dir = paths.legacy_profiles_dir / plan.base
     for name in names:
-        if (paths.profile_dir(name) / ".credentials.json").exists():
+        if (paths.legacy_profiles_dir / name / ".credentials.json").exists():
             plan.credentials_found.append(name)
 
     for name in plan.others:
-        src_root = paths.profile_dir(name)
+        src_root = paths.legacy_profiles_dir / name
         for sub in MERGE_DIRS:
             src = src_root / sub
             if not src.is_dir():
@@ -145,14 +167,14 @@ def run(paths, *, now_ms: int) -> Plan:
         raise MigrationError("~/.claude is not a symlink; nothing to migrate.")
 
     plan = survey(paths)
-    base_dir = paths.profile_dir(plan.base)
+    base_dir = paths.legacy_profiles_dir / plan.base
     if not base_dir.is_dir():
         raise MigrationError(f"Base profile '{plan.base}' is missing.")
 
     # 1. Merge everyone else's machine-scoped state into the base.
     merged = skipped = 0
     for name in plan.others:
-        src_root = paths.profile_dir(name)
+        src_root = paths.legacy_profiles_dir / name
         for sub in MERGE_DIRS:
             src = src_root / sub
             if src.is_dir():
@@ -166,9 +188,9 @@ def run(paths, *, now_ms: int) -> Plan:
     # 2. Stash each profile's identity into the slim store, reading the old
     #    locations before anything is rearranged.
     identities = {}
-    for name in state.profile_names(paths):
-        old_creds = paths.profile_dir(name) / ".credentials.json"
-        old_sidecar = paths.profile_dir(name) / ".shambles.json"
+    for name in legacy_names(paths):
+        old_creds = paths.legacy_profiles_dir / name / ".credentials.json"
+        old_sidecar = paths.legacy_profiles_dir / name / ".shambles.json"
         identities[name] = (
             old_creds.read_bytes() if old_creds.exists() else None,
             configjson.read_sidecar(old_sidecar),
@@ -176,8 +198,8 @@ def run(paths, *, now_ms: int) -> Plan:
 
     active = None
     target = os.path.realpath(paths.claude_dir)
-    for name in state.profile_names(paths):
-        if os.path.realpath(paths.profile_dir(name)) == target:
+    for name in legacy_names(paths):
+        if os.path.realpath(paths.legacy_profiles_dir / name) == target:
             active = name
             break
 
@@ -206,14 +228,99 @@ def run(paths, *, now_ms: int) -> Plan:
     #    are already captured in `identities` above.
     (paths.claude_dir / LEGACY_SIDECAR).unlink(missing_ok=True)
 
-    # 5. Write the slim profile store.
+    # 5. Write the slim profile store, provider-scoped. Everything the pre-1.0
+    #    layout held was a Claude login -- there was no second provider.
     for name, (creds, account) in identities.items():
-        paths.ensure_profile(name)
+        paths.ensure_profile(V1_PROVIDER, name)
         if creds is not None:
-            paths.credentials(name).write_bytes(creds)
-            os.chmod(paths.credentials(name), 0o600)
-        configjson.write_sidecar(paths.account(name), account, now_ms)
+            paths.credentials(V1_PROVIDER, name).write_bytes(creds)
+            _lock_down(paths.credentials(V1_PROVIDER, name))
+        configjson.write_sidecar(paths.account(V1_PROVIDER, name), account,
+                                 now_ms)
 
     if active:
-        state.write_active(paths, active)
+        state.write_active(paths, V1_PROVIDER, active)
     return plan
+
+
+#: Files a v1.0 profile could hold. Anything else in there was not ours.
+V1_PROFILE_FILES = (CREDENTIALS_NAME, ACCOUNT_NAME)
+
+
+@dataclass
+class StorePlan:
+    profiles: list = field(default_factory=list)
+    active: str | None = None
+    backups: int = 0
+    source: Path | None = None
+    dest: Path | None = None
+
+
+def store_migration_needed(paths) -> bool:
+    """Whether a v1.0 store exists and has not been migrated yet.
+
+    The presence of ``~/.shambles`` is the "already done" signal, deliberately
+    rather than the absence of the old store: the migration copies, so the old
+    store is still there afterwards and would otherwise retrigger forever.
+    """
+    return paths.legacy_profiles_dir.is_dir() and not paths.library_dir.exists()
+
+
+def migrate_store(paths) -> StorePlan:
+    """Copy ~/.claude-profiles/<Name>/ to ~/.shambles/claude/<Name>/.
+
+    Copies rather than moves. Every profile directory holds a refresh token
+    recoverable only through a fresh verification email, so the old store stays
+    on disk for the user to remove once they are satisfied -- the same posture
+    as the pre-1.0 history merge and as Eject.
+
+    Never overwrites: a file already present in the new store wins, which is
+    what makes running this twice a no-op.
+    """
+    plan = StorePlan(source=paths.legacy_profiles_dir,
+                     dest=paths.library_dir)
+    if not paths.legacy_profiles_dir.is_dir():
+        return plan
+
+    paths.ensure_provider(V1_PROVIDER)
+
+    for entry in sorted(paths.legacy_profiles_dir.iterdir()):
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        paths.ensure_profile(V1_PROVIDER, entry.name)
+        plan.profiles.append(entry.name)
+        for filename in V1_PROFILE_FILES:
+            source = entry / filename
+            dest = paths.profile_dir(V1_PROVIDER, entry.name) / filename
+            if source.is_file() and not dest.exists():
+                shutil.copy2(source, dest)
+                _lock_down(dest)
+
+    # A marker naming a profile that did not come across would surface as
+    # MISSING_PROFILE on a brand-new layout, which is a confusing thing to
+    # greet someone with after an automatic migration.
+    marked = None
+    if paths.legacy_active_marker.is_file():
+        marked = paths.legacy_active_marker.read_text(encoding="utf-8").strip() or None
+    if marked in plan.profiles:
+        plan.active = marked
+        if not paths.active_marker(V1_PROVIDER).exists():
+            paths.active_marker(V1_PROVIDER).write_text(
+                marked + "\n", encoding="utf-8")
+
+    if paths.legacy_backup_dir.is_dir():
+        paths.backup_dir.mkdir(parents=True, exist_ok=True)
+        for snapshot in sorted(paths.legacy_backup_dir.glob("claude.json.*")):
+            dest = paths.backup_dir / snapshot.name
+            if not dest.exists():
+                shutil.copy2(snapshot, dest)
+                plan.backups += 1
+
+    return plan
+
+
+def _lock_down(path: Path) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass

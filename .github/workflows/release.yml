@@ -46,13 +46,23 @@ jobs:
 
       # --windowed only on Windows: it suppresses the console window for a GUI
       # app there. On Linux it would swallow the --version and --help output.
+      #
+      # --add-data is not optional. Provider specs are package data, and
+      # PyInstaller bundles only what it can see imported. Without this the
+      # binary builds green, passes a --version smoke test, and then fails at
+      # runtime the moment it tries to load a provider. The separator differs
+      # by platform, which is why the two lines cannot be merged.
       - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: pyinstaller --onefile --name shambles shambles/__main__.py
+        run: pyinstaller --onefile --name shambles
+             --add-data "shambles/providers/*.json:shambles/providers"
+             shambles/__main__.py
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: pyinstaller --onefile --windowed --name shambles shambles/__main__.py
+        run: pyinstaller --onefile --windowed --name shambles
+             --add-data "shambles/providers/*.json;shambles/providers"
+             shambles/__main__.py
 
       # Both platforms, always. A Linux-only smoke test let a broken Windows
       # binary through once already: PyInstaller runs the entry file as a

@@ -1,0 +1,97 @@
+{
+  "id": "claude",
+  "display_name": "Claude Code",
+  "surfaces": [
+    "Claude Code CLI",
+    "VS Code extension anthropic.claude-code"
+  ],
+  "config_dir": {
+    "env": "CLAUDE_CONFIG_DIR",
+    "default": "~/.claude"
+  },
+  "store": {
+    "darwin": {
+      "kind": "keychain",
+      "service_template": "Claude Code{oauth_suffix}-credentials{config_dir_hash}",
+      "oauth_suffix_env": "CLAUDE_CODE_OAUTH_CLIENT_ID",
+      "oauth_suffix_when_set": "-custom-oauth",
+      "hash_suppress_env": "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+      "account_env": "USER",
+      "account_fallback": "claude-code-user",
+      "account_pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "linux": {
+      "kind": "file",
+      "path": "{config_dir}/.credentials.json",
+      "mode": "0600"
+    },
+    "win32": {
+      "kind": "credman",
+      "service_template": "Claude Code{oauth_suffix}-credentials{config_dir_hash}",
+      "account": "claude-code-user",
+      "chunk_size": 2000
+    }
+  },
+  "liveness": {
+    "kind": "field",
+    "pointer": "claudeAiOauth.refreshTokenExpiresAt",
+    "unit": "epoch_ms",
+    "optional": true,
+    "optional_note": "absent from credentials written by the VS Code extension bundle; a missing value means UNKNOWN, never CLOSED"
+  },
+  "identity": {
+    "kind": "sidecar",
+    "path": "~/.claude.json",
+    "email": "oauthAccount.emailAddress",
+    "display_name": "oauthAccount.displayName",
+    "org": "oauthAccount.organizationName",
+    "plan": "oauthAccount.organizationRateLimitTier",
+    "plan_note": "NOT claudeAiOauth.subscriptionType, which read 'team' for a Max 5x account"
+  },
+  "companion": {
+    "path": "~/.claude.json",
+    "keys": [
+      "oauthAccount",
+      "cachedUsageUtilization"
+    ],
+    "stale_on_switch": [
+      "cachedUsageUtilization"
+    ],
+    "note": "keys absent from the incoming profile are deleted, not left holding the previous account's identity",
+    "stale_note": "cachedUsageUtilization is stashed so a parked profile's card can show its last known figures, but never written back: a cache restored from a switch describes whatever the account was doing days ago and reads as current."
+  },
+  "policy": {
+    "rotates": false,
+    "warn_days": 1,
+    "warn_days_note": "the measured refresh window is roughly four days, so a threshold of seven would render every profile amber permanently"
+  },
+  "login": {
+    "binary": "claude",
+    "command": [
+      "claude",
+      "auth",
+      "login"
+    ],
+    "hint": "Run 'claude auth login' in a terminal.",
+    "email_flag": "--email",
+    "note": "claude auth login opens the browser and runs its own callback server. --email pre-populates the address on the login page."
+  },
+  "provenance": {
+    "client_versions": [
+      "2.1.220",
+      "2.1.221",
+      "2.1.222"
+    ],
+    "measured": "2026-08-06",
+    "platforms_executed": [
+      "darwin"
+    ],
+    "platforms_from_source_only": [
+      "linux",
+      "win32"
+    ],
+    "observed_window_days": 4.0,
+    "observed_on_plan": "claude_max (Max 5x)",
+    "sample_size": 1
+  }
+}

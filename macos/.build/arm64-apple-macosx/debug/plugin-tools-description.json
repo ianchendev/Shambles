@@ -1,0 +1,1147 @@
+{
+  "builtTestProducts" : [
+    {
+      "binaryPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.xctest/Contents/MacOS/ShamblesPackageTests",
+      "packagePath" : "/Users/liunuodi/Desktop/Shambles/macos",
+      "productName" : "ShamblesPackageTests"
+    }
+  ],
+  "copyCommands" : {
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Shambles_ShamblesKitTests.bundle/Fixtures" : {
+      "inputs" : [
+        {
+          "kind" : "directory",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/Fixtures"
+        }
+      ],
+      "outputs" : [
+        {
+          "kind" : "directory",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Shambles_ShamblesKitTests.bundle/Fixtures"
+        }
+      ]
+    }
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.ShamblesApp-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build/sources",
+      "importPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesApp/ShamblesApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesKit.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesUI.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "ShamblesApp",
+      "moduleOutputPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesApp.swiftmodule",
+      "objects" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build/ShamblesApp.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "ShamblesApp_main",
+        "-parse-as-library",
+        "-swift-version",
+        "6",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "macos"
+      ],
+      "outputFileMapPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build/ShamblesApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesApp.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesApp/ShamblesApp.swift"
+      ],
+      "tempsPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.ShamblesKit-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/sources",
+      "importPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/AccountsViewModel.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/Contract.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/ShamblesService.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "ShamblesKit",
+      "moduleOutputPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesKit.swiftmodule",
+      "objects" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/AccountsViewModel.swift.o",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/Contract.swift.o",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/ShamblesService.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/include/ShamblesKit-Swift.h",
+        "-swift-version",
+        "6",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "macos"
+      ],
+      "outputFileMapPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/AccountsViewModel.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/Contract.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/ShamblesService.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesKit.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/AccountsViewModel.swift",
+        "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/Contract.swift",
+        "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/ShamblesService.swift"
+      ],
+      "tempsPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.ShamblesKitTests-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/sources",
+      "importPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/AccountsViewModelTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/CLIServiceIntegrationTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/ContractTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/GoldenFixtureTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/DerivedSources/resource_bundle_accessor.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<ShamblesKitTests-arm64-apple-macosx-debug.module-resources>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesKit.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "ShamblesKitTests",
+      "moduleOutputPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesKitTests.swiftmodule",
+      "objects" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/AccountsViewModelTests.swift.o",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/CLIServiceIntegrationTests.swift.o",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/ContractTests.swift.o",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/GoldenFixtureTests.swift.o",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/resource_bundle_accessor.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-Xfrontend",
+        "-enable-cross-import-overlays",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_AVAILABLE",
+        "-module-cache-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-swift-version",
+        "6",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "macos"
+      ],
+      "outputFileMapPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/AccountsViewModelTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/CLIServiceIntegrationTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/ContractTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/GoldenFixtureTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/resource_bundle_accessor.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesKitTests.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/AccountsViewModelTests.swift",
+        "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/CLIServiceIntegrationTests.swift",
+        "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/ContractTests.swift",
+        "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/GoldenFixtureTests.swift",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/DerivedSources/resource_bundle_accessor.swift"
+      ],
+      "tempsPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.ShamblesPackageTests-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/sources",
+      "importPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.derived/runner.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesKitTests.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "ShamblesPackageTests",
+      "moduleOutputPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesPackageTests.swiftmodule",
+      "objects" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/runner.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-Xfrontend",
+        "-enable-cross-import-overlays",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/include/ShamblesPackageTests-Swift.h",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "macos"
+      ],
+      "outputFileMapPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/runner.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesPackageTests.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.derived/runner.swift"
+      ],
+      "tempsPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build",
+      "wholeModuleOptimization" : false
+    },
+    "C.ShamblesUI-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/sources",
+      "importPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesUI/GlassBackground.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesUI/PanelView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesKit.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "ShamblesUI",
+      "moduleOutputPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesUI.swiftmodule",
+      "objects" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/GlassBackground.swift.o",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/PanelView.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/include/ShamblesUI-Swift.h",
+        "-swift-version",
+        "6",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "macos"
+      ],
+      "outputFileMapPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/GlassBackground.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/PanelView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules/ShamblesUI.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesUI/GlassBackground.swift",
+        "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesUI/PanelView.swift"
+      ],
+      "tempsPath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "ShamblesApp" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "ShamblesApp",
+      "-package-name",
+      "macos",
+      "-c",
+      "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesApp/ShamblesApp.swift",
+      "-I",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "ShamblesApp_main",
+      "-parse-as-library",
+      "-swift-version",
+      "6",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "ShamblesKit" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "ShamblesKit",
+      "-package-name",
+      "macos",
+      "-c",
+      "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/AccountsViewModel.swift",
+      "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/Contract.swift",
+      "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/ShamblesService.swift",
+      "-I",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/include/ShamblesKit-Swift.h",
+      "-swift-version",
+      "6",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "ShamblesKitTests" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "ShamblesKitTests",
+      "-package-name",
+      "macos",
+      "-c",
+      "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/AccountsViewModelTests.swift",
+      "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/CLIServiceIntegrationTests.swift",
+      "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/ContractTests.swift",
+      "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/GoldenFixtureTests.swift",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/DerivedSources/resource_bundle_accessor.swift",
+      "-I",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-Xfrontend",
+      "-enable-cross-import-overlays",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_AVAILABLE",
+      "-module-cache-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-swift-version",
+      "6",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "ShamblesPackageTests" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "ShamblesPackageTests",
+      "-package-name",
+      "macos",
+      "-c",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.derived/runner.swift",
+      "-I",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-Xfrontend",
+      "-enable-cross-import-overlays",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/include/ShamblesPackageTests-Swift.h",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "ShamblesUI" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "ShamblesUI",
+      "-package-name",
+      "macos",
+      "-c",
+      "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesUI/GlassBackground.swift",
+      "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesUI/PanelView.swift",
+      "-I",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/include/ShamblesUI-Swift.h",
+      "-swift-version",
+      "6",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "ShamblesApp" : [
+      "ShamblesUI",
+      "ShamblesKit"
+    ],
+    "ShamblesKit" : [
+
+    ],
+    "ShamblesKitTests" : [
+      "ShamblesKit"
+    ],
+    "ShamblesPackageTests" : [
+      "ShamblesKitTests",
+      "ShamblesKit"
+    ],
+    "ShamblesUI" : [
+      "ShamblesKit"
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.derived/runner.swift" : {
+      "inputs" : [
+
+      ],
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.derived/runner.swift"
+        }
+      ]
+    }
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp-entitlement.plist"
+    },
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesApp/ShamblesApp.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build/sources"
+    },
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.build/ShamblesApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/AccountsViewModel.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/Contract.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/ShamblesService.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/GlassBackground.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/PanelView.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesApp.product/Objects.LinkFileList"
+    },
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/AccountsViewModel.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/Contract.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesKit/ShamblesService.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/sources"
+    },
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/AccountsViewModelTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/CLIServiceIntegrationTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/ContractTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Tests/ShamblesKitTests/GoldenFixtureTests.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/DerivedSources/resource_bundle_accessor.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/sources"
+    },
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.derived/runner.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/sources"
+    },
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/AccountsViewModel.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/Contract.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKit.build/ShamblesService.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/AccountsViewModelTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/CLIServiceIntegrationTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/ContractTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/GoldenFixtureTests.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesKitTests.build/resource_bundle_accessor.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.build/runner.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesPackageTests.product/Objects.LinkFileList"
+    },
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesUI/GlassBackground.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/liunuodi/Desktop/Shambles/macos/Sources/ShamblesUI/PanelView.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/ShamblesUI.build/sources"
+    },
+    "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/liunuodi/Desktop/Shambles/macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}
