@@ -95,6 +95,7 @@ def test_describe_is_a_non_empty_line(store):
 # -- store-specific properties ------------------------------------------------
 
 
+@posix_modes_only
 def test_file_store_writes_owner_only_permissions(tmp_path):
     store = FileStore(tmp_path / "creds.json", mode=0o600)
     store.write(b'{"a":1}')
