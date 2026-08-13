@@ -174,15 +174,41 @@ class Tooltip:
 
     def __init__(self, widget, text, theme=None):
         self.widget, self.text, self.theme, self.tip = widget, text, theme, None
-        widget.bind("<Enter>", self._show, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-        # refresh() destroys every row widget on each switch. Without this a
-        # tooltip visible at that moment never sees <Leave> and is orphaned.
-        widget.bind("<Destroy>", self._hide, add="+")
+        # Bound to the widget *and* everything inside it. Tk delivers <Enter>
+        # to the deepest widget under the pointer, so a tooltip on a container
+        # whose children cover it would never fire.
+        for target in self._tree(widget):
+            target.bind("<Enter>", self._show, add="+")
+            target.bind("<Leave>", self._maybe_hide, add="+")
+            # refresh() destroys every row widget on each switch. Without this
+            # a tooltip visible at that moment never sees <Leave> and is
+            # orphaned on the desktop.
+            target.bind("<Destroy>", self._hide, add="+")
+
+    @staticmethod
+    def _tree(widget):
+        found = [widget]
+        for child in widget.winfo_children():
+            found.extend(Tooltip._tree(child))
+        return found
+
+    def _maybe_hide(self, _event=None):
+        """Ignore a <Leave> that is only the pointer crossing into a child."""
+        try:
+            under = self.widget.winfo_containing(
+                self.widget.winfo_pointerx(), self.widget.winfo_pointery())
+        except tk.TclError:
+            under = None
+        if under is not None and under in self._tree(self.widget):
+            return
+        self._hide()
 
     def _show(self, _event=None):
         if self.tip or not self.text:
             return
+        # One at a time. Crossing from a chip onto a bar could otherwise leave
+        # both on screen, overlapping each other.
+        Tooltip.hide_all()
         self.tip = tk.Toplevel(self.widget)
         self.tip.wm_overrideredirect(True)
         opts = {}
@@ -400,11 +426,11 @@ class ShamblesApp(tk.Tk):
         self.configure(bg=t["window"])
         self.resizable(False, False)
 
-        self.rows = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
-        self.rows.pack(fill="both", expand=True)
-
+        # The footer is packed before the card list so it claims the
+        # full-width bottom strip. Packed after, it would take a right-hand
+        # slab instead and strand the cards in a narrow column.
         footer = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
-        footer.pack(fill="x")
+        footer.pack(side="bottom", fill="x")
         ttk.Button(footer, text=f"{self.glyph['add']}  Add Account", style="Accent.TButton",
                    command=self.on_add).pack(side="right")
         self.eject_button = ttk.Button(footer, text="Eject",
@@ -415,7 +441,33 @@ class ShamblesApp(tk.Tk):
                 "Stop using Shambles and hand every account back as a stock "
                 "install. Nothing is deleted.", t)
 
-        self.minsize(WINDOW_WIDTH, 0)
+        # The card list scrolls only when it has to. A fixed-size window that
+        # grows with every profile eventually pushes the footer off the bottom,
+        # and with no resize handle those buttons cannot be reached again. Two
+        # provider groups make that far easier to hit than one.
+        body = tk.Frame(self, bg=t["window"])
+        body.pack(fill="both", expand=True)
+
+        self._viewport = tk.Canvas(body, bg=t["window"], highlightthickness=0,
+                                   bd=0)
+        self._scrollbar = ttk.Scrollbar(body, orient="vertical",
+                                        command=self._viewport.yview)
+        self._viewport.configure(yscrollcommand=self._scrollbar.set)
+        self._viewport.pack(side="left", fill="both", expand=True)
+
+        self.rows = tk.Frame(self._viewport, bg=t["window"], padx=GAP_L,
+                             pady=GAP_L)
+        self._rows_window = self._viewport.create_window(
+            (0, 0), window=self.rows, anchor="nw")
+        self.rows.bind("<Configure>", self._fit_viewport)
+        self._viewport.bind(
+            "<Configure>",
+            lambda e: self._viewport.itemconfigure(self._rows_window,
+                                                   width=e.width))
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_all(seq, self._on_wheel)
+
+        self.minsize(WINDOW_WIDTH, MIN_HEIGHT)
 
         self._pump = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -732,6 +784,33 @@ class ShamblesApp(tk.Tk):
             summary_font=t.name,
         )
 
+    def _fit_viewport(self, _event=None):
+        """Size the canvas to its content, up to the screen-height cap.
+
+        Below the cap the window behaves exactly as before -- no scrollbar and
+        nothing to scroll.
+        """
+        self._viewport.configure(scrollregion=self._viewport.bbox("all"))
+        needed = self.rows.winfo_reqheight()
+        room = int(self.winfo_screenheight() * MAX_HEIGHT_FRACTION) - 200
+        room = max(room, 200)
+        self._viewport.configure(height=min(needed, room))
+        if needed > room:
+            self._scrollbar.pack(side="right", fill="y")
+        else:
+            self._scrollbar.pack_forget()
+            self._viewport.yview_moveto(0)
+
+    def _on_wheel(self, event):
+        """Wheel scrolling, but only while there is somewhere to scroll."""
+        try:
+            if not self._scrollbar.winfo_ismapped():
+                return
+        except tk.TclError:
+            return
+        down = getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0
+        self._viewport.yview_scroll(2 if down else -2, "units")
+
     def _render_usage(self, parent, bg, profile):
         """Session and weekly figures as full-width rows beneath the identity.
 
@@ -837,17 +916,17 @@ class ShamblesApp(tk.Tk):
                 else RENAME_HINT, t)
 
         if not profile.active:
+            # Inactive profiles only. The active one has no remove control at
+            # all, so the login in use cannot be deleted by a misclick. The gap
+            # between the two is deliberate: one destroys a login and sits
+            # beside the button reached most often.
+            remove = ttk.Button(top, text=self.glyph["remove"],
+                                style="Danger.TButton", width=2,
+                                command=lambda p=profile: self.on_remove(provider, p.name))
+            remove.pack(side="right")
             ttk.Button(top, text="Switch", style="Switch.TButton",
                        command=lambda p=profile: self.on_switch(provider, p.name)
-                       ).pack(side="right")
-            # Inactive profiles only. The active one has no ✕ at all, so the
-            # login you are currently using cannot be deleted by a misclick.
-            remove = ttk.Button(top, text=self.glyph["remove"], style="Danger.TButton", width=2,
-                                command=lambda p=profile: self.on_remove(provider, p.name))
-            # Sits inboard of Switch: the rightmost slot is the easiest to hit,
-            # and that should belong to the action used constantly rather than
-            # the one that destroys a login. The gap is deliberate too.
-            remove.pack(side="right", padx=(0, GAP_M))
+                       ).pack(side="right", padx=(0, GAP_M))
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
                             "deleted and that account needs a new sign-in.", t)
 

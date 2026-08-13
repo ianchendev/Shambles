@@ -543,3 +543,79 @@ def test_the_active_account_records_its_own_figures(paths, make_app):
 
     stashed = configjson.load(paths.account("claude", "Work")).get("usage")
     assert stashed, "the active account's figures were not recorded"
+
+
+def test_switch_sits_left_of_the_remove_control(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    pos = {}
+    for w in _every_widget(app):
+        try:
+            label = str(w.cget("text"))
+        except tk.TclError:
+            continue
+        if label in ("Switch", app.glyph["remove"]):
+            pos[label] = w.winfo_rootx()
+    assert pos["Switch"] < pos[app.glyph["remove"]], "expected [Switch][remove]"
+
+
+def test_the_window_never_grows_past_the_screen(paths, make_app, monkeypatch):
+    """Two provider groups make this far easier to hit than one, and there is
+    no resize handle to recover a footer pushed off the bottom."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import gui
+
+    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 0.12)
+    for i in range(10):
+        make_profile(paths, "claude", f"Account{i}", email=f"a{i}@example.com",
+                     active=(i == 0))
+    make_claude_json(paths, email="a0@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert app._scrollbar.winfo_ismapped(), "no scrollbar despite overflowing"
+    assert app.winfo_reqheight() < 10 * 150, "window grew with every profile"
+
+
+def test_no_scrollbar_when_everything_fits(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert not app._scrollbar.winfo_ismapped(), "scrollbar shown unnecessarily"
+
+
+def test_nothing_is_stranded_beside_the_card_list(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    width = app.winfo_width()
+    for child in app.winfo_children():
+        try:
+            child.pack_info()
+        except tk.TclError:
+            continue
+        assert child.winfo_width() == width, (
+            f"{type(child).__name__} is {child.winfo_width()}px in a "
+            f"{width}px window")
