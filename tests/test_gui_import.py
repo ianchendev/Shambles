@@ -396,3 +396,356 @@ def test_save_is_offered_for_a_credential_with_no_readable_identity(paths, make_
     app.refresh()
 
     assert "Save current login" in _all_text(app.rows)
+
+
+# ---- restored after the multi-provider merge disconnected them ----------
+
+def _every_widget(widget, found=None):
+    found = [] if found is None else found
+    for child in widget.winfo_children():
+        found.append(child)
+        _every_widget(child, found)
+    return found
+
+
+def _label_texts(app):
+    out = []
+    for w in _every_widget(app):
+        try:
+            out.append(str(w.cget("text")))
+        except tk.TclError:
+            pass
+    return out
+
+
+def test_no_control_renders_as_a_missing_glyph(paths, make_app):
+    """Ubuntu has no U+FF0B, so a hardcoded ＋ draws a box. Every decorative
+    glyph must be one the font can actually draw."""
+    from shambles import theme
+
+    app = make_app(paths)
+    app.update()
+
+    tofu = app.theme.chip.measure(theme.MISSING_PROBE)
+    for text in _label_texts(app):
+        for ch in text:
+            if ch.isascii() or ch.isspace():
+                continue
+            assert app.theme.chip.measure(ch) != tofu, (
+                f"{ch!r} (U+{ord(ch):04X}) in {text!r} renders as a box")
+
+
+def test_a_long_profile_name_does_not_stretch_the_window(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import theme
+
+    make_profile(paths, "claude", "A" * 60, email="long@example.com",
+                 active=True)
+    make_claude_json(paths, email="long@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert app.winfo_reqwidth() <= theme.WINDOW_WIDTH, (
+        f"a 60-character name took the window to {app.winfo_reqwidth()}px")
+
+
+def _usage_blob(session=None, week=None, fetched=None, uuid="uuid-a"):
+    limits = []
+    if session is not None:
+        limits.append({"kind": "session", "percent": session,
+                       "severity": "normal"})
+    if week is not None:
+        limits.append({"kind": "weekly_all", "percent": week,
+                       "severity": "warning"})
+    return {"fetchedAtMs": fetched, "accountUuid": uuid,
+            "utilization": {"limits": limits}}
+
+
+def _bar_fills(app):
+    out = []
+    for w in _every_widget(app):
+        if not isinstance(w, tk.Frame):
+            continue
+        try:
+            info = w.place_info()
+        except tk.TclError:
+            continue
+        if info and info.get("relwidth"):
+            out.append((str(w.cget("bg")), float(info["relwidth"])))
+    return out
+
+
+def test_the_active_claude_card_draws_usage_bars(paths, make_app):
+    from helpers import (make_claude_json, make_live_claude_login, make_profile)
+    from shambles import switcher
+
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": _usage_blob(43, 89, switcher.now_ms())})
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    text = _label_texts(app)
+    assert "session" in text and "43%" in text
+    assert "week" in text and "89%" in text
+
+
+def test_a_bar_goes_red_at_eighty_percent(paths, make_app):
+    from helpers import (make_claude_json, make_live_claude_login, make_profile)
+    from shambles import switcher
+
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": _usage_blob(43, 89, switcher.now_ms())})
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    fills = _bar_fills(app)
+    assert len(fills) == 2, f"expected two bars, got {len(fills)}"
+    assert fills[0][0] == app.theme["accent"], "43% should not be red"
+    assert fills[1][0] == app.theme["chip_gone_fg"], "89% should be red"
+
+
+def test_a_provider_publishing_no_usage_shows_no_bars(paths, make_app):
+    """Codex exposes nothing readable; that is a supported state, not a gap."""
+    from helpers import make_profile
+
+    make_profile(paths, "codex", "Personal", email="me@example.com", active=True)
+
+    app = make_app(paths)
+    app.update()
+
+    assert not _bar_fills(app)
+
+
+def test_the_active_account_records_its_own_figures(paths, make_app):
+    """Without this a profile only learns its usage when switched away from,
+    so the account in use is the one guaranteed to render blank."""
+    from helpers import (make_claude_json, make_live_claude_login, make_profile,
+                         write_json, account as acct)
+    from shambles import configjson, switcher
+
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    write_json(paths.account("claude", "Work"),
+               {"oauthAccount": acct("work@example.com", uuid="uuid-a")})
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": _usage_blob(30, 40, switcher.now_ms())})
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    stashed = configjson.load(paths.account("claude", "Work")).get("usage")
+    assert stashed, "the active account's figures were not recorded"
+
+
+def test_switch_sits_left_of_the_remove_control(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    pos = {}
+    for w in _every_widget(app):
+        try:
+            label = str(w.cget("text"))
+        except tk.TclError:
+            continue
+        if label in ("Switch", app.glyph["remove"]):
+            pos[label] = w.winfo_rootx()
+    assert pos["Switch"] < pos[app.glyph["remove"]], "expected [Switch][remove]"
+
+
+def test_the_window_never_grows_past_the_screen(paths, make_app, monkeypatch):
+    """Two provider groups make this far easier to hit than one, and there is
+    no resize handle to recover a footer pushed off the bottom."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import gui
+
+    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 0.12)
+    for i in range(10):
+        make_profile(paths, "claude", f"Account{i}", email=f"a{i}@example.com",
+                     active=(i == 0))
+    make_claude_json(paths, email="a0@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert app._scrollbar.winfo_ismapped(), "no scrollbar despite overflowing"
+    assert app.winfo_reqheight() < 10 * 150, "window grew with every profile"
+
+
+def test_no_scrollbar_when_everything_fits(paths, make_app, monkeypatch):
+    """Pinned rather than trusting the display: CI runs on a 768px virtual
+    screen, where the cap is genuinely tight enough to matter."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import gui
+
+    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 0.9)
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert not app._scrollbar.winfo_ismapped(), "scrollbar shown unnecessarily"
+
+
+def test_nothing_is_stranded_beside_the_card_list(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    width = app.winfo_width()
+    for child in app.winfo_children():
+        try:
+            child.pack_info()
+        except tk.TclError:
+            continue
+        assert child.winfo_width() == width, (
+            f"{type(child).__name__} is {child.winfo_width()}px in a "
+            f"{width}px window")
+
+
+def test_each_provider_group_names_its_own_active_account(paths, make_app):
+    """One window-wide header cannot represent two providers, each with its
+    own active account; the treatment repeats per group instead."""
+    from helpers import (make_claude_json, make_live_claude_login,
+                         make_live_codex_login, make_profile)
+
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_profile(paths, "codex", "Personal", email="me@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_claude_login(paths)
+    make_live_codex_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    text = _label_texts(app)
+    assert "CLAUDE CODE" in text, "provider name missing from its group"
+    assert "CODEX" in text
+    assert "Work" in text and "Personal" in text
+
+
+def test_a_provider_with_no_active_account_says_so(paths, make_app):
+    app = make_app(paths)
+    app.update()
+    assert "Not signed in" in _label_texts(app)
+
+
+def test_a_very_long_active_name_does_not_stretch_the_header(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import theme
+
+    make_profile(paths, "claude", "Q" * 70, email="q@example.com", active=True)
+    make_claude_json(paths, email="q@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert app.winfo_reqwidth() <= theme.WINDOW_WIDTH
+
+
+def test_the_height_cap_measures_chrome_rather_than_assuming_it(paths, make_app):
+    """A hardcoded allowance is wrong by however much the header and footer
+    differ from it, and they differ by font, platform and how many warnings
+    are showing. Guessing 200px where the real figure was 78 cost the list
+    122px and put a scrollbar on a single-profile window."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import gui
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    chrome = sum(c.winfo_reqheight() for c in app.winfo_children()
+                 if c is not app._body)
+    cap = int(app.winfo_screenheight() * gui.MAX_HEIGHT_FRACTION)
+    # the viewport is given whatever is left, never a fixed guess
+    assert app._viewport.winfo_reqheight() <= cap - chrome
+
+
+def test_the_footer_offers_a_refresh(paths, make_app):
+    """The usage tooltip tells you to press it, so it has to exist."""
+    app = make_app(paths)
+    app.update()
+    assert app.glyph["refresh"] in _label_texts(app), "no refresh control"
+
+
+def test_refresh_only_reads(paths, make_app):
+    """Safe to press at any time: no switch, no credential written, nothing a
+    running session would notice."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import state
+    from shambles.providers import all_providers
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    claude = [p for p in all_providers() if p.id == "claude"][0]
+    before = (paths.claude_json.read_bytes(),
+              paths.credentials("claude", "Other").read_bytes(),
+              state.read_active(paths, "claude"))
+
+    app.refresh()
+    app.update()
+
+    assert paths.claude_json.read_bytes() == before[0]
+    assert paths.credentials("claude", "Other").read_bytes() == before[1]
+    assert state.read_active(paths, "claude") == before[2]
+
+
+def test_a_healthy_account_still_reveals_its_expiry_on_hover(paths, make_app):
+    """DD-1 keeps durations off the face but says the raw timestamps stay
+    available in tooltips. With no chip rendered for a healthy account there
+    was nothing to hover, so the number was unreachable."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    # The group header shows the active account's name too, and that copy
+    # carries no tooltip -- take the one on the card.
+    names = [w for w in _every_widget(app)
+             if isinstance(w, tk.Label) and str(w.cget("text")) == "Work"
+             and w.bind("<Enter>")]
+    assert names, "profile name on the card is not hoverable"
+    names[0].event_generate("<Enter>")
+    app.update_idletasks()
+    assert gui.Tooltip._open, "the name raises no tooltip"
+    text = list(gui.Tooltip._open)[0].text
+    assert "expires" in text.lower(), f"no expiry in the hover: {text!r}"
+    gui.Tooltip.hide_all()
