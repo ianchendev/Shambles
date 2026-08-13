@@ -124,3 +124,65 @@ def test_a_desktop_opener_returning_one_is_still_a_failure():
 
     assert login.open_url("https://x.example", wsl=False,
                           which=lambda c: f"/x/{c}", runner=runner) is False
+
+
+# ---- the three environments this ships into -----------------------------
+
+def test_native_windows_has_no_posix_opener_and_must_fall_back():
+    """None of xdg-open, gio or sensible-browser exists on Windows, so
+    open_url finds nothing and the caller has to have a fallback."""
+    assert login.browser_commands(wsl=False, which=lambda c: None) == []
+    assert login.open_url("https://x.example", wsl=False,
+                          which=lambda c: None,
+                          runner=lambda *a, **k: None) is False
+
+
+def test_the_dialog_falls_back_to_webbrowser(make_app, paths, monkeypatch):
+    """On Windows that fallback is the whole mechanism -- webbrowser uses
+    os.startfile there. If it is ever dropped, Windows silently loses the
+    ability to open a sign-in link."""
+    import tkinter as tk
+    import webbrowser
+    from shambles import gui
+
+    app = make_app(paths)
+    dialog = gui.LoginDialog.__new__(gui.LoginDialog)
+    tk.Toplevel.__init__(dialog, app)
+    dialog.theme = app.theme
+    dialog._url = "https://x.example/authorize?a=1&b=2"
+    dialog.copy_button = tk.Button(dialog)
+
+    monkeypatch.setattr(login, "open_url", lambda *a, **k: False)
+    called = []
+    monkeypatch.setattr(webbrowser, "open", lambda u: called.append(u) or True)
+
+    gui.LoginDialog._open_url(dialog)
+
+    assert called == [dialog._url], "webbrowser fallback was not reached"
+    dialog.destroy()
+
+
+def test_the_link_is_copied_before_any_opener_is_tried(make_app, paths,
+                                                       monkeypatch):
+    """explorer.exe's return code cannot distinguish success from failure, so
+    the clipboard is what makes 'did it open?' not matter."""
+    import tkinter as tk
+    from shambles import gui
+
+    app = make_app(paths)
+    dialog = gui.LoginDialog.__new__(gui.LoginDialog)
+    tk.Toplevel.__init__(dialog, app)
+    dialog.theme = app.theme
+    dialog._url = "https://x.example/authorize?a=1&b=2"
+    dialog.copy_button = tk.Button(dialog)
+
+    order = []
+    monkeypatch.setattr(gui.LoginDialog, "_copy_url",
+                        lambda self: order.append("copy"))
+    monkeypatch.setattr(login, "open_url",
+                        lambda *a, **k: order.append("open") or True)
+
+    gui.LoginDialog._open_url(dialog)
+
+    assert order == ["copy", "open"], f"wrong order: {order}"
+    dialog.destroy()
