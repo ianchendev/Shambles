@@ -6,7 +6,7 @@ import sys
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from . import eject, login, migrate, profiles, state, switcher
+from . import eject, login, migrate, profiles, state, switcher, usage
 from . import providers as provider_registry
 from .errors import ShamblesError
 from .paths import Paths
@@ -45,6 +45,44 @@ GLYPH_SPEC = {
     "add": (("＋", "+"), "+"),
     "warn": (("⚠", "△"), "!"),
 }
+
+USAGE_LABELS = {"session": "session", "week": "week"}
+
+#: Bar geometry. The track fills whatever width the row is given, so only the
+#: height and the fixed label/value columns are set here.
+BAR_HEIGHT = 8
+BAR_LABEL_WIDTH = 8
+BAR_VALUE_WIDTH = 5
+
+#: Fill colour per display severity. Red past usage.RED_AT, matching the
+#: vendor's own meter; amber only when the vendor itself flags something below
+#: that; otherwise the ordinary accent.
+BAR_FILL = {"ok": "accent", "soon": "chip_soon_fg", "gone": "chip_gone_fg"}
+
+#: Shown instead of bars when a provider publishes figures but has none yet.
+#: Blank space reads as a broken widget; saying why does not. A provider that
+#: publishes nothing at all renders neither, since there is nothing to explain.
+NO_USAGE_ACTIVE = "usage appears once you run it"
+NO_USAGE_IDLE = "no usage recorded yet"
+
+USAGE_TOOLTIP = (
+    "{label} usage: {percent}%{resets}\n\n"
+    "Read from the figures the vendor caches for this account. {freshness}"
+)
+
+FRESH_NOTE = "Updated as you work."
+#: For the account signed in as. An old figure here just means nothing has
+#: refreshed it lately, not that you left.
+IDLE_NOTE = (
+    "Last updated {age}. It refreshes as you work, so run a session or press "
+    "{refresh} to pick up a newer figure."
+)
+#: For an account not signed in as, where the number really is frozen.
+STALE_NOTE = (
+    "Last updated {age}, while this account was active — it has not been "
+    "signed in since, so the real figure may have moved on. Switch to it to "
+    "see a current number."
+)
 
 #: Gap between a widget and its tooltip, and the margin kept from screen edges.
 TOOLTIP_OFFSET = 12
@@ -529,6 +567,12 @@ class ShamblesApp(tk.Tk):
                        style="Shambles.TButton",
                        command=lambda p=provider: self.on_save(p)).pack(side="right")
 
+        # Record the active account's live figures first, so its own card has
+        # something to show rather than being the one guaranteed to be blank.
+        # A no-op unless the vendor blob is present and provably this account's.
+        usage.capture_live(self.paths, provider.id, current.profile,
+                           now_ms=switcher.now_ms())
+
         found = profiles.discover(self.paths, provider, current.profile,
                                   switcher.now_ms(), platform=self.platform)
         usable = login.available(provider)
@@ -688,6 +732,78 @@ class ShamblesApp(tk.Tk):
             summary_font=t.name,
         )
 
+    def _render_usage(self, parent, bg, profile):
+        """Session and weekly figures as full-width rows beneath the identity.
+
+        Rendered only for providers that publish figures at all -- Codex
+        exposes nothing readable, and an explanatory line there would be
+        explaining an absence that is permanent rather than temporary.
+        """
+        if not profile.publishes_usage:
+            return
+
+        t = self.theme
+        now = switcher.now_ms()
+
+        if not profile.usage:
+            tk.Label(parent,
+                     text=NO_USAGE_ACTIVE if profile.active else NO_USAGE_IDLE,
+                     font=t.chip, bg=bg, fg=t["faint"], anchor="w",
+                     ).pack(fill="x", pady=(GAP_S, 0))
+            return
+
+        stale = profile.usage.is_stale(now)
+        age = profile.usage.age_label(now)
+
+        for index, bar in enumerate(profile.usage.bars):
+            row = tk.Frame(parent, bg=bg)
+            row.pack(fill="x", pady=(GAP_S if index == 0 else GAP_XS, 0))
+
+            tk.Label(row, text=USAGE_LABELS.get(bar.label, bar.label),
+                     font=t.chip, bg=bg,
+                     fg=t["faint"] if stale else t["muted"],
+                     width=BAR_LABEL_WIDTH, anchor="w").pack(side="left")
+
+            # Packed right-to-left: the icon sits outermost, the value inside
+            # it, and the track then takes whatever is left.
+            info = tk.Label(row, text=self.glyph["info"], font=t.chip, bg=bg,
+                            fg=t["faint"], cursor="hand2")
+            info.pack(side="right", padx=(GAP_XS, 0))
+
+            tk.Label(row, text=f"{bar.percent}%", font=t.chip, bg=bg,
+                     fg=t["faint"] if stale else t["text"],
+                     width=BAR_VALUE_WIDTH, anchor="e").pack(side="right",
+                                                             padx=(GAP_S, 0))
+
+            track = tk.Frame(row, bg=t["border"], height=BAR_HEIGHT)
+            track.pack(side="left", fill="x", expand=True)
+            track.pack_propagate(False)
+            fill = t["faint"] if stale else t[BAR_FILL[bar.display_severity]]
+            if bar.fill > 0:
+                tk.Frame(track, bg=fill).place(
+                    relwidth=bar.fill, relheight=1.0, x=0, y=0)
+
+            resets = bar.resets_label()
+            if not stale:
+                freshness = FRESH_NOTE
+            elif profile.active:
+                freshness = IDLE_NOTE.format(age=age,
+                                             refresh=self.glyph["refresh"])
+            else:
+                freshness = STALE_NOTE.format(age=age)
+            # Bound to the icon alone. A whole row lighting up as the pointer
+            # crossed it was too eager to live with.
+            Tooltip(info, USAGE_TOOLTIP.format(
+                label=USAGE_LABELS.get(bar.label, bar.label).capitalize(),
+                percent=bar.percent,
+                resets=f", resets {resets}" if resets else "",
+                freshness=freshness), t)
+
+        if stale and age:
+            tk.Label(parent, text=f"as of {age}", font=t.chip, bg=bg,
+                     fg=t["faint"], anchor="e").pack(fill="x",
+                                                     pady=(GAP_XS, 0))
+
     def _render_card(self, provider, profile):
         """One profile as a bordered card, accented when it is the active one."""
         t = self.theme
@@ -748,6 +864,8 @@ class ShamblesApp(tk.Tk):
                             bg=t[bg_key], fg=t[fg_key], padx=GAP_S, pady=1)
             chip.pack(side="left", padx=(GAP_S, 0))
             Tooltip(chip, chip_tooltip(profile), t)
+
+        self._render_usage(card, bg, profile)
 
     # -- actions ----------------------------------------------------------
 

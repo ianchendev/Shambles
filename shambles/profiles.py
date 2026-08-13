@@ -50,6 +50,10 @@ class Profile:
     #: stashed-and-aged for the rest; empty when neither is available, which
     #: is every profile of a provider that publishes no usage at all.
     usage: "usage_mod.Usage" = usage_mod.EMPTY
+    #: Whether this provider exposes usage figures at all. Distinguishes "none
+    #: recorded yet", which is worth explaining, from "never will be", which is
+    #: not -- Codex publishes nothing readable.
+    publishes_usage: bool = False
 
 
 def warning(profile: Profile) -> str | None:
@@ -130,6 +134,7 @@ def discover(paths, provider, active_name: str | None, now_ms: int, *,
             plan=identity.plan,
             liveness=provider.liveness(blob, now_ms=now_ms),
             usage=resolve_usage(paths, provider, name, active_name),
+            publishes_usage=bool(provider.spec.get("companion")),
         ))
     return found
 
