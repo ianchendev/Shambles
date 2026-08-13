@@ -104,6 +104,12 @@ def open_url(url, *, wsl=None, which=shutil.which, runner=None) -> bool:
     Returns whether one reported success. The URL is passed as a single argv
     element and never through a shell -- it arrives from another process's
     stdout, so it is not ours to trust.
+
+    Covers Linux and WSL. On native Windows none of these binaries exists, so
+    this finds nothing and returns False; the caller falls back to
+    ``webbrowser``, which uses ``os.startfile`` there and is the right answer.
+    ``tests/test_browser.py`` pins that fallback, because losing it would take
+    Windows with it silently.
     """
     if not url or not str(url).lower().startswith(("http://", "https://")):
         return False
