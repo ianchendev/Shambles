@@ -34,6 +34,11 @@ EXPIRY_TOOLTIP = (
 
 RENAME_HINT = "Double-click to rename"
 
+#: DD-1 keeps durations off a card's face but says the raw timestamps stay
+#: available in a tooltip. A healthy account renders no chip, so without this
+#: there was nothing to hover and the number was unreachable.
+EXPIRY_LINE = "Refresh token {verb} {date} ({days})."
+
 #: Decorative glyphs are chosen at runtime from what the font can draw. Tk
 #: substitutes a box for a missing glyph and reports nothing, so a character
 #: picked on one machine renders as tofu on another -- Ubuntu has no U+FF0B,
@@ -154,6 +159,33 @@ def group_heading(provider, current, warn: str = "⚠") -> str:
                              live_email=current.live_email or "unknown",
                              expected_email=current.expected_email or "unknown")
     return f"{provider.display_name} · {detail}"
+
+
+def expiry_line(profile) -> str | None:
+    """One line naming when this account's window closes, or None."""
+    ms = profile.liveness.expires_at_ms
+    if ms is None:
+        return None
+    when = datetime.datetime.fromtimestamp(ms / 1000)
+    days = profile.liveness.days_left
+    if days is None:
+        span = "date known"
+    elif days < 0:
+        span = f"{abs(days)}d ago"
+    elif days == 0:
+        span = "today"
+    else:
+        span = f"in {days}d"
+    verb = "expired" if days is not None and days < 0 else "expires"
+    return EXPIRY_LINE.format(verb=verb,
+                              date=when.strftime("%d %b %Y, %H:%M"),
+                              days=span)
+
+
+def name_tooltip(profile) -> str:
+    """What hovering a profile name says: its window, then the rename hint."""
+    line = expiry_line(profile)
+    return f"{line}\n\n{RENAME_HINT}" if line else RENAME_HINT
 
 
 def expiry_tooltip(profile) -> str:
@@ -444,6 +476,17 @@ class ShamblesApp(tk.Tk):
         footer.pack(side="bottom", fill="x")
         ttk.Button(footer, text=f"{self.glyph['add']}  Add Account", style="Accent.TButton",
                    command=self.on_add).pack(side="right")
+        refresh = ttk.Button(footer, text=self.glyph["refresh"],
+                             style="Shambles.TButton", width=3,
+                             command=self.refresh)
+        refresh.pack(side="left")
+        Tooltip(refresh,
+                "Re-read what is on disk.\n\n"
+                "Local files only — no network call, and nothing a running "
+                "session would notice. Usage figures update as you work, so "
+                "this picks up whatever has been written since the window "
+                "opened.", t)
+
         self.eject_button = ttk.Button(footer, text="Eject",
                                        style="Shambles.TButton",
                                        command=self.on_eject)
@@ -950,9 +993,10 @@ class ShamblesApp(tk.Tk):
         name.pack(side="left")
         name.bind("<Double-Button-1>",
                   lambda _e, p=profile: self.on_rename_prompt(provider, p.name))
+        hint = name_tooltip(profile)
         Tooltip(name,
-                f"{profile.name}\n\n{RENAME_HINT}" if shown != profile.name
-                else RENAME_HINT, t)
+                f"{profile.name}\n\n{hint}" if shown != profile.name else hint,
+                t)
 
         if not profile.active:
             # Inactive profiles only. The active one has no remove control at
