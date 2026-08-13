@@ -687,3 +687,65 @@ def test_the_height_cap_measures_chrome_rather_than_assuming_it(paths, make_app)
     cap = int(app.winfo_screenheight() * gui.MAX_HEIGHT_FRACTION)
     # the viewport is given whatever is left, never a fixed guess
     assert app._viewport.winfo_reqheight() <= cap - chrome
+
+
+def test_the_footer_offers_a_refresh(paths, make_app):
+    """The usage tooltip tells you to press it, so it has to exist."""
+    app = make_app(paths)
+    app.update()
+    assert app.glyph["refresh"] in _label_texts(app), "no refresh control"
+
+
+def test_refresh_only_reads(paths, make_app):
+    """Safe to press at any time: no switch, no credential written, nothing a
+    running session would notice."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import state
+    from shambles.providers import all_providers
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    claude = [p for p in all_providers() if p.id == "claude"][0]
+    before = (paths.claude_json.read_bytes(),
+              paths.credentials("claude", "Other").read_bytes(),
+              state.read_active(paths, "claude"))
+
+    app.refresh()
+    app.update()
+
+    assert paths.claude_json.read_bytes() == before[0]
+    assert paths.credentials("claude", "Other").read_bytes() == before[1]
+    assert state.read_active(paths, "claude") == before[2]
+
+
+def test_a_healthy_account_still_reveals_its_expiry_on_hover(paths, make_app):
+    """DD-1 keeps durations off the face but says the raw timestamps stay
+    available in tooltips. With no chip rendered for a healthy account there
+    was nothing to hover, so the number was unreachable."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    # The group header shows the active account's name too, and that copy
+    # carries no tooltip -- take the one on the card.
+    names = [w for w in _every_widget(app)
+             if isinstance(w, tk.Label) and str(w.cget("text")) == "Work"
+             and w.bind("<Enter>")]
+    assert names, "profile name on the card is not hoverable"
+    names[0].event_generate("<Enter>")
+    app.update_idletasks()
+    assert gui.Tooltip._open, "the name raises no tooltip"
+    text = list(gui.Tooltip._open)[0].text
+    assert "expires" in text.lower(), f"no expiry in the hover: {text!r}"
+    gui.Tooltip.hide_all()
