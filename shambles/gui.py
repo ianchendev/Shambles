@@ -125,6 +125,17 @@ def tooltip_position(widget_x, widget_y, widget_height, tip_width,
     return x, y
 
 
+def group_status(current, warn: str = "⚠") -> str:
+    """The second line of a group heading: who is live, or what is wrong."""
+    if current.kind == state.MANAGED:
+        return current.live_email or ""
+    template = GROUP_STATES.get(current.kind, "")
+    return template.format(warn=warn,
+                           profile=current.profile or "",
+                           live_email=current.live_email or "unknown",
+                           expected_email=current.expected_email or "unknown")
+
+
 def group_heading(provider, current, warn: str = "⚠") -> str:
     """One line naming a provider and whatever is true about it right now.
 
@@ -600,11 +611,30 @@ class ShamblesApp(tk.Tk):
         heading.pack(fill="x", pady=(GAP_M, GAP_XS))
 
         warned = current.kind not in (state.MANAGED, state.UNMANAGED)
-        tk.Label(heading, text=group_heading(provider, current,
-                                             self.glyph["warn"]), font=t.caption,
-                 bg=t["window"], fg=t["warn"] if warned else t["faint"],
-                 anchor="w", justify="left",
-                 wraplength=WINDOW_WIDTH - 2 * GAP_L).pack(side="left")
+
+        # Three lines rather than one: the provider in small caps, then the
+        # active account at title weight, then its address or the warning.
+        # A single window-wide header cannot represent N providers, each with
+        # its own active account and its own warning state; repeating the
+        # treatment per group scales to a third provider without redesign.
+        titles = tk.Frame(heading, bg=t["window"])
+        titles.pack(side="left", fill="x", expand=True)
+        tk.Label(titles, text=provider.display_name.upper(), font=t.caption,
+                 bg=t["window"], fg=t["faint"], anchor="w").pack(fill="x")
+
+        live = current.profile if current.kind == state.MANAGED else None
+        tk.Label(titles, text=elide(live or "Not signed in", t.title,
+                                    WINDOW_WIDTH - 4 * GAP_L),
+                 font=t.title if live else t.name,
+                 bg=t["window"], fg=t["text"] if live else t["muted"],
+                 anchor="w").pack(fill="x")
+
+        status = group_status(current, self.glyph["warn"])
+        if status:
+            tk.Label(titles, text=status, font=t.body, bg=t["window"],
+                     fg=t["warn"] if warned else t["muted"], anchor="w",
+                     justify="left",
+                     wraplength=WINDOW_WIDTH - 3 * GAP_L).pack(fill="x")
 
         # Offered only when there is genuinely a login to save. The state
         # alone does not say: a machine with no profiles and no credential is
