@@ -619,3 +619,44 @@ def test_nothing_is_stranded_beside_the_card_list(paths, make_app):
         assert child.winfo_width() == width, (
             f"{type(child).__name__} is {child.winfo_width()}px in a "
             f"{width}px window")
+
+
+def test_each_provider_group_names_its_own_active_account(paths, make_app):
+    """One window-wide header cannot represent two providers, each with its
+    own active account; the treatment repeats per group instead."""
+    from helpers import (make_claude_json, make_live_claude_login,
+                         make_live_codex_login, make_profile)
+
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_profile(paths, "codex", "Personal", email="me@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_claude_login(paths)
+    make_live_codex_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    text = _label_texts(app)
+    assert "CLAUDE CODE" in text, "provider name missing from its group"
+    assert "CODEX" in text
+    assert "Work" in text and "Personal" in text
+
+
+def test_a_provider_with_no_active_account_says_so(paths, make_app):
+    app = make_app(paths)
+    app.update()
+    assert "Not signed in" in _label_texts(app)
+
+
+def test_a_very_long_active_name_does_not_stretch_the_header(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import theme
+
+    make_profile(paths, "claude", "Q" * 70, email="q@example.com", active=True)
+    make_claude_json(paths, email="q@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert app.winfo_reqwidth() <= theme.WINDOW_WIDTH
