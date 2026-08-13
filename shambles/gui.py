@@ -456,8 +456,9 @@ class ShamblesApp(tk.Tk):
         # grows with every profile eventually pushes the footer off the bottom,
         # and with no resize handle those buttons cannot be reached again. Two
         # provider groups make that far easier to hit than one.
-        body = tk.Frame(self, bg=t["window"])
-        body.pack(fill="both", expand=True)
+        self._body = tk.Frame(self, bg=t["window"])
+        self._body.pack(fill="both", expand=True)
+        body = self._body
 
         self._viewport = tk.Canvas(body, bg=t["window"], highlightthickness=0,
                                    bd=0)
@@ -822,8 +823,16 @@ class ShamblesApp(tk.Tk):
         """
         self._viewport.configure(scrollregion=self._viewport.bbox("all"))
         needed = self.rows.winfo_reqheight()
-        room = int(self.winfo_screenheight() * MAX_HEIGHT_FRACTION) - 200
-        room = max(room, 200)
+
+        # Chrome is measured, not guessed. A hardcoded allowance is wrong by
+        # however much the header and footer differ from it -- and they differ
+        # by font, by platform, and by how many warnings are showing. A guess
+        # that is too large hands the list less room than it has, which showed
+        # up as a scrollbar for a single profile on a 768px display.
+        chrome = sum(child.winfo_reqheight() for child in self.winfo_children()
+                     if child is not self._body)
+        room = int(self.winfo_screenheight() * MAX_HEIGHT_FRACTION) - chrome
+        room = max(room, MIN_HEIGHT // 2)
         self._viewport.configure(height=min(needed, room))
         if needed > room:
             self._scrollbar.pack(side="right", fill="y")

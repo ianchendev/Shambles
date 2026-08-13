@@ -587,8 +587,13 @@ def test_the_window_never_grows_past_the_screen(paths, make_app, monkeypatch):
     assert app.winfo_reqheight() < 10 * 150, "window grew with every profile"
 
 
-def test_no_scrollbar_when_everything_fits(paths, make_app):
+def test_no_scrollbar_when_everything_fits(paths, make_app, monkeypatch):
+    """Pinned rather than trusting the display: CI runs on a 768px virtual
+    screen, where the cap is genuinely tight enough to matter."""
     from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import gui
+
+    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 0.9)
 
     make_profile(paths, "claude", "Work", email="w@example.com", active=True)
     make_claude_json(paths, email="w@example.com")
@@ -660,3 +665,25 @@ def test_a_very_long_active_name_does_not_stretch_the_header(paths, make_app):
     app.update()
 
     assert app.winfo_reqwidth() <= theme.WINDOW_WIDTH
+
+
+def test_the_height_cap_measures_chrome_rather_than_assuming_it(paths, make_app):
+    """A hardcoded allowance is wrong by however much the header and footer
+    differ from it, and they differ by font, platform and how many warnings
+    are showing. Guessing 200px where the real figure was 78 cost the list
+    122px and put a scrollbar on a single-profile window."""
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import gui
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    chrome = sum(c.winfo_reqheight() for c in app.winfo_children()
+                 if c is not app._body)
+    cap = int(app.winfo_screenheight() * gui.MAX_HEIGHT_FRACTION)
+    # the viewport is given whatever is left, never a fixed guess
+    assert app._viewport.winfo_reqheight() <= cap - chrome
