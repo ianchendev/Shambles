@@ -449,17 +449,29 @@ class LoginDialog(tk.Toplevel):
             text="Your browser did not open. Use the button below.")
 
     def _open_url(self):
+        """Hand the URL to a browser, and leave it on the clipboard regardless.
+
+        Copying unconditionally is the point: under WSL, Python's own
+        ``webbrowser`` picks ``gio``, which has no handler, fails with
+        "Operation not supported" -- and reports success, so there is no
+        reliable way to know an opener really worked. The clipboard means the
+        answer to "did it open?" never has to be trusted.
+        """
         if not self._url:
             return
-        # webbrowser launches a handler; it makes no network call of its own,
-        # so the no-network property tests/test_login.py asserts is untouched.
-        import webbrowser
-        try:
-            opened = webbrowser.open(self._url)
-        except Exception:
-            opened = False
+        self._copy_url()
+
+        opened = login.open_url(self._url)
         if not opened:
-            self._copy_url()
+            # webbrowser as the last resort: on a normal desktop it knows about
+            # BROWSER and user preferences that the fixed list does not.
+            import webbrowser
+            try:
+                opened = webbrowser.open(self._url)
+            except Exception:
+                opened = False
+
+        if not opened:
             messagebox.showinfo(
                 WINDOW_TITLE,
                 "No browser could be launched from here, which is usual under "
@@ -473,6 +485,9 @@ class LoginDialog(tk.Toplevel):
         self.clipboard_clear()
         self.clipboard_append(self._url)
         self.copy_button.config(text="Copied")
+        # clipboard_append alone can be lost when the window that owns the
+        # selection goes away; a pending update keeps it available to paste.
+        self.update_idletasks()
         self.after(1500, lambda: self.copy_button.config(text="Copy link"))
 
     def _append(self, line):

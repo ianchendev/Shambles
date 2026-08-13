@@ -16,6 +16,7 @@ no ``socket``, no ``urllib``, no ``requests``, and ``tests/test_login.py``
 asserts that mechanically rather than by promise.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -44,6 +45,81 @@ def find_url(line: str) -> str | None:
     if not match:
         return None
     return match.group(0).rstrip(_TRAILING)
+
+
+#: URL openers, most reliable first.
+#:
+#: WSL is the case that matters: ``webbrowser`` there picks ``gio``, which has
+#: no handler and fails with "Operation not supported" -- and reports success
+#: anyway, so a caller trusting its return value never falls back. The Windows
+#: side has to be reached instead. ``wslview`` ships in wslu and is often
+#: absent; ``explorer.exe`` is on every install.
+#: Each entry is (argv prefix, return codes that mean it worked).
+#:
+#: ``explorer.exe`` returns **1 on success** -- a long-standing quirk, not an
+#: error -- so treating a non-zero exit as failure rejects the one opener that
+#: actually works here.
+#:
+#: ``cmd.exe /c start`` is deliberately absent. cmd splits its argument at
+#: ``&`` whatever the quoting, and every OAuth URL is full of them: the real
+#: sign-in link failed with "'b' is not recognized as an internal or external
+#: command".
+WSL_OPENERS = (
+    (["wslview"], (0,)),
+    (["explorer.exe"], (0, 1)),
+)
+
+DESKTOP_OPENERS = (
+    (["xdg-open"], (0,)),
+    (["gio", "open"], (0,)),
+    (["sensible-browser"], (0,)),
+)
+
+#: Long enough for a handler to spawn, short enough not to hang the window.
+OPEN_TIMEOUT = 10
+
+
+def is_wsl(*, proc_version="/proc/version", env=None) -> bool:
+    env = os.environ if env is None else env
+    if env.get("WSL_DISTRO_NAME") or env.get("WSL_INTEROP"):
+        return True
+    try:
+        with open(proc_version, encoding="utf-8", errors="replace") as fh:
+            return "microsoft" in fh.read().lower()
+    except OSError:
+        return False
+
+
+def browser_commands(*, wsl=None, which=shutil.which) -> list:
+    """Openers to try, in order, filtered to what is installed."""
+    if wsl is None:
+        wsl = is_wsl()
+    candidates = WSL_OPENERS + DESKTOP_OPENERS if wsl else DESKTOP_OPENERS
+    return [(list(argv), codes) for argv, codes in candidates if which(argv[0])]
+
+
+def open_url(url, *, wsl=None, which=shutil.which, runner=None) -> bool:
+    """Hand ``url`` to the first opener that accepts it.
+
+    Returns whether one reported success. The URL is passed as a single argv
+    element and never through a shell -- it arrives from another process's
+    stdout, so it is not ours to trust.
+    """
+    if not url or not str(url).lower().startswith(("http://", "https://")):
+        return False
+    if runner is None:
+        runner = subprocess.run
+
+    for argv, accepted in browser_commands(wsl=wsl, which=which):
+        try:
+            result = runner(argv + [url], timeout=OPEN_TIMEOUT,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+        except Exception:
+            continue
+        if getattr(result, "returncode", None) in accepted:
+            return True
+    return False
 
 
 class LoginUnavailableError(ShamblesError):
