@@ -11,7 +11,8 @@ from . import providers as provider_registry
 from .errors import ShamblesError
 from .paths import Paths
 from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
-                    WINDOW_WIDTH, Theme, scale_for_display)
+                    MAX_HEIGHT_FRACTION, MIN_HEIGHT, NAME_MAX_PX,
+                    WINDOW_WIDTH, Theme, elide, scale_for_display)
 
 WINDOW_TITLE = "Shambles"
 
@@ -33,6 +34,18 @@ EXPIRY_TOOLTIP = (
 
 RENAME_HINT = "Double-click to rename"
 
+#: Decorative glyphs are chosen at runtime from what the font can draw. Tk
+#: substitutes a box for a missing glyph and reports nothing, so a character
+#: picked on one machine renders as tofu on another -- Ubuntu has no U+FF0B,
+#: which is why a hardcoded "＋ Add Account" showed a box.
+GLYPH_SPEC = {
+    "info": (("ⓘ", "ℹ"), "i"),
+    "remove": (("✕", "✖", "×"), "x"),
+    "refresh": (("⟳", "↻", "⭯"), "R"),
+    "add": (("＋", "+"), "+"),
+    "warn": (("⚠", "△"), "!"),
+}
+
 #: Gap between a widget and its tooltip, and the margin kept from screen edges.
 TOOLTIP_OFFSET = 12
 TOOLTIP_MARGIN = 8
@@ -45,11 +58,13 @@ SIGNAL_POLL_MS = 150
 PLACEHOLDER_HEIGHT = 62
 PLACEHOLDER_DASH = (3, 3)
 
+#: ``{warn}`` is substituted with a glyph the font can draw, resolved once per
+#: window rather than hardcoded.
 GROUP_STATES = {
     state.UNMANAGED: "No accounts saved yet",
-    state.UNKNOWN: "⚠ Not sure which account is live",
-    state.MISSING_PROFILE: "⚠ Profile '{profile}' is missing from disk",
-    state.DRIFTED: "⚠ Signed in as {live_email}, but '{profile}' expects "
+    state.UNKNOWN: "{warn} Not sure which account is live",
+    state.MISSING_PROFILE: "{warn} Profile '{profile}' is missing from disk",
+    state.DRIFTED: "{warn} Signed in as {live_email}, but '{profile}' expects "
                    "{expected_email}",
 }
 
@@ -72,7 +87,7 @@ def tooltip_position(widget_x, widget_y, widget_height, tip_width,
     return x, y
 
 
-def group_heading(provider, current) -> str:
+def group_heading(provider, current, warn: str = "⚠") -> str:
     """One line naming a provider and whatever is true about it right now.
 
     Per-provider rather than a single window header: with two providers there
@@ -85,7 +100,8 @@ def group_heading(provider, current) -> str:
         email = current.live_email
         return f"{provider.display_name} · {who}" + (f" — {email}" if email else "")
     template = GROUP_STATES.get(current.kind, "")
-    detail = template.format(profile=current.profile or "",
+    detail = template.format(warn=warn,
+                             profile=current.profile or "",
                              live_email=current.live_email or "unknown",
                              expected_email=current.expected_email or "unknown")
     return f"{provider.display_name} · {detail}"
@@ -339,6 +355,7 @@ class ShamblesApp(tk.Tk):
         self.platform = platform or sys.platform
         scale_for_display(self)
         self.theme = Theme(self)
+        self.glyph = self.theme.resolve_glyphs(GLYPH_SPEC)
         t = self.theme
 
         self.title(WINDOW_TITLE)
@@ -350,7 +367,7 @@ class ShamblesApp(tk.Tk):
 
         footer = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
         footer.pack(fill="x")
-        ttk.Button(footer, text="＋  Add Account", style="Accent.TButton",
+        ttk.Button(footer, text=f"{self.glyph['add']}  Add Account", style="Accent.TButton",
                    command=self.on_add).pack(side="right")
         self.eject_button = ttk.Button(footer, text="Eject",
                                        style="Shambles.TButton",
@@ -493,7 +510,8 @@ class ShamblesApp(tk.Tk):
         heading.pack(fill="x", pady=(GAP_M, GAP_XS))
 
         warned = current.kind not in (state.MANAGED, state.UNMANAGED)
-        tk.Label(heading, text=group_heading(provider, current), font=t.caption,
+        tk.Label(heading, text=group_heading(provider, current,
+                                             self.glyph["warn"]), font=t.caption,
                  bg=t["window"], fg=t["warn"] if warned else t["faint"],
                  anchor="w", justify="left",
                  wraplength=WINDOW_WIDTH - 2 * GAP_L).pack(side="left")
@@ -568,7 +586,7 @@ class ShamblesApp(tk.Tk):
         canvas.pack(fill="x", pady=(0, GAP_S))
 
         if usable:
-            label = f"＋   Add a {provider.display_name} account"
+            label = f"{self.glyph['add']}   Add a {provider.display_name} account"
             ink = t["accent"]
             canvas.config(cursor="hand2")
             canvas.bind("<Button-1>", lambda _e, p=provider: self.on_add(p))
@@ -661,7 +679,7 @@ class ShamblesApp(tk.Tk):
         path_hint = target if len(target) <= 40 else target[:37] + "…"
         self._expandable_banner(
             bg=t["chip_gone_bg"], fg=t["chip_gone_fg"],
-            summary=f"⚠  {name} is set — {path_hint}",
+            summary=f"{self.glyph['warn']}  {name} is set — {path_hint}",
             detail=(f"Your environment points {provider.display_name} at:\n"
                     f"{target}\n\nShambles swaps the login in the default "
                     f"location, so switches will not affect that terminal. "
@@ -690,12 +708,17 @@ class ShamblesApp(tk.Tk):
         top = tk.Frame(card, bg=bg)
         top.pack(fill="x")
 
-        name = tk.Label(top, text=profile.name, font=t.name, bg=bg,
+        # Tk labels do not truncate, so an over-long name stretches the whole
+        # window rather than being clipped. The full value stays on hover.
+        shown = elide(profile.name, t.name, NAME_MAX_PX)
+        name = tk.Label(top, text=shown, font=t.name, bg=bg,
                         fg=t["text"], cursor="hand2")
         name.pack(side="left")
         name.bind("<Double-Button-1>",
                   lambda _e, p=profile: self.on_rename_prompt(provider, p.name))
-        Tooltip(name, RENAME_HINT, t)
+        Tooltip(name,
+                f"{profile.name}\n\n{RENAME_HINT}" if shown != profile.name
+                else RENAME_HINT, t)
 
         if not profile.active:
             ttk.Button(top, text="Switch", style="Switch.TButton",
@@ -703,7 +726,7 @@ class ShamblesApp(tk.Tk):
                        ).pack(side="right")
             # Inactive profiles only. The active one has no ✕ at all, so the
             # login you are currently using cannot be deleted by a misclick.
-            remove = ttk.Button(top, text="✕", style="Danger.TButton", width=2,
+            remove = ttk.Button(top, text=self.glyph["remove"], style="Danger.TButton", width=2,
                                 command=lambda p=profile: self.on_remove(provider, p.name))
             # Sits inboard of Switch: the rightmost slot is the easiest to hit,
             # and that should belong to the action used constantly rather than
