@@ -310,3 +310,75 @@ def test_switching_away_captures_a_rotation_even_without_restash(paths):
 
     kept = json.loads(paths.credentials("codex", "Work").read_text())
     assert kept["tokens"]["refresh_token"] == "refresh-2"
+
+
+# ---- a login that never completes must not strand the user --------------
+
+def _live_blob(paths, provider):
+    return provider.store(home=paths.home, platform="linux").read()
+
+
+def _write_live_blob(paths, provider, blob):
+    provider.store(home=paths.home, platform="linux").write(blob)
+
+
+def test_abandoning_a_new_account_restores_the_previous_one(paths):
+    claude = providers.load("claude")
+    """Adding an account switches to it so the vendor writes the credential
+    there. If the sign-in is cancelled or fails, the user is left signed out
+    of a working account with an empty profile active."""
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_claude_login(paths)
+
+    created = switcher.add_empty_account(paths, claude, "New", platform="linux")
+    assert state.read_active(paths, "claude") == created
+    assert _live_blob(paths, claude) is None, "the vendor needs an empty slot"
+
+    switcher.abandon_new_account(paths, claude, created, "Work",
+                                 platform="linux")
+
+    assert state.read_active(paths, "claude") == "Work"
+    assert _live_blob(paths, claude) is not None, "still signed out"
+
+
+def test_abandoning_keeps_the_profile_for_a_retry(paths):
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_claude_login(paths)
+
+    created = switcher.add_empty_account(paths, claude, "New", platform="linux")
+    switcher.abandon_new_account(paths, claude, created, "Work",
+                                 platform="linux")
+
+    assert created in state.profile_names(paths, "claude"), \
+        "the named profile was destroyed; the user cannot retry the sign-in"
+
+
+def test_abandoning_the_very_first_account_is_a_no_op(paths):
+    claude = providers.load("claude")
+    """No previous profile to go back to, and nothing was signed in before."""
+    created = switcher.add_empty_account(paths, claude, "First",
+                                         platform="linux")
+    switcher.abandon_new_account(paths, claude, created, None,
+                                 platform="linux")
+    assert state.read_active(paths, "claude") == created
+
+
+def test_abandoning_a_profile_that_did_get_a_login_leaves_it_alone(paths):
+    claude = providers.load("claude")
+    """Only called on failure, but it must not undo a successful sign-in if
+    the caller is ever wrong about which happened."""
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_claude_login(paths)
+
+    created = switcher.add_empty_account(paths, claude, "New", platform="linux")
+    _write_live_blob(paths, claude, b'{"claudeAiOauth": {"refreshToken": "x"}}')
+
+    switcher.abandon_new_account(paths, claude, created, "Work",
+                                 platform="linux")
+
+    assert state.read_active(paths, "claude") == created, \
+        "rolled back over a login that had actually succeeded"

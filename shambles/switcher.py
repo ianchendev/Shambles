@@ -215,6 +215,38 @@ def add_empty_account(paths, provider, name, *, platform=sys.platform,
     return result.profile or name
 
 
+def abandon_new_account(paths, provider, created: str, previous: str | None, *,
+                        platform=sys.platform, now_ms_fn=now_ms,
+                        sleep=time.sleep) -> bool:
+    """Undo the switch that ``add_empty_account`` made, after a failed sign-in.
+
+    Adding an account has to switch to it: the vendor writes its credential to
+    the one live location, so the slot must be empty and current before the
+    login runs. That leaves the user signed out of a working account for as
+    long as the sign-in takes -- and permanently, if it is cancelled or fails.
+
+    Returns True when it rolled back. The profile itself is **kept**, so the
+    sign-in can be retried without naming it again.
+
+    Refuses to roll back a profile that did acquire a credential, so a caller
+    wrong about which happened cannot undo a successful login.
+    """
+    if not previous or previous == created:
+        return False
+    if not paths.profile_dir(provider.id, previous).is_dir():
+        return False
+
+    try:
+        if _store(paths, provider, platform).read() is not None:
+            return False
+    except ShamblesError:
+        return False
+
+    switch(paths, provider, previous, platform=platform,
+           now_ms_fn=now_ms_fn, sleep=sleep)
+    return True
+
+
 def rename_profile(paths, provider, old_name: str, new_name: str, *,
                    sleep=time.sleep) -> str:
     if not paths.profile_dir(provider.id, old_name).is_dir():
