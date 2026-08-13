@@ -449,3 +449,97 @@ def test_a_long_profile_name_does_not_stretch_the_window(paths, make_app):
 
     assert app.winfo_reqwidth() <= theme.WINDOW_WIDTH, (
         f"a 60-character name took the window to {app.winfo_reqwidth()}px")
+
+
+def _usage_blob(session=None, week=None, fetched=None, uuid="uuid-a"):
+    limits = []
+    if session is not None:
+        limits.append({"kind": "session", "percent": session,
+                       "severity": "normal"})
+    if week is not None:
+        limits.append({"kind": "weekly_all", "percent": week,
+                       "severity": "warning"})
+    return {"fetchedAtMs": fetched, "accountUuid": uuid,
+            "utilization": {"limits": limits}}
+
+
+def _bar_fills(app):
+    out = []
+    for w in _every_widget(app):
+        if not isinstance(w, tk.Frame):
+            continue
+        try:
+            info = w.place_info()
+        except tk.TclError:
+            continue
+        if info and info.get("relwidth"):
+            out.append((str(w.cget("bg")), float(info["relwidth"])))
+    return out
+
+
+def test_the_active_claude_card_draws_usage_bars(paths, make_app):
+    from helpers import (make_claude_json, make_live_claude_login, make_profile)
+    from shambles import switcher
+
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": _usage_blob(43, 89, switcher.now_ms())})
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    text = _label_texts(app)
+    assert "session" in text and "43%" in text
+    assert "week" in text and "89%" in text
+
+
+def test_a_bar_goes_red_at_eighty_percent(paths, make_app):
+    from helpers import (make_claude_json, make_live_claude_login, make_profile)
+    from shambles import switcher
+
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": _usage_blob(43, 89, switcher.now_ms())})
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    fills = _bar_fills(app)
+    assert len(fills) == 2, f"expected two bars, got {len(fills)}"
+    assert fills[0][0] == app.theme["accent"], "43% should not be red"
+    assert fills[1][0] == app.theme["chip_gone_fg"], "89% should be red"
+
+
+def test_a_provider_publishing_no_usage_shows_no_bars(paths, make_app):
+    """Codex exposes nothing readable; that is a supported state, not a gap."""
+    from helpers import make_profile
+
+    make_profile(paths, "codex", "Personal", email="me@example.com", active=True)
+
+    app = make_app(paths)
+    app.update()
+
+    assert not _bar_fills(app)
+
+
+def test_the_active_account_records_its_own_figures(paths, make_app):
+    """Without this a profile only learns its usage when switched away from,
+    so the account in use is the one guaranteed to render blank."""
+    from helpers import (make_claude_json, make_live_claude_login, make_profile,
+                         write_json, account as acct)
+    from shambles import configjson, switcher
+
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    write_json(paths.account("claude", "Work"),
+               {"oauthAccount": acct("work@example.com", uuid="uuid-a")})
+    make_claude_json(paths, email="work@example.com", extra={
+        "cachedUsageUtilization": _usage_blob(30, 40, switcher.now_ms())})
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    stashed = configjson.load(paths.account("claude", "Work")).get("usage")
+    assert stashed, "the active account's figures were not recorded"
