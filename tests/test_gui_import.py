@@ -396,3 +396,56 @@ def test_save_is_offered_for_a_credential_with_no_readable_identity(paths, make_
     app.refresh()
 
     assert "Save current login" in _all_text(app.rows)
+
+
+# ---- restored after the multi-provider merge disconnected them ----------
+
+def _every_widget(widget, found=None):
+    found = [] if found is None else found
+    for child in widget.winfo_children():
+        found.append(child)
+        _every_widget(child, found)
+    return found
+
+
+def _label_texts(app):
+    out = []
+    for w in _every_widget(app):
+        try:
+            out.append(str(w.cget("text")))
+        except tk.TclError:
+            pass
+    return out
+
+
+def test_no_control_renders_as_a_missing_glyph(paths, make_app):
+    """Ubuntu has no U+FF0B, so a hardcoded ＋ draws a box. Every decorative
+    glyph must be one the font can actually draw."""
+    from shambles import theme
+
+    app = make_app(paths)
+    app.update()
+
+    tofu = app.theme.chip.measure(theme.MISSING_PROBE)
+    for text in _label_texts(app):
+        for ch in text:
+            if ch.isascii() or ch.isspace():
+                continue
+            assert app.theme.chip.measure(ch) != tofu, (
+                f"{ch!r} (U+{ord(ch):04X}) in {text!r} renders as a box")
+
+
+def test_a_long_profile_name_does_not_stretch_the_window(paths, make_app):
+    from helpers import make_claude_json, make_live_claude_login, make_profile
+    from shambles import theme
+
+    make_profile(paths, "claude", "A" * 60, email="long@example.com",
+                 active=True)
+    make_claude_json(paths, email="long@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert app.winfo_reqwidth() <= theme.WINDOW_WIDTH, (
+        f"a 60-character name took the window to {app.winfo_reqwidth()}px")
