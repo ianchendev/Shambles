@@ -6,12 +6,13 @@ import sys
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from . import eject, login, migrate, profiles, state, switcher
+from . import eject, login, migrate, profiles, state, switcher, usage
 from . import providers as provider_registry
 from .errors import ShamblesError
 from .paths import Paths
 from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
-                    WINDOW_WIDTH, Theme, scale_for_display)
+                    MAX_HEIGHT_FRACTION, MIN_HEIGHT, NAME_MAX_PX,
+                    WINDOW_WIDTH, Theme, elide, scale_for_display)
 
 WINDOW_TITLE = "Shambles"
 
@@ -33,6 +34,61 @@ EXPIRY_TOOLTIP = (
 
 RENAME_HINT = "Double-click to rename"
 
+#: DD-1 keeps durations off a card's face but says the raw timestamps stay
+#: available in a tooltip. A healthy account renders no chip, so without this
+#: there was nothing to hover and the number was unreachable.
+EXPIRY_LINE = "Refresh token {verb} {date} ({days})."
+
+#: Decorative glyphs are chosen at runtime from what the font can draw. Tk
+#: substitutes a box for a missing glyph and reports nothing, so a character
+#: picked on one machine renders as tofu on another -- Ubuntu has no U+FF0B,
+#: which is why a hardcoded "＋ Add Account" showed a box.
+GLYPH_SPEC = {
+    "info": (("ⓘ", "ℹ"), "i"),
+    "remove": (("✕", "✖", "×"), "x"),
+    "refresh": (("⟳", "↻", "⭯"), "R"),
+    "add": (("＋", "+"), "+"),
+    "warn": (("⚠", "△"), "!"),
+}
+
+USAGE_LABELS = {"session": "session", "week": "week"}
+
+#: Bar geometry. The track fills whatever width the row is given, so only the
+#: height and the fixed label/value columns are set here.
+BAR_HEIGHT = 8
+BAR_LABEL_WIDTH = 8
+BAR_VALUE_WIDTH = 5
+
+#: Fill colour per display severity. Red past usage.RED_AT, matching the
+#: vendor's own meter; amber only when the vendor itself flags something below
+#: that; otherwise the ordinary accent.
+BAR_FILL = {"ok": "accent", "soon": "chip_soon_fg", "gone": "chip_gone_fg"}
+
+#: Shown instead of bars when a provider publishes figures but has none yet.
+#: Blank space reads as a broken widget; saying why does not. A provider that
+#: publishes nothing at all renders neither, since there is nothing to explain.
+NO_USAGE_ACTIVE = "usage appears once you run it"
+NO_USAGE_IDLE = "no usage recorded yet"
+
+USAGE_TOOLTIP = (
+    "{label} usage: {percent}%{resets}\n\n"
+    "Read from the figures the vendor caches for this account. {freshness}"
+)
+
+FRESH_NOTE = "Updated as you work."
+#: For the account signed in as. An old figure here just means nothing has
+#: refreshed it lately, not that you left.
+IDLE_NOTE = (
+    "Last updated {age}. It refreshes as you work, so run a session or press "
+    "{refresh} to pick up a newer figure."
+)
+#: For an account not signed in as, where the number really is frozen.
+STALE_NOTE = (
+    "Last updated {age}, while this account was active — it has not been "
+    "signed in since, so the real figure may have moved on. Switch to it to "
+    "see a current number."
+)
+
 #: Gap between a widget and its tooltip, and the margin kept from screen edges.
 TOOLTIP_OFFSET = 12
 TOOLTIP_MARGIN = 8
@@ -45,11 +101,13 @@ SIGNAL_POLL_MS = 150
 PLACEHOLDER_HEIGHT = 62
 PLACEHOLDER_DASH = (3, 3)
 
+#: ``{warn}`` is substituted with a glyph the font can draw, resolved once per
+#: window rather than hardcoded.
 GROUP_STATES = {
     state.UNMANAGED: "No accounts saved yet",
-    state.UNKNOWN: "⚠ Not sure which account is live",
-    state.MISSING_PROFILE: "⚠ Profile '{profile}' is missing from disk",
-    state.DRIFTED: "⚠ Signed in as {live_email}, but '{profile}' expects "
+    state.UNKNOWN: "{warn} Not sure which account is live",
+    state.MISSING_PROFILE: "{warn} Profile '{profile}' is missing from disk",
+    state.DRIFTED: "{warn} Signed in as {live_email}, but '{profile}' expects "
                    "{expected_email}",
 }
 
@@ -72,7 +130,18 @@ def tooltip_position(widget_x, widget_y, widget_height, tip_width,
     return x, y
 
 
-def group_heading(provider, current) -> str:
+def group_status(current, warn: str = "⚠") -> str:
+    """The second line of a group heading: who is live, or what is wrong."""
+    if current.kind == state.MANAGED:
+        return current.live_email or ""
+    template = GROUP_STATES.get(current.kind, "")
+    return template.format(warn=warn,
+                           profile=current.profile or "",
+                           live_email=current.live_email or "unknown",
+                           expected_email=current.expected_email or "unknown")
+
+
+def group_heading(provider, current, warn: str = "⚠") -> str:
     """One line naming a provider and whatever is true about it right now.
 
     Per-provider rather than a single window header: with two providers there
@@ -85,10 +154,38 @@ def group_heading(provider, current) -> str:
         email = current.live_email
         return f"{provider.display_name} · {who}" + (f" — {email}" if email else "")
     template = GROUP_STATES.get(current.kind, "")
-    detail = template.format(profile=current.profile or "",
+    detail = template.format(warn=warn,
+                             profile=current.profile or "",
                              live_email=current.live_email or "unknown",
                              expected_email=current.expected_email or "unknown")
     return f"{provider.display_name} · {detail}"
+
+
+def expiry_line(profile) -> str | None:
+    """One line naming when this account's window closes, or None."""
+    ms = profile.liveness.expires_at_ms
+    if ms is None:
+        return None
+    when = datetime.datetime.fromtimestamp(ms / 1000)
+    days = profile.liveness.days_left
+    if days is None:
+        span = "date known"
+    elif days < 0:
+        span = f"{abs(days)}d ago"
+    elif days == 0:
+        span = "today"
+    else:
+        span = f"in {days}d"
+    verb = "expired" if days is not None and days < 0 else "expires"
+    return EXPIRY_LINE.format(verb=verb,
+                              date=when.strftime("%d %b %Y, %H:%M"),
+                              days=span)
+
+
+def name_tooltip(profile) -> str:
+    """What hovering a profile name says: its window, then the rename hint."""
+    line = expiry_line(profile)
+    return f"{line}\n\n{RENAME_HINT}" if line else RENAME_HINT
 
 
 def expiry_tooltip(profile) -> str:
@@ -120,15 +217,41 @@ class Tooltip:
 
     def __init__(self, widget, text, theme=None):
         self.widget, self.text, self.theme, self.tip = widget, text, theme, None
-        widget.bind("<Enter>", self._show, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-        # refresh() destroys every row widget on each switch. Without this a
-        # tooltip visible at that moment never sees <Leave> and is orphaned.
-        widget.bind("<Destroy>", self._hide, add="+")
+        # Bound to the widget *and* everything inside it. Tk delivers <Enter>
+        # to the deepest widget under the pointer, so a tooltip on a container
+        # whose children cover it would never fire.
+        for target in self._tree(widget):
+            target.bind("<Enter>", self._show, add="+")
+            target.bind("<Leave>", self._maybe_hide, add="+")
+            # refresh() destroys every row widget on each switch. Without this
+            # a tooltip visible at that moment never sees <Leave> and is
+            # orphaned on the desktop.
+            target.bind("<Destroy>", self._hide, add="+")
+
+    @staticmethod
+    def _tree(widget):
+        found = [widget]
+        for child in widget.winfo_children():
+            found.extend(Tooltip._tree(child))
+        return found
+
+    def _maybe_hide(self, _event=None):
+        """Ignore a <Leave> that is only the pointer crossing into a child."""
+        try:
+            under = self.widget.winfo_containing(
+                self.widget.winfo_pointerx(), self.widget.winfo_pointery())
+        except tk.TclError:
+            under = None
+        if under is not None and under in self._tree(self.widget):
+            return
+        self._hide()
 
     def _show(self, _event=None):
         if self.tip or not self.text:
             return
+        # One at a time. Crossing from a chip onto a bar could otherwise leave
+        # both on screen, overlapping each other.
+        Tooltip.hide_all()
         self.tip = tk.Toplevel(self.widget)
         self.tip.wm_overrideredirect(True)
         opts = {}
@@ -280,6 +403,21 @@ class LoginDialog(tk.Toplevel):
 
         buttons = tk.Frame(body, bg=theme["window"])
         buttons.pack(fill="x", pady=(GAP_M, 0))
+
+        # The vendor opens a browser itself when it can. Under WSL and over
+        # SSH it cannot, and prints a URL instead -- which was reaching the
+        # user as unselectable text in a disabled widget. These appear only
+        # once such a URL has actually been printed.
+        self._url = None
+        self.open_button = ttk.Button(buttons, text="Open sign-in page",
+                                      style="Accent.TButton",
+                                      command=self._open_url, state="disabled")
+        self.open_button.pack(side="left")
+        self.copy_button = ttk.Button(buttons, text="Copy link",
+                                      style="Shambles.TButton",
+                                      command=self._copy_url, state="disabled")
+        self.copy_button.pack(side="left", padx=(GAP_S, 0))
+
         self.close = ttk.Button(buttons, text="Cancel",
                                 style="Shambles.TButton", command=self._cancel)
         self.close.pack(side="right")
@@ -302,6 +440,56 @@ class LoginDialog(tk.Toplevel):
             self._append(str(exc))
             self._finish(1)
 
+    def _offer_url(self, url):
+        """Enable the link controls once the vendor has printed an address."""
+        self._url = url
+        self.open_button.config(state="normal")
+        self.copy_button.config(state="normal")
+        self.status.config(
+            text="Your browser did not open. Use the button below.")
+
+    def _open_url(self):
+        """Hand the URL to a browser, and leave it on the clipboard regardless.
+
+        Copying unconditionally is the point: under WSL, Python's own
+        ``webbrowser`` picks ``gio``, which has no handler, fails with
+        "Operation not supported" -- and reports success, so there is no
+        reliable way to know an opener really worked. The clipboard means the
+        answer to "did it open?" never has to be trusted.
+        """
+        if not self._url:
+            return
+        self._copy_url()
+
+        opened = login.open_url(self._url)
+        if not opened:
+            # webbrowser as the last resort: on a normal desktop it knows about
+            # BROWSER and user preferences that the fixed list does not.
+            import webbrowser
+            try:
+                opened = webbrowser.open(self._url)
+            except Exception:
+                opened = False
+
+        if not opened:
+            messagebox.showinfo(
+                WINDOW_TITLE,
+                "No browser could be launched from here, which is usual under "
+                "WSL and over SSH.\n\nThe link is on your clipboard — paste "
+                "it into a browser to finish signing in.",
+                parent=self)
+
+    def _copy_url(self):
+        if not self._url:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(self._url)
+        self.copy_button.config(text="Copied")
+        # clipboard_append alone can be lost when the window that owns the
+        # selection goes away; a pending update keeps it available to paste.
+        self.update_idletasks()
+        self.after(1500, lambda: self.copy_button.config(text="Copy link"))
+
     def _append(self, line):
         try:
             self.output.config(state="normal")
@@ -309,7 +497,12 @@ class LoginDialog(tk.Toplevel):
             self.output.see("end")
             self.output.config(state="disabled")
         except tk.TclError:
-            pass  # the dialog closed while a line was in flight
+            return  # the dialog closed while a line was in flight
+
+        if self._url is None:
+            found = login.find_url(line)
+            if found:
+                self._offer_url(found)
 
     def _finish(self, code):
         self.succeeded = (code == 0)
@@ -339,19 +532,31 @@ class ShamblesApp(tk.Tk):
         self.platform = platform or sys.platform
         scale_for_display(self)
         self.theme = Theme(self)
+        self.glyph = self.theme.resolve_glyphs(GLYPH_SPEC)
         t = self.theme
 
         self.title(WINDOW_TITLE)
         self.configure(bg=t["window"])
         self.resizable(False, False)
 
-        self.rows = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
-        self.rows.pack(fill="both", expand=True)
-
+        # The footer is packed before the card list so it claims the
+        # full-width bottom strip. Packed after, it would take a right-hand
+        # slab instead and strand the cards in a narrow column.
         footer = tk.Frame(self, bg=t["window"], padx=GAP_L, pady=GAP_L)
-        footer.pack(fill="x")
-        ttk.Button(footer, text="＋  Add Account", style="Accent.TButton",
+        footer.pack(side="bottom", fill="x")
+        ttk.Button(footer, text=f"{self.glyph['add']}  Add Account", style="Accent.TButton",
                    command=self.on_add).pack(side="right")
+        refresh = ttk.Button(footer, text=self.glyph["refresh"],
+                             style="Shambles.TButton", width=3,
+                             command=self.refresh)
+        refresh.pack(side="left")
+        Tooltip(refresh,
+                "Re-read what is on disk.\n\n"
+                "Local files only — no network call, and nothing a running "
+                "session would notice. Usage figures update as you work, so "
+                "this picks up whatever has been written since the window "
+                "opened.", t)
+
         self.eject_button = ttk.Button(footer, text="Eject",
                                        style="Shambles.TButton",
                                        command=self.on_eject)
@@ -360,7 +565,34 @@ class ShamblesApp(tk.Tk):
                 "Stop using Shambles and hand every account back as a stock "
                 "install. Nothing is deleted.", t)
 
-        self.minsize(WINDOW_WIDTH, 0)
+        # The card list scrolls only when it has to. A fixed-size window that
+        # grows with every profile eventually pushes the footer off the bottom,
+        # and with no resize handle those buttons cannot be reached again. Two
+        # provider groups make that far easier to hit than one.
+        self._body = tk.Frame(self, bg=t["window"])
+        self._body.pack(fill="both", expand=True)
+        body = self._body
+
+        self._viewport = tk.Canvas(body, bg=t["window"], highlightthickness=0,
+                                   bd=0)
+        self._scrollbar = ttk.Scrollbar(body, orient="vertical",
+                                        command=self._viewport.yview)
+        self._viewport.configure(yscrollcommand=self._scrollbar.set)
+        self._viewport.pack(side="left", fill="both", expand=True)
+
+        self.rows = tk.Frame(self._viewport, bg=t["window"], padx=GAP_L,
+                             pady=GAP_L)
+        self._rows_window = self._viewport.create_window(
+            (0, 0), window=self.rows, anchor="nw")
+        self.rows.bind("<Configure>", self._fit_viewport)
+        self._viewport.bind(
+            "<Configure>",
+            lambda e: self._viewport.itemconfigure(self._rows_window,
+                                                   width=e.width))
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_all(seq, self._on_wheel)
+
+        self.minsize(WINDOW_WIDTH, MIN_HEIGHT)
 
         self._pump = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -493,10 +725,30 @@ class ShamblesApp(tk.Tk):
         heading.pack(fill="x", pady=(GAP_M, GAP_XS))
 
         warned = current.kind not in (state.MANAGED, state.UNMANAGED)
-        tk.Label(heading, text=group_heading(provider, current), font=t.caption,
-                 bg=t["window"], fg=t["warn"] if warned else t["faint"],
-                 anchor="w", justify="left",
-                 wraplength=WINDOW_WIDTH - 2 * GAP_L).pack(side="left")
+
+        # Three lines rather than one: the provider in small caps, then the
+        # active account at title weight, then its address or the warning.
+        # A single window-wide header cannot represent N providers, each with
+        # its own active account and its own warning state; repeating the
+        # treatment per group scales to a third provider without redesign.
+        titles = tk.Frame(heading, bg=t["window"])
+        titles.pack(side="left", fill="x", expand=True)
+        tk.Label(titles, text=provider.display_name.upper(), font=t.caption,
+                 bg=t["window"], fg=t["faint"], anchor="w").pack(fill="x")
+
+        live = current.profile if current.kind == state.MANAGED else None
+        tk.Label(titles, text=elide(live or "Not signed in", t.title,
+                                    WINDOW_WIDTH - 4 * GAP_L),
+                 font=t.title if live else t.name,
+                 bg=t["window"], fg=t["text"] if live else t["muted"],
+                 anchor="w").pack(fill="x")
+
+        status = group_status(current, self.glyph["warn"])
+        if status:
+            tk.Label(titles, text=status, font=t.body, bg=t["window"],
+                     fg=t["warn"] if warned else t["muted"], anchor="w",
+                     justify="left",
+                     wraplength=WINDOW_WIDTH - 3 * GAP_L).pack(fill="x")
 
         # Offered only when there is genuinely a login to save. The state
         # alone does not say: a machine with no profiles and no credential is
@@ -510,6 +762,12 @@ class ShamblesApp(tk.Tk):
             ttk.Button(heading, text="Save current login",
                        style="Shambles.TButton",
                        command=lambda p=provider: self.on_save(p)).pack(side="right")
+
+        # Record the active account's live figures first, so its own card has
+        # something to show rather than being the one guaranteed to be blank.
+        # A no-op unless the vendor blob is present and provably this account's.
+        usage.capture_live(self.paths, provider.id, current.profile,
+                           now_ms=switcher.now_ms())
 
         found = profiles.discover(self.paths, provider, current.profile,
                                   switcher.now_ms(), platform=self.platform)
@@ -568,7 +826,7 @@ class ShamblesApp(tk.Tk):
         canvas.pack(fill="x", pady=(0, GAP_S))
 
         if usable:
-            label = f"＋   Add a {provider.display_name} account"
+            label = f"{self.glyph['add']}   Add a {provider.display_name} account"
             ink = t["accent"]
             canvas.config(cursor="hand2")
             canvas.bind("<Button-1>", lambda _e, p=provider: self.on_add(p))
@@ -661,7 +919,7 @@ class ShamblesApp(tk.Tk):
         path_hint = target if len(target) <= 40 else target[:37] + "…"
         self._expandable_banner(
             bg=t["chip_gone_bg"], fg=t["chip_gone_fg"],
-            summary=f"⚠  {name} is set — {path_hint}",
+            summary=f"{self.glyph['warn']}  {name} is set — {path_hint}",
             detail=(f"Your environment points {provider.display_name} at:\n"
                     f"{target}\n\nShambles swaps the login in the default "
                     f"location, so switches will not affect that terminal. "
@@ -669,6 +927,113 @@ class ShamblesApp(tk.Tk):
                     f"to use Shambles from the CLI."),
             summary_font=t.name,
         )
+
+    def _fit_viewport(self, _event=None):
+        """Size the canvas to its content, up to the screen-height cap.
+
+        Below the cap the window behaves exactly as before -- no scrollbar and
+        nothing to scroll.
+        """
+        self._viewport.configure(scrollregion=self._viewport.bbox("all"))
+        needed = self.rows.winfo_reqheight()
+
+        # Chrome is measured, not guessed. A hardcoded allowance is wrong by
+        # however much the header and footer differ from it -- and they differ
+        # by font, by platform, and by how many warnings are showing. A guess
+        # that is too large hands the list less room than it has, which showed
+        # up as a scrollbar for a single profile on a 768px display.
+        chrome = sum(child.winfo_reqheight() for child in self.winfo_children()
+                     if child is not self._body)
+        room = int(self.winfo_screenheight() * MAX_HEIGHT_FRACTION) - chrome
+        room = max(room, MIN_HEIGHT // 2)
+        self._viewport.configure(height=min(needed, room))
+        if needed > room:
+            self._scrollbar.pack(side="right", fill="y")
+        else:
+            self._scrollbar.pack_forget()
+            self._viewport.yview_moveto(0)
+
+    def _on_wheel(self, event):
+        """Wheel scrolling, but only while there is somewhere to scroll."""
+        try:
+            if not self._scrollbar.winfo_ismapped():
+                return
+        except tk.TclError:
+            return
+        down = getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0
+        self._viewport.yview_scroll(2 if down else -2, "units")
+
+    def _render_usage(self, parent, bg, profile):
+        """Session and weekly figures as full-width rows beneath the identity.
+
+        Rendered only for providers that publish figures at all -- Codex
+        exposes nothing readable, and an explanatory line there would be
+        explaining an absence that is permanent rather than temporary.
+        """
+        if not profile.publishes_usage:
+            return
+
+        t = self.theme
+        now = switcher.now_ms()
+
+        if not profile.usage:
+            tk.Label(parent,
+                     text=NO_USAGE_ACTIVE if profile.active else NO_USAGE_IDLE,
+                     font=t.chip, bg=bg, fg=t["faint"], anchor="w",
+                     ).pack(fill="x", pady=(GAP_S, 0))
+            return
+
+        stale = profile.usage.is_stale(now)
+        age = profile.usage.age_label(now)
+
+        for index, bar in enumerate(profile.usage.bars):
+            row = tk.Frame(parent, bg=bg)
+            row.pack(fill="x", pady=(GAP_S if index == 0 else GAP_XS, 0))
+
+            tk.Label(row, text=USAGE_LABELS.get(bar.label, bar.label),
+                     font=t.chip, bg=bg,
+                     fg=t["faint"] if stale else t["muted"],
+                     width=BAR_LABEL_WIDTH, anchor="w").pack(side="left")
+
+            # Packed right-to-left: the icon sits outermost, the value inside
+            # it, and the track then takes whatever is left.
+            info = tk.Label(row, text=self.glyph["info"], font=t.chip, bg=bg,
+                            fg=t["faint"], cursor="hand2")
+            info.pack(side="right", padx=(GAP_XS, 0))
+
+            tk.Label(row, text=f"{bar.percent}%", font=t.chip, bg=bg,
+                     fg=t["faint"] if stale else t["text"],
+                     width=BAR_VALUE_WIDTH, anchor="e").pack(side="right",
+                                                             padx=(GAP_S, 0))
+
+            track = tk.Frame(row, bg=t["border"], height=BAR_HEIGHT)
+            track.pack(side="left", fill="x", expand=True)
+            track.pack_propagate(False)
+            fill = t["faint"] if stale else t[BAR_FILL[bar.display_severity]]
+            if bar.fill > 0:
+                tk.Frame(track, bg=fill).place(
+                    relwidth=bar.fill, relheight=1.0, x=0, y=0)
+
+            resets = bar.resets_label()
+            if not stale:
+                freshness = FRESH_NOTE
+            elif profile.active:
+                freshness = IDLE_NOTE.format(age=age,
+                                             refresh=self.glyph["refresh"])
+            else:
+                freshness = STALE_NOTE.format(age=age)
+            # Bound to the icon alone. A whole row lighting up as the pointer
+            # crossed it was too eager to live with.
+            Tooltip(info, USAGE_TOOLTIP.format(
+                label=USAGE_LABELS.get(bar.label, bar.label).capitalize(),
+                percent=bar.percent,
+                resets=f", resets {resets}" if resets else "",
+                freshness=freshness), t)
+
+        if stale and age:
+            tk.Label(parent, text=f"as of {age}", font=t.chip, bg=bg,
+                     fg=t["faint"], anchor="e").pack(fill="x",
+                                                     pady=(GAP_XS, 0))
 
     def _render_card(self, provider, profile):
         """One profile as a bordered card, accented when it is the active one."""
@@ -690,25 +1055,31 @@ class ShamblesApp(tk.Tk):
         top = tk.Frame(card, bg=bg)
         top.pack(fill="x")
 
-        name = tk.Label(top, text=profile.name, font=t.name, bg=bg,
+        # Tk labels do not truncate, so an over-long name stretches the whole
+        # window rather than being clipped. The full value stays on hover.
+        shown = elide(profile.name, t.name, NAME_MAX_PX)
+        name = tk.Label(top, text=shown, font=t.name, bg=bg,
                         fg=t["text"], cursor="hand2")
         name.pack(side="left")
         name.bind("<Double-Button-1>",
                   lambda _e, p=profile: self.on_rename_prompt(provider, p.name))
-        Tooltip(name, RENAME_HINT, t)
+        hint = name_tooltip(profile)
+        Tooltip(name,
+                f"{profile.name}\n\n{hint}" if shown != profile.name else hint,
+                t)
 
         if not profile.active:
+            # Inactive profiles only. The active one has no remove control at
+            # all, so the login in use cannot be deleted by a misclick. The gap
+            # between the two is deliberate: one destroys a login and sits
+            # beside the button reached most often.
+            remove = ttk.Button(top, text=self.glyph["remove"],
+                                style="Danger.TButton", width=2,
+                                command=lambda p=profile: self.on_remove(provider, p.name))
+            remove.pack(side="right")
             ttk.Button(top, text="Switch", style="Switch.TButton",
                        command=lambda p=profile: self.on_switch(provider, p.name)
-                       ).pack(side="right")
-            # Inactive profiles only. The active one has no ✕ at all, so the
-            # login you are currently using cannot be deleted by a misclick.
-            remove = ttk.Button(top, text="✕", style="Danger.TButton", width=2,
-                                command=lambda p=profile: self.on_remove(provider, p.name))
-            # Sits inboard of Switch: the rightmost slot is the easiest to hit,
-            # and that should belong to the action used constantly rather than
-            # the one that destroys a login. The gap is deliberate too.
-            remove.pack(side="right", padx=(0, GAP_M))
+                       ).pack(side="right", padx=(0, GAP_M))
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
                             "deleted and that account needs a new sign-in.", t)
 
@@ -725,6 +1096,8 @@ class ShamblesApp(tk.Tk):
                             bg=t[bg_key], fg=t[fg_key], padx=GAP_S, pady=1)
             chip.pack(side="left", padx=(GAP_S, 0))
             Tooltip(chip, chip_tooltip(profile), t)
+
+        self._render_usage(card, bg, profile)
 
     # -- actions ----------------------------------------------------------
 
@@ -828,6 +1201,13 @@ class ShamblesApp(tk.Tk):
         name, provider_id = dialog.result
         provider = next(p for p in self.providers if p.id == provider_id)
 
+        # Remembered before anything moves. Adding an account has to switch to
+        # it -- the vendor writes its credential to the one live location, so
+        # the slot must be empty and current before the login runs -- which
+        # signs the user out of a working account until the login lands.
+        previous = state.inspect(self.paths, provider,
+                                 platform=self.platform).profile
+
         try:
             created = switcher.add_empty_account(self.paths, provider, name,
                                                  platform=self.platform)
@@ -846,11 +1226,26 @@ class ShamblesApp(tk.Tk):
                 "token it loaded at startup.",
                 parent=self)
         else:
+            # No credential arrived, so put the user back where they were
+            # rather than leaving them signed out of a working account. The
+            # profile is kept, so the sign-in can be retried without naming it
+            # again.
+            restored = False
+            try:
+                restored = switcher.abandon_new_account(
+                    self.paths, provider, created, previous,
+                    platform=self.platform)
+            except ShamblesError:
+                restored = False
+
+            back = (f"\n\nYou are back on '{previous}' — nothing was lost."
+                    if restored else
+                    "\n\nSwitching to another profile is safe — nothing was "
+                    "lost.")
             messagebox.showwarning(
                 WINDOW_TITLE,
                 f"'{created}' was created but has no login yet.\n\n"
-                f"{provider.login_hint()}\n\n"
-                "Switching to another profile is safe — nothing was lost.",
+                f"{provider.login_hint()}{back}",
                 parent=self)
         self.refresh()
 
