@@ -403,6 +403,21 @@ class LoginDialog(tk.Toplevel):
 
         buttons = tk.Frame(body, bg=theme["window"])
         buttons.pack(fill="x", pady=(GAP_M, 0))
+
+        # The vendor opens a browser itself when it can. Under WSL and over
+        # SSH it cannot, and prints a URL instead -- which was reaching the
+        # user as unselectable text in a disabled widget. These appear only
+        # once such a URL has actually been printed.
+        self._url = None
+        self.open_button = ttk.Button(buttons, text="Open sign-in page",
+                                      style="Accent.TButton",
+                                      command=self._open_url, state="disabled")
+        self.open_button.pack(side="left")
+        self.copy_button = ttk.Button(buttons, text="Copy link",
+                                      style="Shambles.TButton",
+                                      command=self._copy_url, state="disabled")
+        self.copy_button.pack(side="left", padx=(GAP_S, 0))
+
         self.close = ttk.Button(buttons, text="Cancel",
                                 style="Shambles.TButton", command=self._cancel)
         self.close.pack(side="right")
@@ -425,6 +440,41 @@ class LoginDialog(tk.Toplevel):
             self._append(str(exc))
             self._finish(1)
 
+    def _offer_url(self, url):
+        """Enable the link controls once the vendor has printed an address."""
+        self._url = url
+        self.open_button.config(state="normal")
+        self.copy_button.config(state="normal")
+        self.status.config(
+            text="Your browser did not open. Use the button below.")
+
+    def _open_url(self):
+        if not self._url:
+            return
+        # webbrowser launches a handler; it makes no network call of its own,
+        # so the no-network property tests/test_login.py asserts is untouched.
+        import webbrowser
+        try:
+            opened = webbrowser.open(self._url)
+        except Exception:
+            opened = False
+        if not opened:
+            self._copy_url()
+            messagebox.showinfo(
+                WINDOW_TITLE,
+                "No browser could be launched from here, which is usual under "
+                "WSL and over SSH.\n\nThe link is on your clipboard — paste "
+                "it into a browser to finish signing in.",
+                parent=self)
+
+    def _copy_url(self):
+        if not self._url:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(self._url)
+        self.copy_button.config(text="Copied")
+        self.after(1500, lambda: self.copy_button.config(text="Copy link"))
+
     def _append(self, line):
         try:
             self.output.config(state="normal")
@@ -432,7 +482,12 @@ class LoginDialog(tk.Toplevel):
             self.output.see("end")
             self.output.config(state="disabled")
         except tk.TclError:
-            pass  # the dialog closed while a line was in flight
+            return  # the dialog closed while a line was in flight
+
+        if self._url is None:
+            found = login.find_url(line)
+            if found:
+                self._offer_url(found)
 
     def _finish(self, code):
         self.succeeded = (code == 0)
@@ -1131,6 +1186,13 @@ class ShamblesApp(tk.Tk):
         name, provider_id = dialog.result
         provider = next(p for p in self.providers if p.id == provider_id)
 
+        # Remembered before anything moves. Adding an account has to switch to
+        # it -- the vendor writes its credential to the one live location, so
+        # the slot must be empty and current before the login runs -- which
+        # signs the user out of a working account until the login lands.
+        previous = state.inspect(self.paths, provider,
+                                 platform=self.platform).profile
+
         try:
             created = switcher.add_empty_account(self.paths, provider, name,
                                                  platform=self.platform)
@@ -1149,11 +1211,26 @@ class ShamblesApp(tk.Tk):
                 "token it loaded at startup.",
                 parent=self)
         else:
+            # No credential arrived, so put the user back where they were
+            # rather than leaving them signed out of a working account. The
+            # profile is kept, so the sign-in can be retried without naming it
+            # again.
+            restored = False
+            try:
+                restored = switcher.abandon_new_account(
+                    self.paths, provider, created, previous,
+                    platform=self.platform)
+            except ShamblesError:
+                restored = False
+
+            back = (f"\n\nYou are back on '{previous}' — nothing was lost."
+                    if restored else
+                    "\n\nSwitching to another profile is safe — nothing was "
+                    "lost.")
             messagebox.showwarning(
                 WINDOW_TITLE,
                 f"'{created}' was created but has no login yet.\n\n"
-                f"{provider.login_hint()}\n\n"
-                "Switching to another profile is safe — nothing was lost.",
+                f"{provider.login_hint()}{back}",
                 parent=self)
         self.refresh()
 

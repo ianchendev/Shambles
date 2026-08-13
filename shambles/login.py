@@ -16,11 +16,34 @@ no ``socket``, no ``urllib``, no ``requests``, and ``tests/test_login.py``
 asserts that mechanically rather than by promise.
 """
 
+import re
 import shutil
 import subprocess
 import threading
 
 from .errors import ShamblesError
+
+
+#: Both vendors print a URL to visit when they cannot launch a browser, which
+#: is the normal case under WSL and over SSH. Pulling it out lets the window
+#: offer it as something to click or copy rather than as text to retype.
+_URL = re.compile(r"https?://[^\s<>\"'`]+")
+
+#: Trailing punctuation that belongs to the sentence, not the address.
+_TRAILING = ".,;:!?)]}>'\""
+
+
+def find_url(line: str) -> str | None:
+    """The first http(s) URL in ``line``, or None.
+
+    Restricted to http and https on purpose: this feeds a control that opens
+    whatever it is given, and a vendor is never going to ask for file:// or
+    ftp://.
+    """
+    match = _URL.search(line or "")
+    if not match:
+        return None
+    return match.group(0).rstrip(_TRAILING)
 
 
 class LoginUnavailableError(ShamblesError):
