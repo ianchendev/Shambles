@@ -14,21 +14,21 @@ from tkinter import ttk
 #: default on most Linux boxes and is the ugliest of the three.
 FONT_STACK = ("Ubuntu", "Segoe UI", "Noto Sans", "DejaVu Sans")
 
-# Type scale. Bumped well above Tk's 10pt default, which is unreadable on a
-# high-resolution display.
 # Type scale, in points. Tk converts points to pixels with the `tk scaling`
 # factor, so the rendered size is `size * scaling`.
 #
 # 16px is the floor every current accessibility guideline lands on for body
 # text -- WCAG itself sets no minimum, requiring instead that text survive a
-# 200% resize, but 16px is the practical consensus. At BASE_SCALING that means
-# a 12pt body. The previous 11pt rendered 14.9px, which is why the window read
-# as cramped.
-SIZE_TITLE = 20      # 27px
-SIZE_NAME = 15       # 20px
-SIZE_BODY = 12       # 16px -- the floor
-SIZE_CHIP = 11       # 15px, secondary
-SIZE_CAPTION = 10    # 13.5px, uppercase labels only
+# 200% resize, but 16px is the practical consensus. A 12pt body sat exactly on
+# that floor, which read as merely adequate on a high-resolution panel; 14pt
+# renders 19px and leaves the window feeling composed rather than tight.
+# WINDOW_WIDTH grew with it -- a wider measure for wider type, or the cards
+# would just be more cramped than before.
+SIZE_TITLE = 24      # 32px
+SIZE_NAME = 18       # 24px
+SIZE_BODY = 14       # 19px -- comfortably over the 16px floor
+SIZE_CHIP = 13       # 18px, secondary
+SIZE_CAPTION = 11    # 15px, uppercase labels only
 
 PALETTE = {
     "window": "#f4f5f7",
@@ -69,10 +69,10 @@ GAP_XS, GAP_S, GAP_M, GAP_L = 6, 10, 16, 24
 
 #: Wide enough for the footer's three controls in a row at the current type
 #: size, which is what sets the floor -- the cards themselves need less.
-WINDOW_WIDTH = 720
+WINDOW_WIDTH = 860
 
 #: Keeps the window from looking squat with a single profile.
-MIN_HEIGHT = 480
+MIN_HEIGHT = 560
 ACCENT_BAR_WIDTH = 5
 
 
@@ -241,7 +241,7 @@ MAX_HEIGHT_FRACTION = 0.8
 #: is fixed-width and Tk labels do not truncate, so an over-long name stretches
 #: the whole window instead of being clipped. Measured against the card's own
 #: geometry: total width less the accent spine, padding and the two controls.
-NAME_MAX_PX = WINDOW_WIDTH - 260
+NAME_MAX_PX = WINDOW_WIDTH - 320
 
 
 def elide(text: str, font, max_px: int) -> str:
