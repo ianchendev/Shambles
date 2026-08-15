@@ -152,6 +152,9 @@ class Card(tk.Canvas):
         self._wash = None
         self._pulse = None
         self._painted = ()
+        #: Whether the pointer is over the card, per the crossing events we
+        #: have actually been delivered.
+        self._inside = False
         self._drawn = None
         self._height = SHADOW_DROP + 1
 
@@ -246,12 +249,35 @@ class Card(tk.Canvas):
             self._bind_crossing(child)
 
     def _entered(self, _event=None):
+        self._inside = True
         self._wash_to(self._hover)
 
     def _left(self, event):
         if self._holds(self._under(event)):
             return  # into one of our own children, which is not leaving
+        self._inside = False
         self._wash_to(self._fill)
+
+    def _settled(self):
+        """The colour this card belongs at right now.
+
+        Consulted at the end of the entry fade rather than assumed, because
+        after a switch the pointer is usually still sitting over the card that
+        was just rebuilt. Two ways to be under it, and both have to count: an
+        ``<Enter>`` may have been delivered since the fade started, or the
+        pointer may never have moved at all -- in which case no crossing event
+        is coming, since the crossing happened before this card existed.
+        """
+        if self._inside or self._pointer_is_over():
+            return self._hover
+        return self._fill
+
+    def _pointer_is_over(self) -> bool:
+        try:
+            return self._holds(self.winfo_containing(
+                self.winfo_pointerx(), self.winfo_pointery()))
+        except tk.TclError:
+            return False
 
     def _under(self, event):
         try:
@@ -301,9 +327,9 @@ class Card(tk.Canvas):
             return
         self._repaint(ground)
         if delay_ms <= 0:
-            self._wash_to(self._fill, APPEAR_MS)
+            self._wash_to(self._settled(), APPEAR_MS)
             return
-        self.after(delay_ms, lambda: self._wash_to(self._fill, APPEAR_MS))
+        self.after(delay_ms, lambda: self._wash_to(self._settled(), APPEAR_MS))
 
     # -- the switch confirmation -------------------------------------------
 
