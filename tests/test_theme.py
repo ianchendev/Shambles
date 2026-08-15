@@ -154,19 +154,62 @@ def test_the_probe_is_a_single_codepoint():
     assert len(theme.MISSING_PROBE) == 1
 
 
-def test_detection_works_against_a_real_font(): 
-    """End to end, with the font actually in use rather than a stub."""
+@pytest.fixture
+def root():
+    """One withdrawn Tk root, torn down whatever the test does."""
     tk = pytest.importorskip("tkinter")
     try:
-        root = tk.Tk()
-    except tk.TclError:
-        pytest.skip("no display")
-    root.withdraw()
-    try:
-        font = theme.Theme(root).chip
-        # U+24D8 is absent from several common UI fonts; whatever comes back
-        # must at least not be the box.
-        chosen = theme.glyph(font, "ⓘ", "ℹ", fallback="i")
-        assert font.measure(chosen) != font.measure(theme.MISSING_PROBE)
-    finally:
-        root.destroy()
+        made = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"no display: {exc}")
+    made.withdraw()
+    yield made
+    made.destroy()
+
+
+def test_detection_works_against_a_real_font(root):
+    """End to end, with the font actually in use rather than a stub."""
+    font = theme.Theme(root).chip
+    # U+24D8 is absent from several common UI fonts; whatever comes back
+    # must at least not be the box.
+    chosen = theme.glyph(font, "ⓘ", "ℹ", fallback="i")
+    assert font.measure(chosen) != font.measure(theme.MISSING_PROBE)
+
+
+# ---- the constructor actually finishes ----------------------------------
+#
+# b17ecf2 inserted resolve_glyphs into the middle of __init__, stranding the
+# last two lines after a `return`. Every custom ttk style was configured never
+# and the window silently fell back to Tk's default bevels for eight days,
+# because nothing asserted the styling had been applied.
+
+def test_building_a_theme_switches_ttk_to_clam(root):
+    """'clam' is the only bundled theme that honours background on a button;
+    'default' ignores most of what the palette sets."""
+    from tkinter import ttk
+
+    theme.Theme(root)
+    assert ttk.Style(root).theme_use() == "clam"
+
+
+def test_building_a_theme_configures_every_button_style(root):
+    from tkinter import ttk
+
+    theme.Theme(root)
+    style = ttk.Style(root)
+    for name in ("Shambles.TButton", "Accent.TButton", "Switch.TButton",
+                 "Danger.TButton"):
+        assert style.configure(name), f"{name} was never configured"
+
+
+def test_the_accent_button_is_actually_accent_coloured(root):
+    from tkinter import ttk
+
+    built = theme.Theme(root)
+    got = ttk.Style(root).configure("Accent.TButton", "background")
+    assert str(got) == built["accent"]
+
+
+def test_a_theme_exposes_the_button_font_its_styles_reference(root):
+    """_apply_ttk reads self.button; without it the constructor raises."""
+    assert theme.Theme(root).button.actual()["size"] == theme.SIZE_BODY

@@ -83,10 +83,17 @@ class Theme:
         self.body = tkfont.Font(root=root, family=family, size=SIZE_BODY)
         self.chip = tkfont.Font(root=root, family=family, size=SIZE_CHIP, weight="bold")
         self.caption = tkfont.Font(root=root, family=family, size=SIZE_CAPTION, weight="bold")
+        self.button = tkfont.Font(root=root, family=family, size=SIZE_BODY)
 
         #: Decorative glyphs, resolved against the font actually in use. Set
         #: by the GUI once the candidate lists are known.
         self.glyphs = {}
+
+        # Last, because it reads self.button. Keep it last: a method defined
+        # between here and the constructor's first line strands whatever
+        # follows it behind that method's `return`, which is how the ttk
+        # styling silently stopped running in b17ecf2.
+        self._apply_ttk(root)
 
     def resolve_glyphs(self, spec: dict) -> dict:
         """``{name: (candidates, fallback)}`` -> ``{name: drawable glyph}``."""
@@ -95,8 +102,6 @@ class Theme:
             for name, (candidates, fallback) in spec.items()
         }
         return self.glyphs
-        self.button = tkfont.Font(root=root, family=family, size=SIZE_BODY)
-        self._apply_ttk(root)
 
     def __getitem__(self, key):
         return self.colours[key]
