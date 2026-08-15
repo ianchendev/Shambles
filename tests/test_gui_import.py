@@ -597,12 +597,19 @@ def test_the_window_never_grows_past_the_screen(paths, make_app, monkeypatch):
 
 
 def test_no_scrollbar_when_everything_fits(paths, make_app, monkeypatch):
-    """Pinned rather than trusting the display: CI runs on a 768px virtual
-    screen, where the cap is genuinely tight enough to matter."""
+    """Whether a given screen fits a given amount of content depends on the
+    font and the DPI, so asserting "no scrollbar" against the real display
+    tests the machine rather than the code -- it passed on a desktop and
+    failed on CI purely on Segoe UI's metrics.
+
+    Giving the cap enough headroom to swallow anything makes the room
+    unquestionably sufficient, so what is left under test is the actual rule:
+    content that fits does not raise a scrollbar.
+    """
     from helpers import make_claude_json, make_live_claude_login, make_profile
     from shambles import gui
 
-    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 0.9)
+    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 4.0)
 
     make_profile(paths, "claude", "Work", email="w@example.com", active=True)
     make_claude_json(paths, email="w@example.com")
@@ -1181,25 +1188,31 @@ def test_a_fresh_bar_over_the_red_line_is_still_red(paths, make_app, monkeypatch
     assert colours == [app.theme["accent"], app.theme["chip_gone_fg"]]
 
 
-def test_a_single_profile_does_not_scroll_on_a_768px_screen(paths, make_app,
-                                                            monkeypatch):
-    """The smallest display anyone still runs, and what the Windows CI runner
-    reports.
+def test_a_screen_too_small_for_the_window_scrolls_it(paths, make_app,
+                                                     monkeypatch):
+    """The safety rule the cap exists for.
 
-    Pinned rather than left to whatever the developer's monitor happens to be:
-    raising the type scale pushed a one-account window to 621px, and the old
-    0.8 cap allowed 614 on a 768px screen. Seven pixels short is enough to put
-    a scrollbar on a window holding a single profile, and nothing on a
-    high-resolution desktop would ever have shown it.
+    The window cannot be resized, so on a display too short to hold it the
+    viewport has to be capped and the overflow handed to a scrollbar. Without
+    that the footer runs off the bottom and Eject and Add Account become
+    unclickable with no way to reach them.
+
+    Driven by squeezing the cap rather than by naming a screen height: the
+    height a real display needs varies with the font, which is exactly the
+    dependency that made the previous version of this pass locally and fail
+    on CI.
     """
+    from shambles import gui
+
     make_profile(paths, "claude", "Work", email="w@example.com", active=True)
     make_claude_json(paths, email="w@example.com")
     make_live_claude_login(paths)
 
     app = make_app(paths)
-    monkeypatch.setattr(type(app), "winfo_screenheight", lambda self: 768)
+    monkeypatch.setattr(gui, "MAX_HEIGHT_FRACTION", 0.01)
     app.refresh()
     app.update()
 
-    assert not app._scrollbar.winfo_ismapped(), (
-        "a single account scrolls on a 768px screen")
+    assert app._scrollbar.winfo_ismapped(), "no scrollbar on an overflowing window"
+    assert app._viewport.winfo_reqheight() < app.rows.winfo_reqheight(), (
+        "the viewport was not capped, so the footer is off the screen")

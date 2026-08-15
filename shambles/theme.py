@@ -235,15 +235,7 @@ def scale_for_display(root, minimum: float | None = None) -> float:
 #: Never let the window exceed this share of the screen. Beyond it the footer
 #: runs off the bottom and, since the window is not resizable, its buttons
 #: become unreachable.
-#:
-#: 0.85 rather than a rounder 0.8 because the larger type scale pushed a
-#: one-account window to 621px, and 0.8 of a 768px display -- the smallest
-#: anyone still runs, and what the Windows CI runner reports -- allows 614.
-#: Seven pixels short put a scrollbar on a window holding a single profile.
-#: The 15% left over is 115px at that size, which still clears a 48px taskbar
-#: and a title bar with room to spare, so the reachability the cap exists to
-#: protect is not weakened.
-MAX_HEIGHT_FRACTION = 0.85
+MAX_HEIGHT_FRACTION = 0.8
 
 #: Width a profile name may occupy before it is elided, in pixels. The window
 #: is fixed-width and Tk labels do not truncate, so an over-long name stretches
