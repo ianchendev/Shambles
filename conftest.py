@@ -15,6 +15,17 @@ posix_modes_only = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def predictable_motion(monkeypatch):
+    """Pin animation on, whatever the developer's shell says.
+
+    Same reasoning as ``fake_vendor`` pinning PATH: a rendering test must not
+    change its answer because SHAMBLES_MOTION happened to be exported. Tests
+    that want the reduced-motion path set it themselves.
+    """
+    monkeypatch.delenv("SHAMBLES_MOTION", raising=False)
+
+
 @pytest.fixture
 def home(tmp_path):
     """A synthetic home directory. Never the real one."""

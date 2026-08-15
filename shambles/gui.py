@@ -6,13 +6,14 @@ import sys
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from . import eject, login, migrate, profiles, state, switcher, usage
+from . import (eject, login, migrate, motion, profiles, state, switcher,
+               usage, widgets)
 from . import providers as provider_registry
 from .errors import ShamblesError
 from .paths import Paths
-from .theme import (ACCENT_BAR_WIDTH, GAP_L, GAP_M, GAP_S, GAP_XS,
-                    MAX_HEIGHT_FRACTION, MIN_HEIGHT, NAME_MAX_PX,
-                    WINDOW_WIDTH, Theme, elide, scale_for_display)
+from .theme import (GAP_L, GAP_M, GAP_S, GAP_XS, MAX_HEIGHT_FRACTION,
+                    MIN_HEIGHT, NAME_MAX_PX, WINDOW_WIDTH, Theme, elide,
+                    scale_for_display)
 
 WINDOW_TITLE = "Shambles"
 
@@ -95,6 +96,22 @@ TOOLTIP_MARGIN = 8
 
 #: How often to hand control back to Python so pending signals get dispatched.
 SIGNAL_POLL_MS = 150
+
+#: Usage bars grow from empty. Long enough to read as growth, short enough
+#: that the figure is settled before you have finished reading the card.
+BAR_FILL_MS = 420
+#: Session leads, week follows. Two bars starting together read as one block
+#: sliding; offset, they read as two measurements.
+BAR_STAGGER_MS = 60
+
+#: Cards fade up from the window ground as the list is rebuilt.
+CARD_STAGGER_MS = 60
+#: Capped, so twelve accounts do not take three quarters of a second to draw.
+#: Past the cap the remaining cards simply arrive together.
+CARD_STAGGER_MAX_MS = 240
+
+#: The window's own fade, which covers the layout settling on a cold start.
+WINDOW_FADE_MS = 160
 
 #: The empty-slot placeholder: tall enough to read as a card-shaped gap, and
 #: dashed so it reads as a space to fill rather than as a real profile.
@@ -595,12 +612,43 @@ class ShamblesApp(tk.Tk):
         self.minsize(WINDOW_WIDTH, MIN_HEIGHT)
 
         self._pump = None
+
+        #: ``(provider_id, profile_name)`` awaiting a switch confirmation, set
+        #: before the switch runs and consumed by whichever card comes back
+        #: active. refresh() clears it either way, so a switch that failed
+        #: cannot confirm itself on some later, unrelated redraw.
+        self._confirm = None
+        #: How many cards this pass has rendered, which is what staggers them.
+        self._entering = 0
+
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._install_signal_handlers()
         self._pump_signals()
         self._repair_legacy_layout()
         self._migrate_store()
         self.refresh()
+        self._fade_in()
+
+    def _fade_in(self):
+        """Bring the window up from transparent.
+
+        Toplevel alpha is the only real opacity Tk exposes, and it is honoured
+        by WSLg and most X11 compositors. Where nothing honours it the
+        attribute is an accepted no-op; where it is missing entirely, setting
+        it raises. Either way the window has to end up visible, so a failure
+        here abandons the effect rather than propagating -- and the tween
+        pins the final value at exactly 1.0 rather than trusting the
+        arithmetic to land there.
+        """
+        if not motion.wants_motion():
+            return
+        try:
+            self.attributes("-alpha", 0.0)
+        except tk.TclError:
+            return  # no compositor support; show the window as it is
+        motion.animate(self, WINDOW_FADE_MS,
+                       lambda p: self.attributes("-alpha", p),
+                       done=lambda: self.attributes("-alpha", 1.0))
 
     # -- startup repairs --------------------------------------------------
 
@@ -706,6 +754,7 @@ class ShamblesApp(tk.Tk):
         """Re-read everything from disk. No cached view state, ever."""
         for child in self.rows.winfo_children():
             child.destroy()
+        self._entering = 0
 
         for provider in self.providers:
             # Rotating providers go stale in the background; correct that
@@ -718,6 +767,9 @@ class ShamblesApp(tk.Tk):
             override = state.config_dir_override(provider, home=self.paths.home)
             if override:
                 self._render_override_banner(provider, override)
+
+        # Whatever armed a confirmation has now had its chance to claim it.
+        self._confirm = None
 
     def _render_group(self, provider, current):
         t = self.theme
@@ -842,9 +894,16 @@ class ShamblesApp(tk.Tk):
         def draw(_event=None):
             canvas.delete("all")
             width = canvas.winfo_width()
-            # Inset by one pixel so the dashes are not clipped by the edge.
-            canvas.create_rectangle(1, 1, width - 2, PLACEHOLDER_HEIGHT - 2,
-                                    dash=PLACEHOLDER_DASH, outline=t["border"])
+            # Inset by one pixel so the dashes are not clipped by the edge,
+            # and rounded to the same radius as a card -- the slot marks where
+            # a card goes, so a square one beside rounded neighbours reads as
+            # a different kind of thing entirely.
+            canvas.create_polygon(
+                widgets.rounded_rect_points(1, 1, width - 2,
+                                            PLACEHOLDER_HEIGHT - 2,
+                                            widgets.CARD_RADIUS),
+                smooth=True, dash=PLACEHOLDER_DASH, fill="",
+                outline=t["border"])
             canvas.create_text(width // 2, PLACEHOLDER_HEIGHT // 2,
                                text=label, font=t.body, fill=ink)
 
@@ -986,13 +1045,23 @@ class ShamblesApp(tk.Tk):
         stale = profile.usage.is_stale(now)
         age = profile.usage.age_label(now)
 
+        # Grey out an old figure only when it belongs to an account you are
+        # *not* signed in as. On the live account an hour-old number is
+        # simply one nothing has refreshed yet -- it is still the real
+        # figure, and it moves again the moment you run a session. The copy
+        # already draws this distinction (IDLE_NOTE says "it refreshes as you
+        # work", STALE_NOTE says "the real figure may have moved on"); the
+        # colour has to draw it too, or the account you actually use is the
+        # one guaranteed to render in grey.
+        dimmed = stale and not profile.active
+
         for index, bar in enumerate(profile.usage.bars):
             row = tk.Frame(parent, bg=bg)
             row.pack(fill="x", pady=(GAP_S if index == 0 else GAP_XS, 0))
 
             tk.Label(row, text=USAGE_LABELS.get(bar.label, bar.label),
                      font=t.chip, bg=bg,
-                     fg=t["faint"] if stale else t["muted"],
+                     fg=t["faint"] if dimmed else t["muted"],
                      width=BAR_LABEL_WIDTH, anchor="w").pack(side="left")
 
             # Packed right-to-left: the icon sits outermost, the value inside
@@ -1002,17 +1071,16 @@ class ShamblesApp(tk.Tk):
             info.pack(side="right", padx=(GAP_XS, 0))
 
             tk.Label(row, text=f"{bar.percent}%", font=t.chip, bg=bg,
-                     fg=t["faint"] if stale else t["text"],
+                     fg=t["faint"] if dimmed else t["text"],
                      width=BAR_VALUE_WIDTH, anchor="e").pack(side="right",
                                                              padx=(GAP_S, 0))
 
             track = tk.Frame(row, bg=t["border"], height=BAR_HEIGHT)
             track.pack(side="left", fill="x", expand=True)
             track.pack_propagate(False)
-            fill = t["faint"] if stale else t[BAR_FILL[bar.display_severity]]
+            fill = t["faint"] if dimmed else t[BAR_FILL[bar.display_severity]]
             if bar.fill > 0:
-                tk.Frame(track, bg=fill).place(
-                    relwidth=bar.fill, relheight=1.0, x=0, y=0)
+                self._grow_bar(track, fill, bar.fill, index)
 
             resets = bar.resets_label()
             if not stale:
@@ -1035,22 +1103,49 @@ class ShamblesApp(tk.Tk):
                      fg=t["faint"], anchor="e").pack(fill="x",
                                                      pady=(GAP_XS, 0))
 
+    def _grow_bar(self, track, colour, target, index):
+        """Place a bar's fill empty and tween it up to its real width.
+
+        Tweened on ``relwidth`` rather than on pixels because the track's
+        width is not known until Tk has laid the row out -- the fraction is
+        the only handle that is correct before then, and it stays correct if
+        the row is ever resized mid-flight.
+
+        The colour is whatever the caller decided and is never touched here:
+        blue below the line, red above it, matching the vendor's own meter.
+        """
+        grown = tk.Frame(track, bg=colour)
+        if not motion.wants_motion():
+            grown.place(relwidth=target, relheight=1.0, x=0, y=0)
+            return grown
+
+        grown.place(relwidth=0, relheight=1.0, x=0, y=0)
+        grown.after(index * BAR_STAGGER_MS, lambda: motion.animate(
+            grown, BAR_FILL_MS,
+            lambda p: grown.place_configure(relwidth=target * p)))
+        return grown
+
     def _render_card(self, provider, profile):
-        """One profile as a bordered card, accented when it is the active one."""
+        """One profile as a rounded card, accented when it is the active one.
+
+        Drawn on a Canvas rather than built from Frames: Tk reliefs are square
+        at every corner and there is no border-radius anywhere in the toolkit,
+        so the surface, the shadow and the accent spine are all polygons. The
+        content on top is ordinary widgets, exactly as before.
+        """
         t = self.theme
         bg = t["card_active"] if profile.active else t["card"]
         edge = t["border_active"] if profile.active else t["border"]
 
-        shell = tk.Frame(self.rows, bg=edge, highlightthickness=0)
+        # The spine is the outer shape with the face inset over it, so the
+        # accent bar follows the corner rounding instead of poking out of it.
+        shell = widgets.Card(
+            self.rows, fill=bg, edge=edge, spine=edge, shadow=t["shadow"],
+            pad=GAP_M,
+            hover=t["card_active_hover"] if profile.active else t["card_hover"])
         shell.pack(fill="x", pady=(0, GAP_S))
 
-        # A coloured spine down the left edge marks the active profile far
-        # more legibly than a filled/hollow bullet did.
-        tk.Frame(shell, bg=edge if profile.active else t["border"],
-                 width=ACCENT_BAR_WIDTH).pack(side="left", fill="y")
-
-        card = tk.Frame(shell, bg=bg, padx=GAP_M, pady=GAP_M)
-        card.pack(side="left", fill="both", expand=True)
+        card = shell.body
 
         top = tk.Frame(card, bg=bg)
         top.pack(fill="x")
@@ -1092,12 +1187,31 @@ class ShamblesApp(tk.Tk):
         if label:
             severity = profiles.expiry_severity(profile)
             fg_key, bg_key = CHIP_STYLES[severity]
-            chip = tk.Label(bottom, text=f" {label} ", font=t.chip,
-                            bg=t[bg_key], fg=t[fg_key], padx=GAP_S, pady=1)
+            # A drawn capsule rather than a Label: a countdown reads as a
+            # status badge at full radius and as a stray highlight at none.
+            chip = widgets.Pill(bottom, text=label, font=t.chip,
+                                fg=t[fg_key], bg=t[bg_key], behind=bg)
             chip.pack(side="left", padx=(GAP_S, 0))
             Tooltip(chip, chip_tooltip(profile), t)
 
         self._render_usage(card, bg, profile)
+
+        # Last, and in this order. watch_pointer needs a finished tree: its
+        # crossing bindings have to reach every child, and it decides what to
+        # repaint by looking at which widgets currently share the card colour.
+        shell.watch_pointer()
+        self._bring_card_in(shell, provider, profile)
+        return shell
+
+    def _bring_card_in(self, shell, provider, profile):
+        """Fade the card up, and confirm a switch that was waiting for it."""
+        delay = min(self._entering * CARD_STAGGER_MS, CARD_STAGGER_MAX_MS)
+        self._entering += 1
+        shell.appear(self.theme["window"], delay_ms=delay)
+
+        if profile.active and self._confirm == (provider.id, profile.name):
+            self._confirm = None
+            shell.pulse(self.theme["pulse"])
 
     # -- actions ----------------------------------------------------------
 
@@ -1111,6 +1225,10 @@ class ShamblesApp(tk.Tk):
             self.refresh()
 
     def on_switch(self, provider, name):
+        # Armed before the switch runs, claimed afterwards by whichever card
+        # comes back active. Switching is the one thing this window exists to
+        # do and it used to report success by silently redrawing the list.
+        self._confirm = (provider.id, name)
         self._guarded(lambda: switcher.switch(self.paths, provider, name,
                                               platform=self.platform))
 
