@@ -866,6 +866,13 @@ def test_hovering_a_card_washes_it(paths, make_app, monkeypatch):
     app.update()
 
     card = _named_card(app, "Other")
+
+    # Drive it out of hover first. On a CI runner the pointer can already be
+    # sitting over the window, in which case the card is legitimately washed
+    # before the test touches it -- and then the assertion below is about
+    # where the mouse happened to be rather than about the transition.
+    card.event_generate("<Leave>", rootx=-200, rooty=-200)
+    app.update()
     assert card.itemcget(card.surface, "fill") == app.theme["card"]
 
     card.event_generate("<Enter>")
@@ -1172,3 +1179,27 @@ def test_a_fresh_bar_over_the_red_line_is_still_red(paths, make_app, monkeypatch
 
     colours = [c for c, _w in _bar_fills(app)]
     assert colours == [app.theme["accent"], app.theme["chip_gone_fg"]]
+
+
+def test_a_single_profile_does_not_scroll_on_a_768px_screen(paths, make_app,
+                                                            monkeypatch):
+    """The smallest display anyone still runs, and what the Windows CI runner
+    reports.
+
+    Pinned rather than left to whatever the developer's monitor happens to be:
+    raising the type scale pushed a one-account window to 621px, and the old
+    0.8 cap allowed 614 on a 768px screen. Seven pixels short is enough to put
+    a scrollbar on a window holding a single profile, and nothing on a
+    high-resolution desktop would ever have shown it.
+    """
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    monkeypatch.setattr(type(app), "winfo_screenheight", lambda self: 768)
+    app.refresh()
+    app.update()
+
+    assert not app._scrollbar.winfo_ismapped(), (
+        "a single account scrolls on a 768px screen")
