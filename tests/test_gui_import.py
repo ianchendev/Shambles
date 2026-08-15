@@ -900,9 +900,14 @@ def test_an_expiry_chip_keeps_its_own_colour_under_the_pointer(paths, make_app,
     # Against the real clock, not the suite's fixed NOW: the card computes
     # its severity from switcher.now_ms(), so a fixed reference would decide
     # which chip renders by how far the calendar had moved since it was set.
+    #
+    # Half a day, not a whole number of them. days_left is math.floor()ed
+    # against a *second*, later reading of the clock, so `now + N * DAY_MS`
+    # lands on N or N-1 depending on how many milliseconds the window took to
+    # build -- and Claude's warn_days is 1, so N=2 is right on the boundary.
     make_profile(paths, "claude", "Work", email="w@example.com", active=True)
     make_profile(paths, "claude", "Soon", email="s@example.com",
-                 refresh_expires_ms=switcher.now_ms() + 2 * DAY_MS)
+                 refresh_expires_ms=switcher.now_ms() + DAY_MS // 2)
     make_claude_json(paths, email="w@example.com")
     make_live_claude_login(paths)
 
@@ -924,8 +929,10 @@ def test_an_expiry_chip_keeps_its_own_colour_under_the_pointer(paths, make_app,
 def test_an_expiry_chip_is_a_rounded_pill(paths, make_app):
     from shambles import switcher
 
+    # Half a day: see the note above on days_left being floored against a
+    # second reading of the clock.
     make_profile(paths, "claude", "Soon", email="s@example.com", active=True,
-                 refresh_expires_ms=switcher.now_ms() + 2 * DAY_MS)
+                 refresh_expires_ms=switcher.now_ms() + DAY_MS // 2)
     make_claude_json(paths, email="s@example.com")
     make_live_claude_login(paths)
 

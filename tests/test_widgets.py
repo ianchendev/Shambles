@@ -6,6 +6,8 @@ geometry is a pure function and is tested without a display; the widgets
 themselves need one.
 """
 
+import time
+
 import pytest
 
 from shambles import widgets
@@ -313,6 +315,35 @@ def test_a_wash_leaves_a_chip_its_own_colour(root, palette, monkeypatch):
     card.event_generate("<Enter>")
     root.update()
     assert chip.cget("bg") == palette["chip_soon_bg"]
+
+
+def test_a_card_arriving_under_the_pointer_keeps_its_hover(root, palette):
+    """After a switch the pointer is usually still sitting over the card that
+    was just rebuilt.
+
+    The entry fade finishes by washing to the resting colour, so unless it
+    checks, it wipes out the hover state the card is already in and the row
+    under the cursor goes flat until you move the mouse.
+    """
+    import tkinter as tk
+
+    card = _card(root, palette)
+    tk.Label(card.body, text="Personal", bg=palette["card"]).pack()
+    card.watch_pointer()
+    root.update()
+
+    card.appear(palette["window"], delay_ms=40)
+    card.event_generate("<Enter>")
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.01)
+        if card.itemcget(card.surface, "fill") == palette["card_hover"]:
+            break
+
+    assert card.itemcget(card.surface, "fill") == palette["card_hover"], (
+        "the entry fade washed the hover away")
 
 
 def test_a_card_can_pulse_its_spine(root, palette, monkeypatch):
