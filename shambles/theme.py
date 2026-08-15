@@ -34,10 +34,23 @@ PALETTE = {
     "window": "#f4f5f7",
     "card": "#ffffff",
     "card_active": "#eef4ff",
+    # Where a card washes to under the pointer. A step, not a jump: the card
+    # has to read as reactive without competing with card_active, which is
+    # the only colour on the list that carries meaning.
+    "card_hover": "#f8f9fb",
+    "card_active_hover": "#e7eeff",
+    # Fake elevation. Tk has no alpha compositing, so a shadow is an opaque
+    # rectangle offset behind the card -- convincing on a flat ground and
+    # only there, which is what the window is.
+    "shadow": "#eaecf1",
     "border": "#dfe1e6",
     "border_active": "#2563eb",
     "accent": "#2563eb",
     "accent_hover": "#1d4ed8",
+    # The switch confirmation flashes the spine to this and settles back.
+    # Lighter than the accent rather than darker: the spine is already a
+    # saturated blue, and a darker flash on it barely reads.
+    "pulse": "#93c5fd",
     "text": "#17181c",
     "muted": "#6b7280",
     "faint": "#9ca3af",
