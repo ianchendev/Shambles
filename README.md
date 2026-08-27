@@ -58,6 +58,11 @@ git clone https://github.com/ianchendev/Shambles && cd Shambles
 python3 shambles.py          # or: python3 -m shambles
 ```
 
+`python3` here has to be **3.10 or newer**. On distributions where it is still
+3.8 — Ubuntu 20.04 among them — name the interpreter instead
+(`python3.12 shambles.py`); running it on an older one stops with a message
+saying so rather than a syntax error from somewhere in the package.
+
 ### Before you install, check it applies to you
 
 | Where you run it | Claude Code | Codex |
