@@ -5,8 +5,9 @@ from tkinter import ttk
 import pytest
 
 from conftest import posix_only
-from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
-                     make_live_codex_login, make_profile, make_v1_profile)
+from helpers import (DAY_MS, NOW, healthy_ms, make_claude_json,
+                     make_live_claude_login, make_live_codex_login,
+                     make_profile, make_v1_profile)
 from shambles import gui, motion, profiles, providers, state, widgets
 
 
@@ -110,7 +111,7 @@ def test_the_window_renders_both_providers(paths, make_app):
 
 def test_a_healthy_active_card_has_no_active_label_or_countdown(paths, make_app):
     make_profile(paths, "claude", "Work", email="w@example.com", active=True,
-                 refresh_expires_ms=NOW + 30 * DAY_MS)
+                 refresh_expires_ms=healthy_ms())
     make_claude_json(paths, email="w@example.com")
     make_live_claude_login(paths)
 
@@ -127,7 +128,7 @@ def test_a_healthy_active_card_has_no_active_label_or_countdown(paths, make_app)
 
 def test_a_closed_card_shows_needs_login_without_a_warning_glyph(paths, make_app):
     make_profile(paths, "claude", "Old", email="o@example.com",
-                 refresh_expires_ms=NOW - 3 * DAY_MS)
+                 refresh_expires_ms=healthy_ms(-3))
 
     app = make_app(paths)
     app.refresh()
@@ -945,9 +946,10 @@ def test_an_expiry_chip_is_a_rounded_pill(paths, make_app):
 
     # Half a day: see the note above on days_left being floored against a
     # second reading of the clock.
-    make_profile(paths, "claude", "Soon", email="s@example.com", active=True,
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_profile(paths, "claude", "Soon", email="s@example.com",
                  refresh_expires_ms=switcher.now_ms() + DAY_MS // 2)
-    make_claude_json(paths, email="s@example.com")
     make_live_claude_login(paths)
 
     app = make_app(paths)
@@ -1216,3 +1218,27 @@ def test_a_screen_too_small_for_the_window_scrolls_it(paths, make_app,
     assert app._scrollbar.winfo_ismapped(), "no scrollbar on an overflowing window"
     assert app._viewport.winfo_reqheight() < app.rows.winfo_reqheight(), (
         "the viewport was not capped, so the footer is off the screen")
+
+
+def test_a_nonsense_expiry_timestamp_still_renders_the_window(paths, make_app):
+    """An expiry far outside datetime's range must not take the window down.
+
+    expires_at_ms is whatever the credential says: int(refreshTokenExpiresAt)
+    for Claude, a JWT claim times a thousand for Codex. Neither is
+    range-checked, and a vendor emitting microseconds -- or a truncated write
+    -- lands one multiplication away from unrepresentable. The date is
+    formatted for *every* card's name tooltip, healthy ones included, and
+    refresh() has no guard, so the exception escapes __init__ and the app
+    exits with a traceback and no window at all.
+
+    configjson.load already promises the opposite: "a profile with a corrupt
+    file should still list in the UI".
+    """
+    make_profile(paths, "claude", "Broken", email="b@example.com", active=True,
+                 refresh_expires_ms=1785000000000000000)
+    make_claude_json(paths, email="b@example.com")
+
+    app = make_app(paths)
+    app.update()
+
+    assert "Broken" in _all_text(app.rows), "the profile did not render"

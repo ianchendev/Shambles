@@ -178,12 +178,32 @@ def group_heading(provider, current, warn: str = "⚠") -> str:
     return f"{provider.display_name} · {detail}"
 
 
+def _local_time(ms):
+    """``ms`` as a local datetime, or None if it cannot be represented.
+
+    ``expires_at_ms`` is whatever the credential said -- Claude's
+    ``refreshTokenExpiresAt`` as an int, a Codex JWT claim times a thousand.
+    Neither is range-checked, so a vendor emitting microseconds, or a
+    truncated write, lands outside ``datetime``'s year range. That formats
+    into every card's name tooltip, healthy ones included, and refresh() has
+    no guard -- so left to raise it escapes __init__ and the app exits with a
+    traceback and no window. A profile with an unreadable credential is
+    supposed to still list, just without a date.
+    """
+    try:
+        return datetime.datetime.fromtimestamp(ms / 1000)
+    except (ValueError, OverflowError, OSError, TypeError):
+        return None
+
+
 def expiry_line(profile) -> str | None:
     """One line naming when this account's window closes, or None."""
     ms = profile.liveness.expires_at_ms
     if ms is None:
         return None
-    when = datetime.datetime.fromtimestamp(ms / 1000)
+    when = _local_time(ms)
+    if when is None:
+        return None
     days = profile.liveness.days_left
     if days is None:
         span = "date known"
@@ -207,7 +227,9 @@ def name_tooltip(profile) -> str:
 
 def expiry_tooltip(profile) -> str:
     """The exact date behind a closing/closed chip with a known expiry."""
-    when = datetime.datetime.fromtimestamp(profile.liveness.expires_at_ms / 1000)
+    when = _local_time(profile.liveness.expires_at_ms)
+    if when is None:
+        return profiles.warning(profile) or ""
     days = profile.liveness.days_left
     verb = "expired" if days is not None and days < 0 else "expires"
     return EXPIRY_TOOLTIP.format(verb=verb, date=when.strftime("%d %b %Y, %H:%M"))

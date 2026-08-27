@@ -2,8 +2,9 @@ import json
 
 import pytest
 
-from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
-                     make_live_codex_login, make_profile)
+from helpers import (DAY_MS, NOW, healthy_ms, make_claude_json,
+                     make_live_claude_login, make_live_codex_login,
+                     make_profile)
 from shambles import providers, state, switcher
 from shambles.errors import AlreadyManagedError, ProfileNotFoundError
 
@@ -22,12 +23,13 @@ def seed_live(paths, provider, email):
     the live credential, made when it was last active. The fixtures have to
     agree on that or the round-trip test measures fixture drift rather than
     the copy -- ``make_profile`` builds Codex tokens 30 days out while
-    ``make_live_codex_login`` defaults to 10.
+    ``make_live_codex_login`` defaults to 10. Both sides take that 30 from
+    ``healthy_ms`` so they agree to the byte.
     """
     if provider.id == "claude":
         make_claude_json(paths, email=email)
         return make_live_claude_login(paths, access_token="tok-Work")
-    return make_live_codex_login(paths, email=email, exp_ms=NOW + 30 * DAY_MS)
+    return make_live_codex_login(paths, email=email, exp_ms=healthy_ms())
 
 
 # -- the core promise ---------------------------------------------------
@@ -255,15 +257,19 @@ def test_restash_does_nothing_without_an_active_profile(paths):
     assert switcher.restash_active(paths, codex, platform="linux") is False
 
 
-def test_without_restash_the_active_row_shows_a_stale_token(paths):
-    """What re-stashing actually corrects.
+def test_without_restash_the_active_row_shows_a_stale_identity(paths):
+    """What re-stashing still corrects.
 
     Switching away is *already* safe -- ``switch`` stashes the outgoing login
     first, so a rotation between switches is captured either way. What is not
-    covered is the display: ``profiles.discover`` reads each profile's stashed
-    credential, including the active one, so a Codex account whose token
-    refreshed during use keeps showing the pre-refresh email and countdown
-    until something re-stashes it.
+    covered is the display.
+
+    The countdown no longer needs re-stashing: ``profiles.resolve_liveness``
+    reads the active profile's window from the live credential, so a token
+    that refreshed during use shows its real deadline straight away. The
+    *identity* still comes from the stashed blob -- Codex carries its email
+    inside the token -- so until something re-stashes, the row names whoever
+    the profile held when it was last written.
 
     Written as a before/after on the same profile, because a test that only
     asserted the "after" state would pass with ``restash_active`` deleted --
@@ -280,7 +286,9 @@ def test_without_restash_the_active_row_shows_a_stale_token(paths):
         return profiles.discover(paths, codex, "Work", NOW, platform="linux")[0]
 
     stale = row()
-    assert (stale.email, stale.liveness.days_left) == ("old@example.com", 3)
+    assert stale.email == "old@example.com", "identity should still be stashed"
+    assert stale.liveness.days_left == 30, (
+        "the countdown should already come from the live credential")
 
     assert switcher.restash_active(paths, codex, platform="linux") is True
 
@@ -382,3 +390,69 @@ def test_abandoning_a_profile_that_did_get_a_login_leaves_it_alone(paths):
 
     assert state.read_active(paths, "claude") == created, \
         "rolled back over a login that had actually succeeded"
+
+
+def test_a_config_that_goes_unreadable_mid_switch_is_not_replaced(paths):
+    """The pre-check at the top of switch() is not the only reader.
+
+    companion_write re-reads ~/.claude.json to splice the identity into it,
+    and Claude Code rewrites that file on its own schedule -- which is the
+    documented reason the pre-check exists at all. Between the check and the
+    splice sits the whole credential swap, each step retried with sleeps, so a
+    read landing mid-write is exactly the window the guard was meant to cover.
+
+    Reading it with a parser that answers {} for unusable input turns the
+    splice into a truncation: every project, MCP server and machine ID
+    replaced by the two identity keys.
+    """
+    from shambles.errors import ConfigUnreadableError
+
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Personal", email="p@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    # Parseable when switch() checks it...
+    from shambles import configjson
+    configjson.load_for_write(paths.claude_json)
+
+    # ...and truncated by the time the identity is spliced in.
+    original = paths.claude_json.read_text(encoding="utf-8")
+    truncated = original[: len(original) // 2]
+    paths.claude_json.write_text(truncated, encoding="utf-8")
+
+    with pytest.raises(ConfigUnreadableError):
+        claude.companion_write({"oauthAccount": {"emailAddress": "p@example.com"}},
+                               home=paths.home)
+
+    assert paths.claude_json.read_text(encoding="utf-8") == truncated, (
+        "the unreadable config was overwritten instead of refused")
+
+
+def test_a_rollback_survives_an_unreadable_store(paths, monkeypatch):
+    """The guard around the store read names an exception the module never
+    imported, so instead of returning False it raises NameError.
+
+    NameError is not a ShamblesError, so the GUI's own handler does not catch
+    it either: the user gets a traceback, no rollback, and is left signed out
+    of a working account with an empty new profile active -- the exact state
+    this function exists to undo.
+    """
+    from shambles.stores.base import StoreUnavailableError
+
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Empty", token=False)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    class Refusing:
+        def read(self):
+            raise StoreUnavailableError("keychain is locked")
+
+    monkeypatch.setattr(switcher, "_store", lambda *a, **k: Refusing())
+
+    assert switcher.abandon_new_account(
+        paths, claude, "Empty", "Work", platform="linux",
+        sleep=lambda _: None) is False
