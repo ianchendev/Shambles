@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import configjson, state, usage as usage_mod
-from .errors import ProfileNameError
+from .errors import ProfileNameError, ShamblesError
 from .providers import ABSENT, CLOSED, CLOSING, NEEDS_LOGIN, Liveness
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
@@ -111,6 +111,34 @@ def resolve_usage(paths, provider, name: str, active_name: str | None):
                            or stashed.get("usage"))
 
 
+def resolve_liveness(paths, provider, name: str, blob, *, active: bool,
+                     now_ms: int, platform: str):
+    """How much of its refresh window one profile has left.
+
+    The active profile's truth is in the live credential, not in our stash.
+    A rolling window is re-minted on every use and written to the live
+    location only; the stash keeps whatever it held when the profile was last
+    switched away from or first saved, and ``restash_active`` deliberately
+    skips a provider whose tokens do not rotate. The stash therefore goes
+    stale *by design* -- and read as liveness, that reports the account you
+    are working in as needing a login, which is the one thing this tool must
+    never get wrong.
+
+    Everyone else has no live credential to consult, so their stash really is
+    their truth. An unreadable live store -- a locked Keychain, an
+    unavailable Credential Manager -- falls back to the stash rather than
+    taking the window down with it.
+    """
+    if active:
+        try:
+            live = provider.store(home=paths.home, platform=platform).read()
+        except ShamblesError:
+            live = None
+        if live is not None:
+            return provider.liveness(live, now_ms=now_ms)
+    return provider.liveness(blob, now_ms=now_ms)
+
+
 def discover(paths, provider, active_name: str | None, now_ms: int, *,
              platform: str = sys.platform) -> list[Profile]:
     found = []
@@ -132,7 +160,9 @@ def discover(paths, provider, active_name: str | None, now_ms: int, *,
             email=identity.email,
             org=identity.org,
             plan=identity.plan,
-            liveness=provider.liveness(blob, now_ms=now_ms),
+            liveness=resolve_liveness(paths, provider, name, blob,
+                                     active=is_active, now_ms=now_ms,
+                                     platform=platform),
             usage=resolve_usage(paths, provider, name, active_name),
             publishes_usage=bool(provider.spec.get("companion")),
         ))

@@ -21,6 +21,7 @@ import os
 import unicodedata
 from pathlib import Path
 
+from .. import configjson
 from ..stores import CredmanStore, FileStore, KeychainStore
 from ..stores.base import StoreUnavailableError
 from . import spec as specmod
@@ -213,7 +214,14 @@ class ClaudeProvider:
         """
         block = self.spec["companion"]
         path = specmod.expand(block["path"], home=home)
-        config = _read_json(path)
+        # load_for_write, not _read_json. _read_json answers {} for anything
+        # unusable -- right when reading a credential for display, fatal here:
+        # splicing two identity keys onto {} and writing it back replaces
+        # every project, MCP server and machine ID in the file. Claude Code
+        # rewrites this path on its own schedule, so a read landing mid-write
+        # is the case to survive, and refusing leaves the switch reporting
+        # drift rather than silently truncating the user's config.
+        config = configjson.load_for_write(path)
         stale = set(block.get("stale_on_switch", ()))
         for key in block["keys"]:
             # Stashed for the card, never restored. A usage cache carried

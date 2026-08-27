@@ -48,6 +48,9 @@ class Plan:
     providers: list = field(default_factory=list)
     #: Where the untouched profile store remains.
     store: Path | None = None
+    #: Shambles' own bookkeeping files that were deleted from ~/.claude.
+    #: Never a credential -- see OWN_FILES_IN_CLAUDE.
+    removed: list = field(default_factory=list)
 
 
 def survey(paths, providers, *, platform: str = sys.platform) -> Plan:
