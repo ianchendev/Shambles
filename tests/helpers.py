@@ -2,9 +2,32 @@
 
 import base64
 import json
+import time
 
 NOW = 1_785_000_000_000  # fixed reference clock for every test
 DAY_MS = 86_400_000
+
+
+#: One reading of the real clock per test session. Stable, so two fixtures
+#: built from it agree to the byte -- the round-trip test compares credential
+#: bytes, and a value re-read from the clock on each call disagrees with
+#: itself by however many milliseconds passed between the two calls.
+_SESSION_NOW = int(time.time() * 1000)
+
+
+def healthy_ms(days: int = 30) -> int:
+    """An expiry that far out from the *real* clock.
+
+    Liveness is computed against ``switcher.now_ms()``, so a fixture meaning
+    "this account is fine" has to be relative to the real clock. Built off the
+    frozen NOW instead, it stops meaning "fine" the day the calendar passes
+    it -- which is exactly what happened: NOW + 30 days is 2026-08-25, and on
+    2026-08-26 every GUI test seeded with a "healthy" login started reading it
+    as expired. NOW stays for assertions that need a stable reference (stash
+    timestamps, formatted dates); anything a liveness check will look at
+    belongs here.
+    """
+    return _SESSION_NOW + days * DAY_MS
 
 
 def write_json(path, data):
@@ -24,7 +47,9 @@ def account(email="a@example.com", org="Acme", uuid="uuid-a"):
     }
 
 
-def credentials(refresh_expires_ms=NOW + 30 * DAY_MS, access_token="tok"):
+def credentials(refresh_expires_ms=None, access_token="tok"):
+    refresh_expires_ms = (healthy_ms() if refresh_expires_ms is None
+                          else refresh_expires_ms)
     return {
         "claudeAiOauth": {
             "accessToken": access_token,
@@ -56,7 +81,7 @@ def make_claude_json(paths, email="a@example.com", extra=None):
     return data
 
 
-def make_live_claude_login(paths, refresh_expires_ms=NOW + 30 * DAY_MS,
+def make_live_claude_login(paths, refresh_expires_ms=None,
                            access_token="tok"):
     """Put a credentials file inside the shared ~/.claude.
 
@@ -81,12 +106,13 @@ def jwt(claims: dict) -> str:
 
 
 def codex_auth(email="a@example.com", name="A User", plan="plus",
-               org="Acme", exp_ms=NOW + 10 * DAY_MS):
+               org="Acme", exp_ms=None):
     """An ~/.codex/auth.json under OAuth, shaped as Codex writes it.
 
     Note ``id_token`` is a bare JWT string on disk even though it is a struct
     in the Rust source -- the parser trap the spec records.
     """
+    exp_ms = healthy_ms(10) if exp_ms is None else exp_ms
     return {
         "OPENAI_API_KEY": None,
         "auth_mode": "chatgpt",
@@ -115,7 +141,7 @@ def make_live_codex_login(paths, **kwargs):
 # -- provider-agnostic --------------------------------------------------
 
 def make_profile(paths, provider_id, name, *, email=None, token=True,
-                 refresh_expires_ms=NOW + 30 * DAY_MS, active=False):
+                 refresh_expires_ms=None, active=False):
     """Create a slim profile: a credential and, for Claude, a stashed identity.
 
     The credential is made **distinguishable per profile**. Claude's tokens are
@@ -124,6 +150,8 @@ def make_profile(paths, provider_id, name, *, email=None, token=True,
     correct switch from one that swapped two accounts' tokens -- it would
     compare a blob against an identical blob and pass either way.
     """
+    refresh_expires_ms = (healthy_ms() if refresh_expires_ms is None
+                          else refresh_expires_ms)
     directory = paths.ensure_profile(provider_id, name)
     if token:
         blob = (credentials(refresh_expires_ms, access_token=f"tok-{name}")

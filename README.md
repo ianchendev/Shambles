@@ -308,18 +308,24 @@ the same protection Claude Code's own `.credentials.json` gets.
 
 ## Checking token health
 
-Each row shows a countdown chip beside the email:
+A card shows a chip beside the email only when the account needs attention:
 
 | Chip | Meaning | Colour |
 |---|---|---|
-| `29d` | days until the refresh window closes | grey |
-| `4d` | seven days or fewer remaining | amber |
-| `today` | closes today | amber |
-| `expired 12d ago` | window already closed; needs `/login` | red |
-| *(none)* + ⚠ | no credentials file — never logged in here | — |
+| *(none)* | healthy — nothing to do | — |
+| `soon` | the refresh window is closing | amber |
+| `needs login` | the window has closed, or this profile has no credential yet | red |
 
-Hover any chip for the exact date and time. A ⚠ still appears alongside a red
-chip, carrying the "run /login" tooltip.
+**Durations are deliberately off the card face.** A number counting down on
+every row is noise on the days it is not urgent, so the face carries the state
+and the figures stay one hover away: point at a profile's name for the exact
+date and time, and at a chip for what to do about it.
+
+"Closing" means one day or fewer for Claude Code, two for Codex — not the week
+you might expect. The windows differ by an order of magnitude across platforms
+and plans (see [docs/token-storage.md](docs/token-storage.md)), and against a
+measured window of roughly four days a seven-day threshold would leave every
+profile permanently amber. Each provider sets its own figure in its spec.
 
 ### Why an expired token is left in place
 
@@ -482,7 +488,7 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pytest
 ```
 
-303 tests. Every one runs against a synthetic home in `tmp_path`. None reads or
+505 tests. Every one runs against a synthetic home in `tmp_path`. None reads or
 writes your real `~/.claude`.
 
 CI runs the suite on Linux and Windows across Python 3.10 and 3.12, under
@@ -503,8 +509,8 @@ stand-in placed on `PATH`, so no browser opens and nothing authenticates.
 ## Platform notes
 
 Developed and verified on WSL2 Ubuntu with WSLg, Python 3.12, Tk 8.6. The
-window renders at 420×292 and a `Switch` click was confirmed to swap the token
-and the displayed email together. The Windows code paths
+window is 860px wide with a 560px floor, and a `Switch` click was confirmed
+to swap the token and the displayed email together. The Windows code paths
 (`target_is_directory=True`, the WinError 1314 Developer Mode message) are
 written to spec but **have not been exercised** — there was no Windows-side
 Claude Code install to test against.

@@ -144,3 +144,76 @@ def test_a_name_colliding_case_insensitively_is_refused():
 def test_unusable_names_are_refused(bad):
     with pytest.raises(ProfileNameError):
         profiles.validate_profile_name(bad, [])
+
+
+# ---- the active profile's liveness comes from the live store --------------
+
+def test_the_active_profile_reads_its_liveness_from_the_live_credential(paths,
+                                                                       claude):
+    """Claude re-mints its refresh window on every use and writes the new
+    deadline to the *live* credential only.
+
+    Our stash keeps whatever it held when the profile was last switched away
+    from or first saved, and restash_active deliberately returns early for a
+    non-rotating provider -- so the stash goes stale by design. Reading
+    liveness from it means the account you are successfully working in starts
+    claiming it needs a login once the stash is older than the window, which
+    for Claude is measured at roughly four days. That inverts the one signal
+    this tool exists to give.
+    """
+    import json
+
+    from helpers import credentials
+    from shambles import switcher
+
+    now = switcher.now_ms()
+    # The stash is stale: its window lapsed a day ago.
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True,
+                 refresh_expires_ms=now - 1 * DAY_MS)
+    make_claude_json(paths, email="w@example.com")
+    # The live credential has rolled forward, as Claude does on every refresh.
+    live = paths.claude_dir / ".credentials.json"
+    live.parent.mkdir(parents=True, exist_ok=True)
+    live.write_text(json.dumps(credentials(refresh_expires_ms=now + 4 * DAY_MS)),
+                    encoding="utf-8")
+
+    found = profiles.discover(paths, claude, "Work", now, platform="linux")[0]
+
+    assert found.liveness.state == LIVE, (
+        f"the account in use reports {found.liveness.state!r}")
+    assert profiles.expiry_label(found) is None, "a healthy account drew a chip"
+
+
+def test_an_inactive_profile_still_reads_its_own_stash(paths, claude):
+    """Only the active profile has a live credential to consult; everyone
+    else's truth really is the stash."""
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Old", email="o@example.com",
+                 refresh_expires_ms=NOW - 3 * DAY_MS)
+    make_claude_json(paths, email="w@example.com")
+
+    found = {p.name: p for p in
+             profiles.discover(paths, claude, "Work", NOW, platform="linux")}
+
+    assert found["Old"].liveness.state == CLOSED
+
+
+def test_an_unreadable_live_store_falls_back_to_the_stash(paths, claude,
+                                                          monkeypatch):
+    """A locked Keychain or an unavailable Credential Manager must not stop
+    the card from rendering what it does know."""
+    from shambles.stores.base import StoreUnavailableError
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True,
+                 refresh_expires_ms=NOW + 30 * DAY_MS)
+    make_claude_json(paths, email="w@example.com")
+
+    class Refusing:
+        def read(self):
+            raise StoreUnavailableError("keychain is locked")
+
+    monkeypatch.setattr(type(claude), "store",
+                        lambda self, *, home, platform: Refusing())
+
+    found = profiles.discover(paths, claude, "Work", NOW, platform="linux")[0]
+    assert found.liveness.state == LIVE, "fell over instead of using the stash"

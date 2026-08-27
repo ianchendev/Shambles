@@ -15,7 +15,7 @@ import time
 
 from . import configjson, profiles, retry, state
 from .errors import (AlreadyManagedError, ProfileNotFoundError,
-                     SwitchFailedError)
+                     ShamblesError, SwitchFailedError)
 from .stores.base import StoreUnavailableError
 
 NOTHING_TO_SAVE = (

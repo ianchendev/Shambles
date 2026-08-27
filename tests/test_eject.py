@@ -108,3 +108,27 @@ def test_the_survey_touches_nothing(paths):
     eject.survey(paths, all_providers(), platform="linux")
 
     assert state.read_active(paths, "claude") == "Work"
+
+
+def test_ejecting_removes_the_pre_10_sidecar_without_crashing(paths):
+    """~/.claude/.shambles.json is the pre-1.0 bookkeeping file, and removing
+    it is the reason OWN_FILES_IN_CLAUDE exists.
+
+    The removal records what it deleted on a Plan field that was never
+    declared, so the whole of Eject raises AttributeError -- and it raises
+    *after* every provider's active marker has already been cleared, leaving
+    the machine half-ejected. The GUI catches ShamblesError only, so the
+    traceback is swallowed by Tk and the user sees neither a summary nor an
+    error.
+    """
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+    sidecar = paths.claude_dir / ".shambles.json"
+    sidecar.write_text('{"active": "Work"}', encoding="utf-8")
+
+    plan = eject.run(paths, all_providers(), platform="linux")
+
+    assert not sidecar.exists(), "the pre-1.0 sidecar was left behind"
+    assert any(".shambles.json" in entry for entry in plan.removed)
+    assert eject.summary(plan)
