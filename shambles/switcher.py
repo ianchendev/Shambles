@@ -14,8 +14,8 @@ import sys
 import time
 
 from . import configjson, profiles, retry, state
-from .errors import (AlreadyManagedError, ProfileNotFoundError,
-                     ShamblesError, SwitchFailedError)
+from .errors import (AlreadyManagedError, DriftedLoginError,
+                     ProfileNotFoundError, ShamblesError, SwitchFailedError)
 from .stores.base import StoreUnavailableError
 
 NOTHING_TO_SAVE = (
@@ -65,9 +65,39 @@ def _store(paths, provider, platform):
     return provider.store(home=paths.home, platform=platform)
 
 
+DRIFT_REFUSAL = (
+    "Signed in as {live}, but '{name}' holds {expected}.\n\n"
+    "Filing this login under '{name}' would overwrite the token saved there, "
+    "and that account would need a new verification email to come back. Save "
+    "this login as its own account, or switch to the profile it belongs to."
+)
+
+
+def belongs_to(paths, provider, name, *, platform) -> bool:
+    """Whether the live login is provably somebody else's than ``name``'s.
+
+    Returns True when the two agree *or* when either side has no identity to
+    compare -- a brand new profile has no expectation to violate, and a
+    credential we cannot attribute is not evidence of a mismatch.
+    """
+    expected = state.profile_email(paths, provider, name)
+    live = state.live_email(paths, provider, platform=platform)
+    return not (expected and live and expected != live)
+
+
 def stash_live_login(paths, provider, name, *, platform=sys.platform,
                      now_ms_fn=now_ms, sleep=time.sleep) -> None:
-    """Capture whatever is logged in right now into profile ``name``."""
+    """Capture whatever is logged in right now into profile ``name``.
+
+    Refuses when the live login demonstrably belongs to a different account.
+    The guard sits here rather than only in ``switch`` so that every caller
+    inherits it -- this write is the one that costs a refresh token.
+    """
+    if not belongs_to(paths, provider, name, platform=platform):
+        raise DriftedLoginError(DRIFT_REFUSAL.format(
+            live=state.live_email(paths, provider, platform=platform),
+            name=name,
+            expected=state.profile_email(paths, provider, name)))
     paths.ensure_profile(provider.id, name)
     store = _store(paths, provider, platform)
 
@@ -111,6 +141,15 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     if not paths.profile_dir(provider.id, target_name).is_dir():
         raise ProfileNotFoundError(
             f"Profile '{target_name}' no longer exists on disk.")
+
+    # Refuse before anything moves. The copy-out below files the live login
+    # under current.profile, so switching while signed in as somebody else
+    # destroys that profile's token -- and the card offers the button that
+    # does it, with only a warning line to say otherwise.
+    if current.kind == state.DRIFTED:
+        raise DriftedLoginError(DRIFT_REFUSAL.format(
+            live=current.live_email, name=current.profile,
+            expected=current.expected_email))
 
     # Refuse before anything moves if the companion cannot be parsed. Writing
     # onto an unreadable config would replace the whole file with two keys.
@@ -332,6 +371,13 @@ def restash_active(paths, provider, *, platform=sys.platform,
 
     name = state.read_active(paths, provider.id)
     if not name or not paths.profile_dir(provider.id, name).is_dir():
+        return False
+
+    # Only refresh a stash from a credential that is provably this profile's.
+    # This runs on every window refresh, so without the check merely opening
+    # the window while signed in as someone else replaces a saved token --
+    # no click, no warning, and no copy left anywhere.
+    if not belongs_to(paths, provider, name, platform=platform):
         return False
 
     try:

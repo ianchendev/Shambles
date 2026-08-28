@@ -257,19 +257,17 @@ def test_restash_does_nothing_without_an_active_profile(paths):
     assert switcher.restash_active(paths, codex, platform="linux") is False
 
 
-def test_without_restash_the_active_row_shows_a_stale_identity(paths):
-    """What re-stashing still corrects.
+def test_restash_refreshes_the_stash_for_the_same_account(paths):
+    """What re-stashing corrects, now that it checks identity first.
 
-    Switching away is *already* safe -- ``switch`` stashes the outgoing login
-    first, so a rotation between switches is captured either way. What is not
-    covered is the display.
+    Codex replaces its refresh token on every use, so a stash taken before a
+    refresh holds a token the server has already invalidated -- restoring one
+    does not fail cleanly, it silently breaks the account. Re-stashing keeps
+    the copy current.
 
-    The countdown no longer needs re-stashing: ``profiles.resolve_liveness``
-    reads the active profile's window from the live credential, so a token
-    that refreshed during use shows its real deadline straight away. The
-    *identity* still comes from the stashed blob -- Codex carries its email
-    inside the token -- so until something re-stashes, the row names whoever
-    the profile held when it was last written.
+    The identity has to match for that to be safe, so the rotation here keeps
+    the address and changes the token, which is what a real refresh does. A
+    login belonging to somebody else is refused instead, covered separately.
 
     Written as a before/after on the same profile, because a test that only
     asserted the "after" state would pass with ``restash_active`` deleted --
@@ -277,23 +275,17 @@ def test_without_restash_the_active_row_shows_a_stale_identity(paths):
     """
     from shambles import profiles
     codex = providers.load("codex")
-    make_profile(paths, "codex", "Work", email="old@example.com", active=True,
+    make_profile(paths, "codex", "Work", email="same@example.com", active=True,
                  refresh_expires_ms=NOW + 3 * DAY_MS)
-    make_live_codex_login(paths, email="new@example.com",
-                          exp_ms=NOW + 30 * DAY_MS)
+    make_live_codex_login(paths, email="same@example.com", exp_ms=healthy_ms())
 
-    def row():
-        return profiles.discover(paths, codex, "Work", NOW, platform="linux")[0]
-
-    stale = row()
-    assert stale.email == "old@example.com", "identity should still be stashed"
-    assert stale.liveness.days_left == 30, (
-        "the countdown should already come from the live credential")
-
+    before = paths.credentials("codex", "Work").read_bytes()
     assert switcher.restash_active(paths, codex, platform="linux") is True
+    after = paths.credentials("codex", "Work").read_bytes()
 
-    fresh = row()
-    assert (fresh.email, fresh.liveness.days_left) == ("new@example.com", 30)
+    assert after != before, "the stale stash was left in place"
+    assert profiles.discover(paths, codex, "Work", NOW,
+                             platform="linux")[0].email == "same@example.com"
 
 
 def test_switching_away_captures_a_rotation_even_without_restash(paths):
@@ -456,3 +448,81 @@ def test_a_rollback_survives_an_unreadable_store(paths, monkeypatch):
     assert switcher.abandon_new_account(
         paths, claude, "Empty", "Work", platform="linux",
         sleep=lambda _: None) is False
+
+
+# ---- a live login that belongs to someone else ---------------------------
+#
+# Reported from a real machine: a work token lapsed, the user signed in
+# through the browser as their personal account, and opening Shambles showed
+# the personal address on the "Ian Work" card. Nothing had been destroyed --
+# but the next switch would have filed that personal login under "Ian Work",
+# overwriting the work refresh token with it.
+
+def test_switching_while_signed_in_as_someone_else_is_refused(paths):
+    """Nothing moves. The outgoing copy-out files the *live* login under the
+    marked profile, so switching while drifted overwrites that profile's
+    saved token with a stranger's -- the one loss this tool exists to
+    prevent, reachable by clicking the button the card offers."""
+    from shambles.errors import DriftedLoginError
+
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_profile(paths, "claude", "Personal", email="p@example.com")
+    # Signed in as someone else entirely, outside Shambles.
+    make_claude_json(paths, email="stranger@example.com")
+    make_live_claude_login(paths, access_token="tok-STRANGER")
+
+    before = paths.credentials("claude", "Work").read_bytes()
+
+    with pytest.raises(DriftedLoginError) as raised:
+        switcher.switch(paths, claude, "Personal", platform="linux",
+                        sleep=lambda _: None)
+
+    assert "stranger@example.com" in str(raised.value)
+    assert "Work" in str(raised.value)
+    assert paths.credentials("claude", "Work").read_bytes() == before, (
+        "the marked profile's token was overwritten by a foreign login")
+    assert state.read_active(paths, "claude") == "Work", "the marker moved"
+
+
+def test_stashing_refuses_to_file_a_foreign_login_under_a_profile(paths):
+    """The guard sits on the write itself, not only on switch(), so every
+    caller inherits it."""
+    from shambles.errors import DriftedLoginError
+
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="stranger@example.com")
+    make_live_claude_login(paths, access_token="tok-STRANGER")
+
+    before = paths.credentials("claude", "Work").read_bytes()
+    with pytest.raises(DriftedLoginError):
+        switcher.stash_live_login(paths, claude, "Work", platform="linux",
+                                  sleep=lambda _: None)
+    assert paths.credentials("claude", "Work").read_bytes() == before
+
+
+def test_stashing_into_a_profile_with_no_identity_is_still_allowed(paths):
+    """Saving the current login as a brand new account is the ordinary path
+    and has no identity to contradict."""
+    claude = providers.load("claude")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    switcher.stash_live_login(paths, claude, "Fresh", platform="linux",
+                              sleep=lambda _: None)
+    assert paths.credentials("claude", "Fresh").exists()
+
+
+def test_restash_refuses_a_live_credential_that_is_not_this_profiles(paths):
+    """restash_active runs on every window refresh, so this one destroys a
+    token with no click at all: open the window while signed in as someone
+    else and the marked profile's stash is replaced."""
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="work@example.com", active=True)
+    make_live_codex_login(paths, email="stranger@example.com")
+
+    before = paths.credentials("codex", "Work").read_bytes()
+    assert switcher.restash_active(paths, codex, platform="linux") is False
+    assert paths.credentials("codex", "Work").read_bytes() == before, (
+        "merely opening the window overwrote a saved token")
