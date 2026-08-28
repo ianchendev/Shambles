@@ -889,12 +889,17 @@ def test_hovering_a_card_washes_it(paths, make_app, monkeypatch):
 
     card = _named_card(app, "Other")
 
-    # Drive it out of hover first. On a CI runner the pointer can already be
-    # sitting over the window, in which case the card is legitimately washed
-    # before the test touches it -- and then the assertion below is about
-    # where the mouse happened to be rather than about the transition.
-    card.event_generate("<Leave>", rootx=-200, rooty=-200)
-    app.update()
+    # This is the integration half: that watch_pointer() actually ran on the
+    # cards the window builds. The wash itself, and the leave path, are
+    # covered against a Card in isolation in test_widgets.
+    assert card.bind("<Enter>"), "the card has no crossing bindings"
+
+    # A synthetic <Leave> cannot establish "the pointer is elsewhere" when it
+    # physically is not: on a runner whose mouse sits over the window, real
+    # crossing events keep arriving during update() and the card is correctly
+    # re-hovered. Paint the resting colour directly instead -- the point here
+    # is where <Enter> leaves the card, not where the mouse happens to be.
+    card._repaint(app.theme["card"])
     assert card.itemcget(card.surface, "fill") == app.theme["card"]
 
     card.event_generate("<Enter>")
