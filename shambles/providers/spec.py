@@ -123,3 +123,24 @@ def mode_of(block: dict, default: int = 0o600) -> int:
     """Parse a spec's octal file mode, written as a string like ``"0600"``."""
     raw = block.get("mode")
     return int(raw, 8) if isinstance(raw, str) else default
+
+
+_MISSING = object()
+
+
+def emptied_token(spec: dict, parsed) -> bool:
+    """Whether this credential carries a token field that has been emptied.
+
+    Present-but-empty, never merely absent. A vendor clearing a login writes
+    ``""`` in place and leaves the expiry, scopes and plan around it intact,
+    so the file still looks like a healthy credential to anything that reads
+    only the deadline. A partial credential that never carried the field is a
+    different thing entirely and is not evidence of anything.
+    """
+    block = spec.get("token")
+    if not block:
+        return False
+    value = pointer(parsed, block["pointer"], default=_MISSING)
+    if value is _MISSING or value is None:
+        return False
+    return isinstance(value, str) and not value.strip()

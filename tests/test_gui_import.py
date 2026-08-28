@@ -1339,3 +1339,76 @@ def test_the_save_control_is_not_squeezed_off_the_edge(paths, make_app):
     for button in saves:
         assert button.winfo_width() >= button.winfo_reqwidth(), (
             f"clipped: {button.winfo_width()}px of {button.winfo_reqwidth()}px")
+
+
+# ---- an account whose login was cleared ----------------------------------
+
+def _emptied_credential(paths, name, email, expires_ms):
+    """A credential shaped exactly as one is found after access is lost:
+    tokens blanked in place, everything around them intact."""
+    import json
+    from shambles import configjson
+    make_profile(paths, "claude", name, email=email,
+                 refresh_expires_ms=expires_ms)
+    blob = json.loads(paths.credentials("claude", name).read_text())
+    blob["claudeAiOauth"]["accessToken"] = ""
+    blob["claudeAiOauth"]["refreshToken"] = ""
+    configjson.write_atomic(paths.credentials("claude", name), blob)
+
+
+def test_a_cleared_login_is_flagged_rather_than_shown_as_healthy(paths,
+                                                                 make_app):
+    """The credential still names a deadline weeks out, so reading only the
+    expiry reports a healthy account with no warning at all -- and switching
+    to it drops you at a login prompt with no clue why."""
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+    _emptied_credential(paths, "Lapsed", "lapsed@example.com", healthy_ms())
+
+    app = make_app(paths)
+    app.update()
+
+    text = _all_text(app.rows)
+    assert "signed out" in text, f"the cleared account is unflagged: {text!r}"
+
+
+def test_the_cleared_chip_is_drawn_in_the_severe_colour(paths, make_app):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+    _emptied_credential(paths, "Lapsed", "lapsed@example.com", healthy_ms())
+
+    app = make_app(paths)
+    app.update()
+
+    pills = [w for w in _every_widget(app) if isinstance(w, widgets.Pill)]
+    drawn = {p.itemcget(i, "fill") for p in pills for i in p.find_all()
+             if p.type(i) == "polygon"}
+    assert app.theme["chip_gone_bg"] in drawn, "not drawn as needing action"
+
+
+def test_the_cleared_tooltip_says_what_it_cannot_know(paths, claude):
+    """Offline, the three causes are indistinguishable -- all of them are the
+    same empty string on disk. Claiming one would be a guess presented as a
+    fact about the user's billing."""
+    _emptied_credential(paths, "Lapsed", "lapsed@example.com", healthy_ms())
+
+    found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
+    tip = gui.chip_tooltip(found)
+
+    assert "cleared" in tip.lower()
+    assert "cannot tell you which" in tip
+    assert "log in again" in tip
+    # ...and it must not present a cause as settled.
+    assert "expired" not in tip.lower()
+    assert "subscription" not in tip.lower()
+
+
+def test_a_cleared_login_shows_no_expiry_date(paths, claude):
+    """The deadline it still carries belongs to a token that is gone."""
+    _emptied_credential(paths, "Lapsed", "lapsed@example.com", healthy_ms())
+
+    found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
+    assert gui.expiry_line(found) is None
+    assert profiles.needs_login(found)

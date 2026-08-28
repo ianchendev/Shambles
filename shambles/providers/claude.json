@@ -102,5 +102,9 @@
     "observed_on_plan": "claude_max (Max 5x)",
     "sample_size": 1
   },
-  "surfaces_note": "one switch moves both \u2014 they share one credential store, so a shell must show them together or 'why did VS Code change too' needs explaining"
+  "surfaces_note": "one switch moves both \u2014 they share one credential store, so a shell must show them together or 'why did VS Code change too' needs explaining",
+  "token": {
+    "pointer": "claudeAiOauth.refreshToken",
+    "note": "emptied in place when the login is cleared; the expiry and scopes around it survive, so a credential with no token still reads as healthy unless this is checked"
+  }
 }
