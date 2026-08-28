@@ -380,21 +380,35 @@ def test_stash_after_login_reports_false_when_nothing_was_written(paths, make_ap
 
 
 def test_save_is_not_offered_when_there_is_nothing_to_save(paths, make_app):
-    """A control whose only outcome is a refusal is worse than no control."""
+    """A control whose only outcome is a refusal is worse than no control.
+
+    Asserted against the buttons rather than a label string: the control now
+    names the account it would save, so matching on fixed copy would pass
+    here whatever was rendered.
+    """
     app = make_app(paths)
     app.refresh()
-    assert "Save current login" not in _all_text(app.rows)
+    assert not [b for b in _buttons(app.rows)
+                if "Save" in str(b.cget("text"))]
 
 
 def test_save_is_offered_when_a_login_exists_outside_any_profile(paths, make_app):
-    """The state this button is for: signed in, but Shambles does not know it."""
+    """The state this button is for: signed in, but Shambles does not know it.
+
+    The control names the address rather than saying "Save current login",
+    because by the time it is reached nobody saved matches that login -- a
+    match is adopted instead -- so the address is the only thing identifying
+    what pressing it would create.
+    """
     make_claude_json(paths, email="w@example.com")
     make_live_claude_login(paths)
 
     app = make_app(paths)
     app.refresh()
 
-    assert "Save current login" in _all_text(app.rows)
+    rendered = _all_text(app.rows)
+    assert "Save" in rendered, "no save control offered"
+    assert "w@example.com" in rendered, "the control does not say whose login"
 
 
 def test_save_is_offered_for_a_credential_with_no_readable_identity(paths, make_app):
@@ -1242,3 +1256,86 @@ def test_a_nonsense_expiry_timestamp_still_renders_the_window(paths, make_app):
     app.update()
 
     assert "Broken" in _all_text(app.rows), "the profile did not render"
+
+
+# ======================================================================
+# Signed in as somebody the marker does not name
+# ======================================================================
+#
+# Reported from a real machine: a work token lapsed, the user signed in
+# through the browser as their personal account, and the "Ian Work" card
+# then showed the personal address with a warning line under the heading.
+# Nothing was lost, but the card offered a Switch button whose copy-out
+# would have filed that personal login under "Ian Work".
+
+def test_opening_the_window_adopts_the_account_actually_signed_in(paths,
+                                                                  make_app):
+    """If the live login is one of the saved accounts, the marker is simply
+    pointing at the wrong one. Say so by pointing it at the right one."""
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_profile(paths, "claude", "Personal", email="personal@example.com")
+    # Signed in as Personal, outside Shambles.
+    make_claude_json(paths, email="personal@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert state.read_active(paths, "claude") == "Personal", (
+        "the marker still names the account that is not signed in")
+    text = _all_text(app.rows)
+    assert "but 'Work' expects" not in text, "still warning about drift"
+
+
+def test_adopting_an_account_moves_no_credential(paths, make_app):
+    """Adoption is a marker change and nothing else. Copying anything here
+    is what destroys tokens."""
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_profile(paths, "claude", "Personal", email="personal@example.com")
+    make_claude_json(paths, email="personal@example.com")
+    make_live_claude_login(paths)
+
+    before = {name: paths.credentials("claude", name).read_bytes()
+              for name in ("Work", "Personal")}
+
+    app = make_app(paths)
+    app.update()
+
+    for name, blob in before.items():
+        assert paths.credentials("claude", name).read_bytes() == blob, (
+            f"{name}'s stored credential was rewritten by adoption")
+
+
+def test_an_unknown_login_is_offered_by_name_rather_than_adopted(paths,
+                                                                 make_app):
+    """Nobody saved matches, so there is nothing to adopt. Name the address
+    on the control that saves it, instead of leaving 'Save current login' to
+    be guessed at."""
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="stranger@example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    assert state.read_active(paths, "claude") == "Work", "adopted a stranger"
+    assert "stranger@example.com" in _all_text(app.rows), (
+        "the window never says which account it would save")
+
+
+def test_the_save_control_is_not_squeezed_off_the_edge(paths, make_app):
+    """The heading packs its title column with expand=True, so a long
+    warning line took every pixel and left the button clipped mid-word --
+    which is how it rendered on the machine this was reported from."""
+    make_profile(paths, "claude", "Work", email="work@example.com", active=True)
+    make_claude_json(paths, email="a-rather-long-address@somewhere.example.com")
+    make_live_claude_login(paths)
+
+    app = make_app(paths)
+    app.update()
+
+    saves = [b for b in _buttons(app.rows) if "Save" in str(b.cget("text"))]
+    assert saves, "no save control offered while signed in as someone else"
+    for button in saves:
+        assert button.winfo_width() >= button.winfo_reqwidth(), (
+            f"clipped: {button.winfo_width()}px of {button.winfo_reqwidth()}px")

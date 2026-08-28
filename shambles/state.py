@@ -116,6 +116,27 @@ def profile_email(paths, provider, name: str) -> str | None:
                              active=False).email
 
 
+def owner_of_live(paths, provider, *, platform: str = sys.platform):
+    """The saved profile this live login belongs to, or None.
+
+    Identity is matched on the address, which is the only stable handle a
+    credential exposes here -- Claude's tokens are opaque and carry none, so
+    it comes from the companion config, and Codex's is a JWT claim.
+
+    Used to answer the question the drift warning raises but never resolves:
+    the machine is signed in as somebody, and either that somebody is already
+    one of the saved accounts -- in which case the marker is simply pointing
+    at the wrong one -- or they are new and worth offering to save.
+    """
+    live = live_email(paths, provider, platform=platform)
+    if not live:
+        return None
+    for name in profile_names(paths, provider.id):
+        if profile_email(paths, provider, name) == live:
+            return name
+    return None
+
+
 def inspect(paths, provider, *, platform: str = sys.platform) -> State:
     """Classify one provider's login without touching anything."""
     names = profile_names(paths, provider.id)
