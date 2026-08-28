@@ -85,5 +85,9 @@
       "access_token_days": 10
     }
   },
-  "surfaces_note": "all three share one auth.json. Desktop sharing is strong inference, not documented: ChatGPT.app bundles the identical binary and keeps its non-credential state in ~/.codex"
+  "surfaces_note": "all three share one auth.json. Desktop sharing is strong inference, not documented: ChatGPT.app bundles the identical binary and keeps its non-credential state in ~/.codex",
+  "token": {
+    "pointer": "tokens.refresh_token",
+    "note": "emptied in place when the login is cleared, as with Claude"
+  }
 }

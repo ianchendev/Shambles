@@ -6,7 +6,8 @@ could load third-party credential handlers would be a poor thing to ask anyone
 to trust.
 """
 
-from .base import (ABSENT, CLOSED, CLOSING, LIVE, NEEDS_LOGIN, UNKNOWN,
+from .base import (ABSENT, CLOSED, CLOSING, LIVE, NEEDS_LOGIN, SIGNED_OUT,
+                   UNKNOWN,
                    Identity, Liveness, Provider)
 from .claude import ClaudeProvider
 from .codex import CodexProvider
@@ -38,7 +39,8 @@ def ids() -> list[str]:
 
 
 __all__ = [
-    "ABSENT", "CLOSED", "CLOSING", "LIVE", "NEEDS_LOGIN", "UNKNOWN",
+    "ABSENT",
+    "SIGNED_OUT", "CLOSED", "CLOSING", "LIVE", "NEEDS_LOGIN", "UNKNOWN",
     "Identity", "Liveness", "Provider",
     "ClaudeProvider", "CodexProvider",
     "load", "all_providers", "ids",

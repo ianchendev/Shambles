@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from ..stores import FileStore, KeychainStore
 from . import spec as specmod
-from .base import ABSENT, CLOSED, CLOSING, LIVE, UNKNOWN, Identity, Liveness
+from .base import ABSENT, CLOSED, CLOSING, LIVE, SIGNED_OUT, UNKNOWN, Identity, Liveness
 
 MS_PER_DAY = 86_400_000
 
@@ -111,6 +111,14 @@ class CodexProvider:
             return Liveness(ABSENT)
 
         data = _parse(blob)
+
+        # A cleared login keeps its deadline, so this comes before the JWT is
+        # read -- the exp claim inside a still-present access token would
+        # otherwise report a healthy window on a credential that cannot
+        # refresh.
+        if specmod.emptied_token(self.spec, data):
+            return Liveness(SIGNED_OUT)
+
         block = self.spec["liveness"]
         claims = jwt_claims(specmod.pointer(data, block["pointer"]))
         expires_ms = None

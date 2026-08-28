@@ -25,7 +25,8 @@ from .. import configjson
 from ..stores import CredmanStore, FileStore, KeychainStore
 from ..stores.base import StoreUnavailableError
 from . import spec as specmod
-from .base import ABSENT, CLOSED, CLOSING, LIVE, UNKNOWN, Identity, Liveness
+from .base import (ABSENT, CLOSED, CLOSING, LIVE, SIGNED_OUT, UNKNOWN,
+                   Identity, Liveness)
 
 MS_PER_DAY = 86_400_000
 
@@ -155,7 +156,15 @@ class ClaudeProvider:
             return Liveness(ABSENT)
 
         block = self.spec["liveness"]
-        expires = specmod.pointer(_parse(blob), block["pointer"])
+        parsed = _parse(blob)
+
+        # A cleared login keeps its deadline. Checked before the arithmetic
+        # because that arithmetic would happily report three weeks left on a
+        # credential that cannot sign in at all.
+        if specmod.emptied_token(self.spec, parsed):
+            return Liveness(SIGNED_OUT)
+
+        expires = specmod.pointer(parsed, block["pointer"])
         if not isinstance(expires, (int, float)):
             # The VS Code extension writes credentials without this field.
             # Reporting CLOSED would strand a perfectly good account.

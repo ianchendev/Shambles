@@ -25,6 +25,13 @@ CLOSING = "closing"
 CLOSED = "closed"
 #: No credential at all -- a profile added but never logged into.
 ABSENT = "absent"
+
+#: A credential is here and its metadata is intact, but the token
+#: itself has been emptied. Distinct from ABSENT: that profile was
+#: never logged into, this one was and has been signed out -- and
+#: telling someone "no token here yet" about an account they used
+#: last week is how you lose their trust in the rest of the window.
+SIGNED_OUT = "signed-out"
 #: A credential is present but its expiry could not be determined. Claude's
 #: ``refreshTokenExpiresAt`` is absent from credentials written by the VS Code
 #: extension, so this is a real state and not a defensive nicety. Treated as
@@ -32,7 +39,7 @@ ABSENT = "absent"
 #: and letting the vendor decide.
 UNKNOWN = "unknown"
 
-NEEDS_LOGIN = frozenset({CLOSED, ABSENT})
+NEEDS_LOGIN = frozenset({CLOSED, ABSENT, SIGNED_OUT})
 
 
 @dataclass(frozen=True)

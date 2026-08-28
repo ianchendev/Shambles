@@ -12,7 +12,8 @@ from pathlib import Path
 
 from . import configjson, state, usage as usage_mod
 from .errors import ProfileNameError, ShamblesError
-from .providers import ABSENT, CLOSED, CLOSING, NEEDS_LOGIN, Liveness
+from .providers import (ABSENT, CLOSED, CLOSING, NEEDS_LOGIN, SIGNED_OUT,
+                        Liveness)
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
 
@@ -21,18 +22,38 @@ EXPIRY_OK = "ok"
 EXPIRY_SOON = "soon"
 EXPIRY_GONE = "gone"
 
-SEVERITY = {CLOSING: EXPIRY_SOON, CLOSED: EXPIRY_GONE, ABSENT: EXPIRY_GONE}
+SEVERITY = {CLOSING: EXPIRY_SOON, CLOSED: EXPIRY_GONE,
+            ABSENT: EXPIRY_GONE, SIGNED_OUT: EXPIRY_GONE}
 
 #: Face copy for the chip. Healthy / unknown accounts show none (DD-1).
 FACE_LABELS = {
     CLOSING: "soon",
     CLOSED: "needs login",
     ABSENT: "needs login",
+    # Its own word rather than "needs login". The remedy is the same, but the
+    # cause is not, and a profile that says "needs login" beside a healthy
+    # expiry date is the confusing state this replaces.
+    SIGNED_OUT: "signed out",
 }
 
 WARNINGS = {
     ABSENT: "No token here yet. Switch to this profile and log in.",
     CLOSED: "Refresh window closed — switch to this profile and log in again.",
+    # Deliberately does not name a cause. Revoked session, a plan that no
+    # longer covers the tool, a sign-out somewhere else -- on disk these are
+    # the same three empty quotes, and Shambles never goes online, so it
+    # genuinely cannot tell which. Saying what is observable and what to do
+    # about it is the whole of what it honestly knows.
+    SIGNED_OUT: (
+        "This login has been cleared. The profile is still here and its "
+        "details are intact, but its token is empty, so it cannot sign in.\n\n"
+        "That is what gets written when a session is revoked, when the plan "
+        "behind it stops covering the tool, or when the account is signed out "
+        "somewhere else. Shambles never goes online, so it cannot tell you "
+        "which of those it was.\n\n"
+        "Switch to this profile and log in again to restore it. Nothing else "
+        "about the profile is affected."
+    ),
 }
 
 

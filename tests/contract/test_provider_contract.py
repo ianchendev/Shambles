@@ -342,3 +342,70 @@ def test_unknown_provider_names_the_known_ones():
 
 def test_every_registered_provider_ships_a_spec():
     assert set(providers.ids()) <= set(specmod.available())
+
+
+# ---- a credential whose token has been emptied ---------------------------
+#
+# Reported from a real machine: an account lost access, and Claude Code
+# rewrote its credential with accessToken and refreshToken set to "" while
+# leaving refreshTokenExpiresAt, scopes and subscriptionType intact. Liveness
+# reads only the expiry, so the profile listed as healthy with 24 days left
+# and no warning of any kind -- switching to it drops you at a login prompt.
+
+def healthy_blob(provider) -> bytes:
+    """A complete, working credential -- token fields included.
+
+    The minimal blobs elsewhere in this file omit the token entirely, which
+    is deliberately *not* the same signal: a partial credential that never
+    carried the field proves nothing, while a field present and emptied is
+    exactly how a cleared login looks on disk.
+    """
+    if provider.id == "claude":
+        return json.dumps({"claudeAiOauth": {
+            "refreshTokenExpiresAt": NOW + 30 * DAY_MS,
+            "accessToken": "access-token-value",
+            "refreshToken": "refresh-token-value",
+        }}).encode()
+    return json.dumps({"tokens": {
+        "access_token": _jwt({"exp": (NOW + 30 * DAY_MS) // 1000}),
+        "refresh_token": "refresh-token-value",
+    }}).encode()
+
+
+def _blank_the_token(provider, blob: bytes) -> bytes:
+    """Empty the refresh token in place, as the vendor does."""
+    import json
+    data = json.loads(blob)
+    if provider.id == "claude":
+        data["claudeAiOauth"]["refreshToken"] = ""
+        data["claudeAiOauth"]["accessToken"] = ""
+    else:
+        data["tokens"]["refresh_token"] = ""
+    return json.dumps(data).encode()
+
+
+def test_a_credential_with_an_emptied_token_is_not_reported_healthy(provider):
+    from shambles.providers import SIGNED_OUT
+
+    blob = _blank_the_token(provider, healthy_blob(provider))
+    liveness = provider.liveness(blob, now_ms=NOW)
+
+    assert liveness.state == SIGNED_OUT, (
+        f"an unusable credential reported {liveness.state!r}")
+    assert liveness.needs_login
+
+
+def test_an_emptied_token_carries_no_expiry_to_display(provider):
+    """The window it names is meaningless once the token is gone, and
+    showing a date implies there is something left to expire."""
+    from shambles.providers import SIGNED_OUT
+
+    blob = _blank_the_token(provider, healthy_blob(provider))
+    liveness = provider.liveness(blob, now_ms=NOW)
+    assert liveness.state == SIGNED_OUT
+    assert liveness.expires_at_ms is None
+
+
+def test_a_full_credential_is_still_live(provider):
+    """The guard must not catch a working account."""
+    assert provider.liveness(healthy_blob(provider), now_ms=NOW).state == LIVE
