@@ -113,6 +113,11 @@ CARD_STAGGER_MAX_MS = 240
 #: The window's own fade, which covers the layout settling on a cold start.
 WINDOW_FADE_MS = 160
 
+#: How much of an address the heading's save control will show. Past this
+#: the button crowds out the title beside it, which is the more important of
+#: the two -- the full address is on the warning line directly below.
+SAVE_LABEL_MAX_PX = 260
+
 #: The empty-slot placeholder: tall enough to read as a card-shaped gap, and
 #: dashed so it reads as a space to fill rather than as a real profile.
 PLACEHOLDER_HEIGHT = 62
@@ -779,6 +784,12 @@ class ShamblesApp(tk.Tk):
         self._entering = 0
 
         for provider in self.providers:
+            # Whoever is actually signed in comes first: adopting the right
+            # profile turns a drifted machine back into an ordinary one, and
+            # only then is re-stashing safe -- it is gated on the live login
+            # provably belonging to the marked profile.
+            self._adopt_live_login(provider)
+
             # Rotating providers go stale in the background; correct that
             # before reading, so the row and the stash agree.
             switcher.restash_active(self.paths, provider, platform=self.platform)
@@ -793,6 +804,32 @@ class ShamblesApp(tk.Tk):
         # Whatever armed a confirmation has now had its chance to claim it.
         self._confirm = None
 
+    def _adopt_live_login(self, provider):
+        """Point the marker at the account actually signed in, when we can.
+
+        A token lapses, the user signs in again through the browser, and the
+        machine is now on a different account than the marker names. If that
+        account is one of the saved ones the marker is simply stale, and the
+        honest correction is to move it -- otherwise the card keeps showing
+        somebody else's address under the old profile's name, and the Switch
+        button beside it offers to file that login under the wrong profile.
+
+        Moves the marker and nothing else. No credential is read, copied or
+        written here: adoption is a relabelling, and it stays reversible by
+        switching back. An unrecognised login is left alone for the user to
+        name -- see the save control in the heading.
+        """
+        try:
+            current = state.inspect(self.paths, provider, platform=self.platform)
+            if current.kind != state.DRIFTED:
+                return
+            owner = state.owner_of_live(self.paths, provider,
+                                        platform=self.platform)
+            if owner and owner != current.profile:
+                state.write_active(self.paths, provider.id, owner)
+        except ShamblesError:
+            return  # an unreadable store is not a reason to refuse the window
+
     def _render_group(self, provider, current):
         t = self.theme
         heading = tk.Frame(self.rows, bg=t["window"])
@@ -805,6 +842,12 @@ class ShamblesApp(tk.Tk):
         # A single window-wide header cannot represent N providers, each with
         # its own active account and its own warning state; repeating the
         # treatment per group scales to a third provider without redesign.
+        # Packed before the titles column, which expands. Packed after it,
+        # a long drift warning takes every pixel and leaves this clipped
+        # mid-word -- which is how it rendered on the machine that reported
+        # being signed in as the wrong account, i.e. exactly when it matters.
+        self._render_save_control(heading, provider, current)
+
         titles = tk.Frame(heading, bg=t["window"])
         titles.pack(side="left", fill="x", expand=True)
         tk.Label(titles, text=provider.display_name.upper(), font=t.caption,
@@ -830,12 +873,6 @@ class ShamblesApp(tk.Tk):
         # clicked. That refusal is correct -- switcher.save_current_account
         # still raises -- but a control that exists only to say no is worse
         # than no control.
-        savable = (current.kind in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED)
-                   and self._has_live_login(provider))
-        if savable:
-            ttk.Button(heading, text="Save current login",
-                       style="Shambles.TButton",
-                       command=lambda p=provider: self.on_save(p)).pack(side="right")
 
         # Record the active account's live figures first, so its own card has
         # something to show rather than being the one guaranteed to be blank.
@@ -868,6 +905,30 @@ class ShamblesApp(tk.Tk):
                        style="Shambles.TButton",
                        command=lambda p=provider: self.on_forget_marker(p)
                        ).pack(anchor="w", pady=(GAP_S, 0))
+
+    def _render_save_control(self, heading, provider, current):
+        """Offer to save the live login, naming whose it is.
+
+        Reached when nobody saved matches it -- a match is adopted instead --
+        so the address is the only thing identifying what the button would
+        create, and "Save current login" alone leaves the user to guess.
+
+        Offered only when there is genuinely a login to save. The state alone
+        does not say: a machine with no profiles and no credential is
+        UNMANAGED too, and the button would refuse the moment it was clicked.
+        """
+        if current.kind not in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED):
+            return
+        if not self._has_live_login(provider):
+            return
+
+        t = self.theme
+        who = current.live_email
+        label = (f"Save {elide(who, t.button, SAVE_LABEL_MAX_PX)}"
+                 if who else "Save current login")
+        ttk.Button(heading, text=label, style="Shambles.TButton",
+                   command=lambda p=provider: self.on_save(p)
+                   ).pack(side="right", padx=(GAP_S, 0))
 
     def _has_live_login(self, provider) -> bool:
         """Whether this provider is signed in right now.
