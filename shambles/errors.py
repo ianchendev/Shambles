@@ -44,3 +44,13 @@ class ConfigUnreadableError(ShamblesError):
     """~/.claude.json exists but could not be parsed, so it must not be
     written over. Claude Code rewrites that file on its own schedule, and a
     read landing mid-write sees truncated JSON."""
+
+
+class DriftedLoginError(ShamblesError):
+    """The live login belongs to an account other than the marked profile.
+
+    Raised instead of filing it under that profile: the copy-out step exists
+    so switching away is never lossy, and against a login that is not this
+    profile's it does the opposite -- it overwrites a saved refresh token
+    with a stranger's, which costs a verification email to undo.
+    """
