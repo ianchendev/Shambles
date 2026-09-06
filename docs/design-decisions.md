@@ -371,9 +371,12 @@ must not call those mechanism modules directly.
 
 Plans are read-only and make destructive intent explicit: remove and eject
 require confirmation, while switch is directly executable. Successful and
-handled-failure results include a fresh snapshot. Login is asynchronous and
-revalidates the requested active account on disk after the vendor command
-exits; callbacks receive sanitized output and structured results.
+handled-failure results include a fresh snapshot when readable. A failed
+snapshot read preserves the operation's outcome and adds a fixed warning.
+Login is asynchronous: the vendor receives the injected home and provider
+configuration, and completion validates the live credential and identity
+before saving through the switcher. Callbacks receive supported authorization
+URLs or fixed progress text, and structured results even if a later read fails.
 
 The CLI deliberately adapts `ActionResult` into the established native-shell
 output. This preserves existing human-readable and JSON command contracts while
@@ -385,7 +388,8 @@ the application service remains the single implementation of the operation.
   bypass switch ordering, provider selection, or error mapping.
 - A result snapshot is authoritative for the state immediately after the
   operation; interfaces should not perform a second mechanism-level read to
-  reconstruct it.
+  reconstruct it. An unavailable snapshot is `None`; the CLI retains its
+  success payload with `needs_login: null` and a warning in that case.
 - The CLI's compatibility payload is stable but is not a promise to expose
   every field in `ActionResult.to_dict()`.
 

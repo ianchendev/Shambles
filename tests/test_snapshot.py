@@ -253,6 +253,34 @@ def test_switch_json_keeps_the_native_shell_contract(paths, capsys):
     }
 
 
+@pytest.mark.parametrize("as_json", [False, True])
+def test_switch_cli_survives_an_unavailable_snapshot(paths, capsys, monkeypatch,
+                                                   as_json):
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    make_profile(paths, "codex", "Personal", token=False)
+
+    def broken_snapshot(self):
+        raise OSError("snapshot-private-sentinel")
+
+    monkeypatch.setattr("shambles.app.service.ShamblesService.snapshot",
+                        broken_snapshot)
+    args = ["--home", str(paths.home), "switch", "codex", "Personal"]
+    if as_json:
+        args.append("--json")
+    assert cli.main(args) == 0
+    out = capsys.readouterr()
+    assert "snapshot-private-sentinel" not in out.out + out.err
+    if as_json:
+        data = json.loads(out.out)
+        assert data["ok"] is True
+        assert data["switched_to"] == "Personal"
+        assert data["needs_login"] is None
+        assert data["warnings"]
+    else:
+        assert out.out.startswith("Switched codex to Personal.\n")
+
+
 def test_switch_text_keeps_provider_and_login_hint(paths, capsys):
     make_profile(paths, "claude", "Work", active=True)
     make_profile(paths, "claude", "Personal", token=False)

@@ -5,6 +5,7 @@ import threading
 
 from .. import eject as eject_mod
 from .. import login
+from .. import state
 from .. import switcher
 from ..errors import (AlreadyManagedError, ConfigUnreadableError,
                       ProfileNotFoundError, ShamblesError)
@@ -71,22 +72,23 @@ class LoginHandle:
         self._completed = completed
 
     def cancel(self):
-        self._process.cancel()
+        if self._process is not None:
+            self._process.cancel()
 
     def wait(self, timeout=None):
         return self._completed.wait(timeout)
 
     @property
     def running(self):
-        return self._process.running
+        return self._process is not None and self._process.running
 
 
 def _safe_login_line(line):
     # Vendor stdout has no stable schema and can contain credentials under
     # spellings Shambles cannot enumerate safely. The one documented value a
-    # caller needs is an HTTP(S) sign-in URL, normalized by the login layer;
+    # caller needs is a supported sign-in URL, checked by the login layer;
     # everything else becomes a fixed progress message.
-    return login.find_url(line) or "[vendor output hidden]"
+    return login.authorization_url(line) or "[vendor output hidden]"
 
 
 class ShamblesService:
@@ -116,9 +118,7 @@ class ShamblesService:
         try:
             switcher.switch(self.paths, self._provider(provider_id), account,
                             platform=self.platform)
-            return ActionResult(True, "switch",
-                                f"Switched to {account}.",
-                                snapshot=self.snapshot())
+            return self._result(True, "switch", f"Switched to {account}.")
         except ShamblesError as exc:
             return self._failure("switch", exc)
 
@@ -127,8 +127,7 @@ class ShamblesService:
             saved = switcher.save_current_account(
                 self.paths, self._provider(provider_id), name,
                 platform=self.platform)
-            return ActionResult(True, "save_current", f"Saved {saved}.",
-                                snapshot=self.snapshot())
+            return self._result(True, "save_current", f"Saved {saved}.")
         except ShamblesError as exc:
             return self._failure("save_current", exc)
 
@@ -137,17 +136,15 @@ class ShamblesService:
             added = switcher.add_empty_account(
                 self.paths, self._provider(provider_id), name,
                 platform=self.platform)
-            return ActionResult(True, "add", f"Added {added}.",
-                                snapshot=self.snapshot())
+            return self._result(True, "add", f"Added {added}.")
         except ShamblesError as exc:
             return self._failure("add", exc)
 
     def rename(self, provider_id, old_name, new_name):
         try:
-            switcher.rename_profile(
+            renamed = switcher.rename_profile(
                 self.paths, self._provider(provider_id), old_name, new_name)
-            return ActionResult(True, "rename", f"Renamed to {new_name}.",
-                                snapshot=self.snapshot())
+            return self._result(True, "rename", f"Renamed to {renamed}.")
         except ShamblesError as exc:
             return self._failure("rename", exc)
 
@@ -155,68 +152,89 @@ class ShamblesService:
         for provider in self.providers:
             switcher.restash_active(
                 self.paths, provider, platform=self.platform)
-        return ActionResult(True, "refresh", snapshot=self.snapshot())
+        return self._result(True, "refresh")
 
     def start_login(self, provider_id, account, on_line, on_done):
         provider = self._provider(provider_id)
-        process = login.LoginProcess(login.command(provider))
+        process = None
         completed = threading.Event()
 
         def deliver(result):
             try:
                 on_done(result)
+            except Exception:
+                # A closed presentation client must not leak callback data or
+                # prevent the worker from completing.
+                pass
             finally:
                 completed.set()
 
         def finish(exit_code):
-            fresh = self.snapshot()
-            if exit_code:
-                result = ActionResult(
-                    False, "login", snapshot=fresh,
-                    error=ActionError(
-                        "login_failed", "The vendor login command failed.",
-                        "Review the output and retry."),
-                )
-            else:
-                requested = next(
-                    (candidate
-                     for group in fresh.groups
-                     if group.provider == provider_id
-                     for candidate in group.accounts
-                     if candidate.name == account),
-                    None,
-                )
-                if (requested is None or not requested.active
-                        or requested.needs_login):
-                    result = ActionResult(
-                        False, "login", snapshot=fresh,
+            try:
+                if exit_code:
+                    result = self._result(
+                        False, "login",
+                        error=ActionError(
+                            "login_failed", "The vendor login command failed.",
+                            "Review the output and retry."),
+                    )
+                elif not self._usable_live_login(provider, account):
+                    result = self._result(
+                        False, "login",
                         error=ActionError(
                             "login_not_written",
                             "The vendor did not write a usable login.",
                             "Retry the login."),
                     )
                 else:
-                    result = ActionResult(
-                        True, "login", f"Logged in to {account}.",
-                        snapshot=fresh,
-                    )
+                    switcher.stash_live_login(
+                        self.paths, provider, account, platform=self.platform,
+                        now_ms_fn=self.clock_ms)
+                    result = self._result(
+                        True, "login", f"Logged in to {account}.")
+            except ShamblesError as exc:
+                result = self._failure("login", exc)
+            except Exception:
+                result = self._result(
+                    False, "login", error=ActionError(
+                        "login_failed", "Could not validate or save the login.",
+                        "Check the credential store and retry."))
             deliver(result)
 
-        try:
-            switcher.switch(self.paths, provider, account,
-                            platform=self.platform)
-        except ShamblesError as exc:
-            deliver(self._failure("login", exc))
-            return LoginHandle(process, completed)
+        def progress(line):
+            try:
+                on_line(_safe_login_line(line))
+            except Exception:
+                pass
 
         try:
+            process = login.LoginProcess(
+                login.command(provider), env=login.environment(
+                    provider, home=self.paths.home, platform=self.platform))
+            switcher.switch(self.paths, provider, account,
+                            platform=self.platform)
             process.start(
-                on_line=lambda line: on_line(_safe_login_line(line)),
+                on_line=progress,
                 on_exit=finish,
             )
-        except login.LoginUnavailableError as exc:
+        except ShamblesError as exc:
             deliver(self._failure("login", exc))
+        except Exception:
+            deliver(self._result(
+                False, "login", error=ActionError(
+                    "login_failed", "Could not prepare the vendor login.",
+                    "Check the login configuration and retry.")))
         return LoginHandle(process, completed)
+
+    def _usable_live_login(self, provider, account):
+        if (state.read_active(self.paths, provider.id) != account
+                or not self.paths.profile_dir(provider.id, account).is_dir()):
+            return False
+        blob = provider.store(home=self.paths.home, platform=self.platform).read()
+        return (provider.has_login(blob)
+                and not provider.liveness(blob, now_ms=self.clock_ms()).needs_login
+                and switcher.belongs_to(self.paths, provider, account,
+                                        platform=self.platform))
 
     def plan_remove(self, provider_id, name):
         return ActionPlan(
@@ -235,8 +253,7 @@ class ShamblesService:
             switcher.remove_profile(
                 self.paths, self._provider(plan.provider), plan.account,
                 platform=self.platform)
-            return ActionResult(True, "remove", f"Removed {plan.account}.",
-                                snapshot=self.snapshot())
+            return self._result(True, "remove", f"Removed {plan.account}.")
         except ShamblesError as exc:
             return self._failure("remove", exc)
 
@@ -258,16 +275,26 @@ class ShamblesService:
         try:
             completed = eject_mod.run(
                 self.paths, self.providers, platform=self.platform)
-            return ActionResult(True, "eject", eject_mod.summary(completed),
-                                snapshot=self.snapshot())
+            return self._result(True, "eject", eject_mod.summary(completed))
         except ShamblesError as exc:
             return self._failure("eject", exc)
 
     def _failure(self, action, exc):
         code, recovery = ERROR_CODES.get(
             type(exc), ("operation_refused", "Review the message and retry."))
-        return ActionResult(
-            False, action,
-            snapshot=self.snapshot(),
-            error=ActionError(code, str(exc), recovery),
-        )
+        if isinstance(exc, AlreadyManagedError) and action != "remove":
+            recovery = "Review the current login and saved accounts before retrying."
+        message = "The login could not be completed." if action == "login" else str(exc)
+        return self._result(False, action,
+                            error=ActionError(code, message, recovery))
+
+    def _result(self, ok, action, summary="", *, error=None):
+        """A failed read cannot erase an operation that already finished."""
+        try:
+            fresh = self.snapshot()
+        except Exception:
+            return ActionResult(
+                ok, action, summary,
+                warnings=("Account status is unavailable. Refresh to retry.",),
+                error=error)
+        return ActionResult(ok, action, summary, snapshot=fresh, error=error)

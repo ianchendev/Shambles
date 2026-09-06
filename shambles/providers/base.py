@@ -118,6 +118,10 @@ class Provider(Protocol):
         inside the token.
         """
 
+    def has_login(self, blob: bytes | None) -> bool:
+        """Whether the credential contains the provider's nonempty login token."""
+        ...
+
     def liveness(self, blob: bytes | None, *, now_ms: int) -> Liveness:
         """Whether it still works."""
 
