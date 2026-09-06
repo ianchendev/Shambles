@@ -362,11 +362,12 @@ leak into a view.
 
 ### Decision
 
-`ShamblesService` is the sole application boundary for snapshots, switching,
-profile management, refresh, vendor login, and eject. Interfaces may render
-`Snapshot`, `ActionPlan`, and `ActionResult` values, and may pass a confirmed
-plan back to the service, but must not call `switcher`, `login`, or `eject`
-directly.
+`ShamblesService` is the application boundary for the migrated script CLI and
+the target boundary for native shells and the Tk GUI. The current Tk GUI still
+calls `switcher`, `login`, and `eject` directly; its migration is an outstanding
+follow-up. Once migrated, interfaces may render `Snapshot`, `ActionPlan`, and
+`ActionResult` values, and may pass a confirmed plan back to the service, but
+must not call those mechanism modules directly.
 
 Plans are read-only and make destructive intent explicit: remove and eject
 require confirmation, while switch is directly executable. Successful and
