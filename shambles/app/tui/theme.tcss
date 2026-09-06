@@ -38,6 +38,7 @@ Dashboard {
     height: 100%;
     background: #11182b;
     border: ascii #d9a441;
+    scrollbar-size: 0 0;
 }
 
 #account-list > AccountRow,
@@ -49,7 +50,7 @@ Dashboard {
 }
 
 .account-row {
-    height: 1;
+    height: auto;
 }
 
 #account-list > AccountRow.-highlight .account-row {
@@ -69,6 +70,8 @@ Dashboard {
     width: 2fr;
     height: 100%;
     margin-left: 1;
+    overflow-y: auto;
+    scrollbar-size: 0 0;
 }
 
 #inline-details {

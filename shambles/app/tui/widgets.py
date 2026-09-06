@@ -5,11 +5,11 @@ from typing import Optional, Tuple
 from rich.table import Table
 from rich.text import Text
 from textual import events
+from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.widgets import ListItem, ListView, Static
 
 from ..snapshot import Account, Group, Snapshot, Window
-from .brand import BrandVariant, variant_for
 
 
 def _state_copy(account: Account) -> str:
@@ -23,12 +23,12 @@ def _state_copy(account: Account) -> str:
 def _account_row(group: Group, account: Account) -> Table:
     row = Table.grid(expand=True)
     row.add_column(ratio=1, overflow="crop", no_wrap=True)
-    row.add_column(justify="right", overflow="crop", no_wrap=True)
     label = Text()
     label.append(group.display_name, style="bold")
     label.append(" / ")
     label.append(account.name)
-    row.add_row(label, Text(_state_copy(account)))
+    row.add_row(label)
+    row.add_row(Text(_state_copy(account)))
     return row
 
 
@@ -39,32 +39,34 @@ def _usage_row(window: Window) -> Tuple[Text, Text]:
         else f"{window.used_percent}% used"
     )
     reset = window.resets_label or "Unavailable"
-    notes = [f"Resets {reset}"]
-    if window.age_label:
-        notes.append(window.age_label)
-    if window.stale:
-        notes.append("stale")
-    return Text(f"{window.label}: {percent}"), Text(" | ".join(notes))
+    return Text(f"{window.label}: {percent}"), Text(f"Resets {reset}")
 
 
 def render_account_details(
-    group: Group, account: Account, *, compact: bool = False
+    group: Group, account: Account, *, width: int = 80
 ) -> Table:
     """Build account details solely from presentation-ready snapshot fields."""
 
-    details = Table.grid(expand=True, padding=(0, 1))
-    details.add_column(ratio=1, overflow="ellipsis", no_wrap=True)
-    if not compact:
-        details.add_column(justify="right", overflow="ellipsis", no_wrap=True)
+    details = Table.grid(expand=True)
+    details.add_column(ratio=1, overflow="crop", no_wrap=True)
+
+    def add_line(line: Text) -> None:
+        if line.cell_len > width:
+            line = line.copy()
+            line.truncate(max(0, width - 3), overflow="crop")
+            line.append("." * min(3, width))
+        details.add_row(line)
 
     def add_row(label: Text, value: Text) -> None:
-        if compact:
+        # Fit the complete pair before sharing a line; metadata must not steal
+        # columns from an account identity or a percentage.
+        if label.cell_len + value.cell_len + 1 > width:
             if label.plain:
-                details.add_row(label)
+                add_line(label)
             if value.plain:
-                details.add_row(value)
+                add_line(value)
         else:
-            details.add_row(label, value)
+            add_line(Text.assemble(label, " " if label and value else "", value))
 
     add_row(Text(account.name, style="bold"), Text(_state_copy(account)))
 
@@ -80,6 +82,11 @@ def render_account_details(
     if account.usage:
         for window in account.usage:
             add_row(*_usage_row(window))
+            if window.stale or window.age_label:
+                add_row(
+                    Text("stale" if window.stale else "Updated"),
+                    Text(window.age_label or ""),
+                )
     else:
         add_row(Text("Usage"), Text("Unavailable"))
 
@@ -159,19 +166,24 @@ class AccountList(ListView):
                 return
 
 
-class AccountDetails(Static):
+class AccountDetails(VerticalScroll):
     """Details for one account; it never reads stores or computes dates."""
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        self._body = Static()
+        super().__init__(self._body, **kwargs)
         self._account: Optional[Tuple[Group, Account]] = None
+
+    @property
+    def content(self) -> Table:
+        return self._body.content
 
     def show_account(self, group: Group, account: Account) -> None:
         self._account = (group, account)
-        self.update(render_account_details(
+        self._body.update(render_account_details(
             group,
             account,
-            compact=variant_for(self.content_size.width) is BrandVariant.COMPACT,
+            width=self.content_size.width or 80,
         ))
 
     def on_resize(self, event: events.Resize) -> None:

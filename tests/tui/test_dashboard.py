@@ -1,6 +1,7 @@
 """The dashboard renders one immutable snapshot at every terminal size."""
 
 import ast
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 
@@ -154,6 +155,77 @@ async def test_compact_dashboard_keeps_usage_percentage_readable(snapshot):
     async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
         assert "session: 22% used" in screen_text(app)
+
+
+async def test_wide_account_headers_keep_identity_separate_from_login_state(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(78, 32)) as pilot:
+        await pilot.pause()
+        assert "Claude / Personal" in screen_text(app)
+        assert "Login required" in screen_text(app)
+
+
+@pytest.mark.parametrize("width", [60, 40])
+async def test_usage_percentage_and_stale_copy_remain_visible(snapshot, width):
+    group = snapshot.groups[0]
+    account = group.accounts[0]
+    window = replace(account.usage[0], stale=True)
+    group = replace(group, accounts=[replace(account, usage=[window])])
+    app = DashboardHarness(replace(snapshot, groups=[group]))
+    async with app.run_test(size=(width, 32)) as pilot:
+        await pilot.pause()
+        assert "session: 22% used" in screen_text(app)
+        assert "stale" in screen_text(app)
+        assert "just now" in screen_text(app)
+
+
+async def test_short_wide_details_are_accessible_by_keyboard(snapshot):
+    group = snapshot.groups[0]
+    account = group.accounts[0]
+    account = replace(account, usage=[
+        *account.usage,
+        Window("week", 88, resets_label="Sunday 9AM", age_label="1 hour ago", stale=True),
+    ])
+    snapshot = replace(snapshot, groups=[
+        replace(group, accounts=[account, *group.accounts[1:]]),
+    ])
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(78, 16)) as pilot:
+        await pilot.pause()
+        assert "Claude / Work" in screen_text(app)
+        await pilot.press("tab", "end")
+        await pilot.pause()
+        assert app.focused is app.query_one("#account-details")
+        assert app.query_one("#account-details").scroll_y > 0
+        assert "session: 22% used" in screen_text(app)
+        assert "week: 88% used" in screen_text(app)
+        assert "stale" in screen_text(app)
+        assert "4:30 PM" in screen_text(app)
+        assert "VS Code" in screen_text(app)
+        assert screen_text(app).isascii()
+        await pilot.press("shift+tab", "down", "enter")
+        assert app.selected_messages == [("claude", "Personal")]
+
+
+@pytest.mark.parametrize("width", [78, 40])
+async def test_ascii_fallback_covers_long_values_and_scrolled_lists(snapshot, width):
+    group = snapshot.groups[0]
+    account = replace(
+        group.accounts[0],
+        email="very.long.account.identity.with.more.characters@example.test",
+        usage=[replace(group.accounts[0].usage[0], stale=True)],
+    )
+    group = replace(group, accounts=[account] + [
+        Account(f"Account {index}") for index in range(30)
+    ])
+    app = DashboardHarness(replace(snapshot, groups=[group]))
+    async with app.run_test(size=(width, 24)) as pilot:
+        await pilot.pause()
+        assert screen_text(app).isascii()
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert app.query_one(AccountList).scroll_y > 0
+        assert screen_text(app).isascii()
 
 
 @pytest.mark.parametrize("size", [(80, 8), (48, 10)])
