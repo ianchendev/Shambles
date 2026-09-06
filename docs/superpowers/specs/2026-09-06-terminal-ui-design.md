@@ -309,6 +309,18 @@ The TUI does not load the SVG. It ships hand-composed terminal-native variants:
 The full wordmark appears only during onboarding, an explicit welcome screen,
 or an about screen. The normal dashboard uses the compact mark.
 
+### Restrained motion
+
+Onboarding reuses the approved ANSI wordmark from the README. It may play one
+brief box-loop: corners appear, horizontal borders draw, vertical borders draw,
+and the completed frame settles around the static wordmark. The wordmark never
+fades, slides, or loops. `Enter` and `Esc` skip the sequence immediately.
+
+Normal navigation remains static. Motion is limited to this one-time onboarding
+frame, explicit operation progress, and a brief post-switch highlight. It is
+disabled by `NO_COLOR`, `SHAMBLES_NO_MOTION=1`, or `--no-motion`; narrow
+terminals show the completed compact mark without animation.
+
 True-color terminals receive the approved hex colors. A 256-color terminal
 uses the nearest indexed colors. A basic color terminal uses yellow and the
 default foreground. `NO_COLOR` produces a monochrome interface. When Unicode
@@ -328,6 +340,7 @@ shambles gui          Open the existing graphical interface
 shambles list         List accounts for people and scripts
 shambles switch ...   Switch non-interactively
 shambles --version    Print the unified release version
+shambles --no-motion  Disable nonessential terminal motion
 ```
 
 When standard input or output is not interactive, bare `shambles` prints

@@ -18,6 +18,11 @@
 - Wide layout starts at 78 cells; medium at 48; below 48 uses compact layout.
 - Never display, log, copy, or include credentials in snapshots.
 - Respect `NO_COLOR`; retain a strict-ASCII branding fallback.
+- Reuse the README's approved ANSI wordmark for wide onboarding. Animate only
+  its surrounding frame once (corners, horizontal borders, vertical borders,
+  then settle); never fade, move, or loop the wordmark itself. `Enter` and
+  `Esc` skip it. Disable nonessential motion for `NO_COLOR`,
+  `SHAMBLES_NO_MOTION=1`, `--no-motion`, and narrow terminals.
 - Keep script commands usable without constructing a Textual app.
 
 ---
@@ -143,6 +148,10 @@ def brand_text(variant: BrandVariant, *, unicode: bool = True) -> str:
 Store the approved wide art and its medium composition as tuple constants so
 their line widths can be asserted. Add tests that no row exceeds its
 breakpoint width.
+
+The wide art must preserve the approved README ANSI wordmark; the onboarding
+animation draws only a separately composed frame around it. Do not substitute
+the compact `>_ ⇄ SHAMBLES` mark for the wide wordmark.
 
 - [ ] **Step 4: Include TUI styles as package data**
 
@@ -286,6 +295,18 @@ async def test_first_run_shows_onboarding(service_without_accounts):
     async with app.run_test(size=(100, 32)):
         assert app.query_one("#onboarding").display
         assert "SHAMBLES" in app.query_one("#onboarding-brand").render().plain
+
+async def test_onboarding_box_loop_can_be_skipped(service_without_accounts):
+    app = ShamblesTUI(service_without_accounts, motion=True)
+    async with app.run_test(size=(100, 32)) as pilot:
+        assert app.query_one("#onboarding-frame").has_class("drawing")
+        await pilot.press("enter")
+        assert app.query_one("#onboarding-frame").has_class("settled")
+
+async def test_onboarding_motion_is_disabled_by_configuration(service_without_accounts):
+    app = ShamblesTUI(service_without_accounts, motion=False)
+    async with app.run_test(size=(100, 32)):
+        assert app.query_one("#onboarding-frame").has_class("settled")
 ```
 
 - [ ] **Step 2: Confirm the application class is missing**
@@ -312,6 +333,10 @@ class ShamblesTUI(App["LaunchRequest | None"]):
 ```
 
 Use Textual messages rather than calling parent widget methods directly.
+Keep the box-loop deterministic: model its phases as explicit state rather
+than asserting wall-clock timing in tests. It runs only during onboarding,
+surrounds the static wide ANSI wordmark, and immediately settles for motion
+disabled or narrow layouts. Add `--no-motion` to the entrypoint work in Task 7.
 
 - [ ] **Step 4: Run application tests**
 
