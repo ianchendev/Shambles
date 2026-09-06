@@ -1,8 +1,10 @@
 """Structured data exchanged by the application service boundary."""
 
 from dataclasses import asdict, dataclass
+import threading
 
 from .. import eject as eject_mod
+from .. import login
 from .. import switcher
 from ..errors import (AlreadyManagedError, ConfigUnreadableError,
                       ProfileNotFoundError, ShamblesError)
@@ -59,6 +61,30 @@ class ActionResult:
                          if self.snapshot else None),
             "error": (asdict(self.error) if self.error else None),
         }
+
+
+class LoginHandle:
+    def __init__(self, process, completed):
+        self._process = process
+        self._completed = completed
+
+    def cancel(self):
+        self._process.cancel()
+
+    def wait(self, timeout=None):
+        return self._completed.wait(timeout)
+
+    @property
+    def running(self):
+        return self._process.running
+
+
+def _safe_login_line(line):
+    lowered = line.casefold()
+    if any(word in lowered for word in
+           ("access_token", "refresh_token", "id_token")):
+        return "[credential output hidden]"
+    return line
 
 
 class ShamblesService:
@@ -128,6 +154,53 @@ class ShamblesService:
             switcher.restash_active(
                 self.paths, provider, platform=self.platform)
         return ActionResult(True, "refresh", snapshot=self.snapshot())
+
+    def start_login(self, provider_id, account, on_line, on_done):
+        provider = self._provider(provider_id)
+        process = login.LoginProcess(login.command(provider))
+        completed = threading.Event()
+
+        def finish(exit_code):
+            fresh = self.snapshot()
+            if exit_code:
+                result = ActionResult(
+                    False, "login", snapshot=fresh,
+                    error=ActionError(
+                        "login_failed", "The vendor login command failed.",
+                        "Review the output and retry."),
+                )
+            else:
+                requested = next(
+                    (candidate
+                     for group in fresh.groups
+                     if group.provider == provider_id
+                     for candidate in group.accounts
+                     if candidate.name == account),
+                    None,
+                )
+                if requested is None or requested.needs_login:
+                    result = ActionResult(
+                        False, "login", snapshot=fresh,
+                        error=ActionError(
+                            "login_not_written",
+                            "The vendor did not write a usable login.",
+                            "Retry the login."),
+                    )
+                else:
+                    result = ActionResult(
+                        True, "login", f"Logged in to {account}.",
+                        snapshot=fresh,
+                    )
+            try:
+                on_done(result)
+            finally:
+                completed.set()
+
+        process.start(
+            on_line=lambda line: on_line(_safe_login_line(line)),
+            on_exit=finish,
+        )
+        return LoginHandle(process, completed)
 
     def plan_remove(self, provider_id, name):
         return ActionPlan(

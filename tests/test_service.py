@@ -184,3 +184,41 @@ def test_eject_rejects_a_different_action_plan_without_mutation(paths):
     assert result.ok is False
     assert result.error.code == "invalid_plan"
     assert state.read_active(paths, "claude") == "Work"
+
+
+def test_login_rechecks_disk_instead_of_trusting_exit_zero(
+        paths, fake_vendor):
+    fake_vendor("codex", lines=("Signed in",))
+    done = []
+    handle = service(paths).start_login(
+        "codex", "Personal", on_line=lambda line: None,
+        on_done=done.append)
+    handle.wait(timeout=10)
+    assert done[0].ok is False
+    assert done[0].error.code == "login_not_written"
+
+
+def test_login_output_is_sanitized(paths, fake_vendor):
+    fake_vendor("codex", lines=('{"access_token":"secret"}', "Signed in"))
+    lines = []
+    handle = service(paths).start_login(
+        "codex", "Personal", on_line=lines.append,
+        on_done=lambda result: None)
+    handle.wait(timeout=10)
+    assert "secret" not in "\n".join(lines)
+
+
+def test_failed_login_returns_an_error_with_a_fresh_snapshot(
+        paths, fake_vendor):
+    make_profile(paths, "codex", "Personal", active=True)
+    fake_vendor("codex", exit_code=1, lines=("Login failed",))
+    done = []
+
+    handle = service(paths).start_login(
+        "codex", "Personal", on_line=lambda line: None,
+        on_done=done.append)
+
+    assert handle.wait(timeout=10)
+    assert done[0].ok is False
+    assert done[0].error.code == "login_failed"
+    assert done[0].snapshot is not None
