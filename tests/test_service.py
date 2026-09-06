@@ -12,6 +12,15 @@ def service(paths):
                            platform="linux", clock_ms=lambda: NOW)
 
 
+def test_public_service_operations_are_present():
+    expected = {
+        "snapshot", "plan_switch", "switch", "save_current", "add",
+        "rename", "refresh", "plan_remove", "remove", "start_login",
+        "plan_eject", "eject",
+    }
+    assert expected <= set(dir(ShamblesService))
+
+
 def test_action_result_has_a_stable_wire_shape():
     error = ActionError("profile_missing", "Missing.", "Choose another account.")
     result = ActionResult(ok=False, action="switch", error=error)

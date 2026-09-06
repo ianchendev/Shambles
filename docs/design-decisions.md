@@ -349,6 +349,47 @@ The repo is 1745 readable lines. The failure mode here is a framework.
 
 ---
 
+## DD-5 — One application service owns operations and state refresh
+
+**Status: Decided — implemented 2026-09-06**
+
+### Context
+
+The GUI, CLI, and future native shells need the same account operations and the
+same view of provider state. Calling the filesystem mechanisms from each
+interface would duplicate safety-sensitive ordering and allow stale state to
+leak into a view.
+
+### Decision
+
+`ShamblesService` is the sole application boundary for snapshots, switching,
+profile management, refresh, vendor login, and eject. Interfaces may render
+`Snapshot`, `ActionPlan`, and `ActionResult` values, and may pass a confirmed
+plan back to the service, but must not call `switcher`, `login`, or `eject`
+directly.
+
+Plans are read-only and make destructive intent explicit: remove and eject
+require confirmation, while switch is directly executable. Successful and
+handled-failure results include a fresh snapshot. Login is asynchronous and
+revalidates the requested active account on disk after the vendor command
+exits; callbacks receive sanitized output and structured results.
+
+The CLI deliberately adapts `ActionResult` into the established native-shell
+output. This preserves existing human-readable and JSON command contracts while
+the application service remains the single implementation of the operation.
+
+### Consequences
+
+- New interfaces get one tested operation boundary and cannot accidentally
+  bypass switch ordering, provider selection, or error mapping.
+- A result snapshot is authoritative for the state immediately after the
+  operation; interfaces should not perform a second mechanism-level read to
+  reconstruct it.
+- The CLI's compatibility payload is stable but is not a promise to expose
+  every field in `ActionResult.to_dict()`.
+
+---
+
 ## Open items
 
 - **DD-2 is a leaning, not a commitment.** Revisit if the lapsed state proves
