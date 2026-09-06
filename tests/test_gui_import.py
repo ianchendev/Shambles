@@ -147,7 +147,8 @@ def test_chip_tooltip_uses_warning_prose_when_there_is_no_expiry(paths, claude):
     assert "No token here yet" in tip
 
 
-def test_saved_profiles_stay_visible_when_the_vendor_is_missing(paths, make_app):
+def test_saved_profiles_stay_visible_when_the_vendor_is_missing(paths, make_app,
+                                                                fake_vendor):
     """Switching copies a file and runs nothing, so it still works without the
     vendor binary. Hiding the accounts would take away something usable."""
     make_profile(paths, "codex", "Side", email="c@example.com", active=True)
@@ -161,7 +162,7 @@ def test_saved_profiles_stay_visible_when_the_vendor_is_missing(paths, make_app)
     assert "can't add accounts" in rendered
 
 
-def test_missing_vendor_banner_starts_collapsed(paths, make_app):
+def test_missing_vendor_banner_starts_collapsed(paths, make_app, fake_vendor):
     make_profile(paths, "codex", "Side", email="c@example.com", active=True)
     make_live_codex_login(paths, email="c@example.com")
 
@@ -179,7 +180,7 @@ def test_missing_vendor_banner_starts_collapsed(paths, make_app):
     )
 
 
-def test_missing_vendor_banner_expands_on_details(paths, make_app):
+def test_missing_vendor_banner_expands_on_details(paths, make_app, fake_vendor):
     make_profile(paths, "codex", "Side", email="c@example.com", active=True)
     make_live_codex_login(paths, email="c@example.com")
 
