@@ -175,7 +175,8 @@ def test_the_contract_exposes_every_field_a_shell_renders(paths):
         "name", "email", "display_name", "plan", "active", "state",
         "needs_login", "login_hint", "usage"}
     assert set(group["accounts"][0]["usage"][0]) == {
-        "label", "used_percent", "resets_at_ms", "stale"}
+        "label", "used_percent", "resets_at_ms", "resets_label",
+        "age_label", "stale"}
 
 
 def test_the_panel_and_the_window_agree_about_disk(paths):
