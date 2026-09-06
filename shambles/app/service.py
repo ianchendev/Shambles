@@ -2,6 +2,7 @@
 
 from dataclasses import asdict, dataclass
 
+from .. import eject as eject_mod
 from .. import switcher
 from ..errors import (AlreadyManagedError, ConfigUnreadableError,
                       ProfileNotFoundError, ShamblesError)
@@ -92,6 +93,86 @@ class ShamblesService:
                                 snapshot=self.snapshot())
         except ShamblesError as exc:
             return self._failure("switch", exc)
+
+    def save_current(self, provider_id, name):
+        try:
+            saved = switcher.save_current_account(
+                self.paths, self._provider(provider_id), name,
+                platform=self.platform)
+            return ActionResult(True, "save_current", f"Saved {saved}.",
+                                snapshot=self.snapshot())
+        except ShamblesError as exc:
+            return self._failure("save_current", exc)
+
+    def add(self, provider_id, name):
+        try:
+            added = switcher.add_empty_account(
+                self.paths, self._provider(provider_id), name,
+                platform=self.platform)
+            return ActionResult(True, "add", f"Added {added}.",
+                                snapshot=self.snapshot())
+        except ShamblesError as exc:
+            return self._failure("add", exc)
+
+    def rename(self, provider_id, old_name, new_name):
+        try:
+            switcher.rename_profile(
+                self.paths, self._provider(provider_id), old_name, new_name)
+            return ActionResult(True, "rename", f"Renamed to {new_name}.",
+                                snapshot=self.snapshot())
+        except ShamblesError as exc:
+            return self._failure("rename", exc)
+
+    def refresh(self):
+        for provider in self.providers:
+            switcher.restash_active(
+                self.paths, provider, platform=self.platform)
+        return ActionResult(True, "refresh", snapshot=self.snapshot())
+
+    def plan_remove(self, provider_id, name):
+        return ActionPlan(
+            "remove", provider_id, name, True, f"Remove {name}?",
+            ("The saved login will be removed.",),
+        )
+
+    def remove(self, plan):
+        if plan.action != "remove" or not plan.provider or not plan.account:
+            return ActionResult(
+                False, "remove",
+                error=ActionError(
+                    "invalid_plan", "The removal plan is invalid."),
+            )
+        try:
+            switcher.remove_profile(
+                self.paths, self._provider(plan.provider), plan.account,
+                platform=self.platform)
+            return ActionResult(True, "remove", f"Removed {plan.account}.",
+                                snapshot=self.snapshot())
+        except ShamblesError as exc:
+            return self._failure("remove", exc)
+
+    def plan_eject(self):
+        plan = eject_mod.survey(
+            self.paths, self.providers, platform=self.platform)
+        return ActionPlan(
+            "eject", None, None, True, "Eject Shambles?",
+            (eject_mod.summary(plan),),
+        )
+
+    def eject(self, plan):
+        if plan.action != "eject":
+            return ActionResult(
+                False, "eject",
+                error=ActionError(
+                    "invalid_plan", "The eject plan is invalid."),
+            )
+        try:
+            completed = eject_mod.run(
+                self.paths, self.providers, platform=self.platform)
+            return ActionResult(True, "eject", eject_mod.summary(completed),
+                                snapshot=self.snapshot())
+        except ShamblesError as exc:
+            return self._failure("eject", exc)
 
     def _failure(self, action, exc):
         code, recovery = ERROR_CODES.get(
