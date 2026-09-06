@@ -1,7 +1,10 @@
 import json
+import os
+import stat
 
 import pytest
 
+from conftest import posix_modes_only
 from helpers import NOW, account, make_claude_json, write_json
 from shambles import configjson
 from shambles.errors import ConfigUnreadableError
@@ -26,7 +29,8 @@ def test_load_non_dict_returns_empty(tmp_path):
 def test_extract_pulls_only_account_keys(paths):
     data = make_claude_json(paths)
     got = configjson.extract_account_keys(data)
-    assert set(got) == {"oauthAccount", "cachedUsageUtilization"}
+    assert set(got) == set(configjson.ACCOUNT_KEYS)
+    assert "oauthAccount" in got
 
 
 def test_apply_preserves_every_other_key_and_order(paths):
@@ -40,12 +44,14 @@ def test_apply_preserves_every_other_key_and_order(paths):
     )
 
     after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
-    assert list(after.keys()) == list(before.keys())
     assert after["numStartups"] == before["numStartups"]
     assert after["projects"] == before["projects"]
     assert after["machineID"] == before["machineID"]
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
-    assert after["cachedUsageUtilization"]["accountUuid"] == "uuid-b"
+    # A usage cache is never carried across a switch: restored, it would
+    # describe whatever the incoming account was doing when it was last
+    # active and read as current. See configjson.STALE_ON_SWITCH.
+    assert "cachedUsageUtilization" not in after
 
 
 def test_apply_with_empty_account_deletes_both_keys(paths):
@@ -65,7 +71,7 @@ def test_apply_leaves_no_temp_file(paths):
 
 
 def test_sidecar_round_trip(paths):
-    sidecar = paths.account("Work")
+    sidecar = paths.account("claude", "Work")
     sidecar.parent.mkdir(parents=True)
     configjson.write_sidecar(sidecar, {"oauthAccount": account("w@example.com")}, NOW)
 
@@ -76,7 +82,7 @@ def test_sidecar_round_trip(paths):
 
 
 def test_read_missing_sidecar_returns_empty(paths):
-    assert configjson.read_sidecar(paths.account("Ghost")) == {}
+    assert configjson.read_sidecar(paths.account("claude", "Ghost")) == {}
 
 
 def test_backup_copies_and_returns_path(paths):
@@ -153,3 +159,72 @@ def test_preserves_every_unrelated_key_when_splicing(paths):
     assert after["mcpServers"] == original["mcpServers"]
     assert after["userID"] == "abc123"
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
+
+
+@posix_modes_only
+def test_a_leftover_temp_file_does_not_expose_the_next_write(tmp_path, monkeypatch):
+    """Same defect as ``FileStore.write``, in ``write_atomic``'s own temp
+    file: ``O_CREAT``'s mode argument is ignored when the file already
+    exists, so a ``*.shambles-tmp`` left at a loose mode by a crashed run
+    would take the next write's full plaintext payload before anything
+    restricted it.
+
+    Observed at the ``chmod`` call, filtered to regular non-empty files: the
+    one vantage point that catches the bytes at rest under both the old
+    buffered-text implementation and the current descriptor-based one. An
+    earlier version spied on ``os.write``, which the old code never called at
+    all -- so reverting the fix failed with "os.write was never called"
+    rather than with a loose mode, detecting an implementation change instead
+    of an exposure.
+    """
+    target = tmp_path / "config.json"
+    tmp = target.with_name(target.name + configjson.TMP_SUFFIX)
+    tmp.write_bytes(b"stale content from a crashed run")
+    os.chmod(tmp, 0o644)
+
+    observed = {}
+    real_chmod = os.chmod
+
+    def spy(path, mode, *args, **kwargs):
+        try:
+            info = os.stat(path)
+            if stat.S_ISREG(info.st_mode) and info.st_size:
+                observed.setdefault("mode", oct(info.st_mode)[-3:])
+        except OSError:
+            pass
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "chmod", spy)
+    previous = os.umask(0o022)
+    try:
+        configjson.write_atomic(target, {"oauthAccount": {"emailAddress": "a@b.com"}})
+    finally:
+        os.umask(previous)
+
+    assert observed.get("mode") == "600", (
+        f"config was on disk at {observed.get('mode')} before being "
+        f"restricted to 0600")
+
+
+@posix_modes_only
+def test_backups_are_locked_down_like_the_rest_of_the_store(paths):
+    """They are copies of ~/.claude.json: no token, but the account's email,
+    organisation and UUIDs. The README promises 0700 throughout the store, and
+    this directory was the one place that promise was not kept."""
+    make_claude_json(paths)
+    dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
+
+    assert oct(os.stat(paths.backup_dir).st_mode)[-3:] == "700"
+    assert oct(os.stat(dest).st_mode)[-3:] == "600"
+
+
+@posix_modes_only
+def test_a_loose_source_does_not_produce_a_loose_backup(paths):
+    """shutil.copy2 carries the source's mode across, so a config the vendor
+    happened to write 0644 would otherwise be snapshotted 0644."""
+    make_claude_json(paths)
+    os.chmod(paths.claude_json, 0o644)
+
+    dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
+
+    assert oct(os.stat(dest).st_mode)[-3:] == "600"
