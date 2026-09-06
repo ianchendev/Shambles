@@ -81,11 +81,12 @@ class LoginHandle:
         return self._process.running
 
 
-def _safe_login_line(_line):
+def _safe_login_line(line):
     # Vendor stdout has no stable schema and can contain credentials under
-    # spellings Shambles cannot enumerate safely. Treat every byte as secret;
-    # callers receive only a fixed progress message.
-    return "[vendor output hidden]"
+    # spellings Shambles cannot enumerate safely. The one documented value a
+    # caller needs is an HTTP(S) sign-in URL, normalized by the login layer;
+    # everything else becomes a fixed progress message.
+    return login.find_url(line) or "[vendor output hidden]"
 
 
 class ShamblesService:

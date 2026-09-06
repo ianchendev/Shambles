@@ -230,6 +230,27 @@ def test_login_output_never_forwards_arbitrary_vendor_bytes(
 
 
 @posix_only
+def test_login_output_exposes_only_the_normalized_sign_in_url(
+        paths, fake_vendor):
+    make_profile(paths, "codex", "Personal", token=False)
+    url = "https://example.test/auth?state=abc"
+    fake_vendor(
+        "codex",
+        lines=(f"credential-before Visit {url}). credential-after",),
+    )
+    lines = []
+
+    handle = service(paths).start_login(
+        "codex", "Personal", on_line=lines.append,
+        on_done=lambda result: None)
+
+    assert handle.wait(timeout=10)
+    assert url in lines
+    assert "credential-before" not in "\n".join(lines)
+    assert "credential-after" not in "\n".join(lines)
+
+
+@posix_only
 def test_failed_login_returns_an_error_with_a_fresh_snapshot(
         paths, fake_vendor):
     make_profile(paths, "codex", "Personal", active=True)
