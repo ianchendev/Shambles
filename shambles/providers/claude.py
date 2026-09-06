@@ -151,6 +151,10 @@ class ClaudeProvider:
 
     # -- what the bytes mean ----------------------------------------------
 
+    def has_login(self, blob: bytes | None) -> bool:
+        token = specmod.pointer(_parse(blob), self.spec["token"]["pointer"])
+        return isinstance(token, str) and bool(token.strip())
+
     def liveness(self, blob: bytes | None, *, now_ms: int) -> Liveness:
         if not blob:
             return Liveness(ABSENT)

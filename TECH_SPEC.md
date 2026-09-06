@@ -364,18 +364,31 @@ serializes the snapshot with the snapshot wire contract, and emits errors as
 plain dictionaries.
 
 Every completed service mutation, including a handled failure, carries a fresh
-snapshot of disk state. Login completion also re-reads the snapshot and accepts
-success only when the requested account is still active and has a usable login;
-an exit code alone is not proof that the vendor wrote credentials. Plans with
-the wrong action or missing required provider/account fields are rejected before
-mutation with an `invalid_plan` error and no snapshot. Login output is
-sanitized before delivery: only a normalized HTTP(S) sign-in URL is exposed;
-all other vendor output is replaced with `[vendor output hidden]`.
+snapshot when disk state is readable. A failed snapshot read preserves `ok`
+and the operation error, returns `snapshot=None`, and adds a fixed warning;
+raw exception details are never included in that warning.
+
+Login completion validates the actual live store through the provider's
+`has_login()` and `liveness()` methods, verifies that the requested profile
+still exists and is active, and applies `switcher.belongs_to()` before saving
+with `switcher.stash_live_login()`. Unknown expiry alone does not reject a
+present token. The final snapshot is read after saving. The login layer passes
+the injected home and provider configuration to the child without changing the
+parent environment or Claude's secure-store selection. Completion and its
+callback remain available even when validation or snapshot reads fail.
+
+Plans with the wrong action or missing required provider/account fields are
+rejected before mutation with an `invalid_plan` error and no snapshot. Login
+output exposes only supported HTTPS authorization endpoints and allowed
+authorization parameters. Credential fields, userinfo, fragments and unknown
+URLs are hidden; all other output becomes `[vendor output hidden]`.
 
 The CLI is a compatibility adapter. It consumes service results but preserves
 the established human-readable output, `list --json` snapshot shape,
 `switch --json` payload, and exit codes expected by native shells. A client
 must not assume that the CLI emits the complete `ActionResult` wire shape.
+If the result snapshot is unavailable, successful `switch --json` keeps its
+existing keys with `needs_login: null` and the service warning.
 
 ---
 

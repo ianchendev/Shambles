@@ -10,9 +10,9 @@ The boundary is therefore observable by hand: whatever the menu bar shows,
 ``shambles list --json`` prints the same thing, so a rendering bug and a logic
 bug can be told apart without a debugger.
 
-Switching goes through :class:`shambles.app.service.ShamblesService`, the same
-boundary the window uses. A second implementation of the switch would be a
-second chance to get the ordering wrong, and the ordering is what stops a
+Switching goes through :class:`shambles.app.service.ShamblesService`, which
+delegates to the shared switcher. The Tk window still calls the core directly
+until its migration. Sharing the switcher preserves the ordering that stops a
 failed switch destroying the account it switched away from.
 """
 
@@ -80,23 +80,25 @@ def cmd_switch(args) -> int:
     if not result.ok:
         return _fail(args, "refused", result.error.message)
 
-    switched = next(
+    switched = next((
         account
-        for group in result.snapshot.groups
+        for group in (result.snapshot.groups if result.snapshot else ())
         if group.provider == args.provider
         for account in group.accounts
         if account.name == args.account
-    )
+    ), None)
     if args.json:
         json.dump({"version": snapshot_mod.CONTRACT_VERSION, "ok": True,
                    "provider": args.provider, "switched_to": args.account,
-                   "needs_login": switched.needs_login,
+                   "needs_login": switched.needs_login if switched else None,
                    "warnings": list(result.warnings)}, sys.stdout)
         sys.stdout.write("\n")
     else:
         print(f"Switched {args.provider} to {args.account}.")
-        if switched.needs_login and switched.login_hint:
+        if switched and switched.needs_login and switched.login_hint:
             print(f"  {switched.login_hint}")
+        for warning in result.warnings:
+            print(f"  {warning}")
     return EXIT_OK
 
 
