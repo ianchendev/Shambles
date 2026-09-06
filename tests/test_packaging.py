@@ -82,3 +82,63 @@ def test_the_console_entry_point_is_kept_too():
     """--version and --help must stay usable; a gui-scripts binary on Windows
     has nowhere to print."""
     assert "shambles" in _pyproject()["project"].get("scripts", {})
+
+
+# ---- the documented checkout launcher on an unsupported interpreter -------
+#
+# pyproject's requires-python protects pip and pipx. It does nothing for
+# `python3 shambles.py`, which the README gives as THE way to run from a
+# clone -- and on any box where `python3` is older than 3.10 that dies inside
+# a dataclass field annotation, several imports deep, with
+# `TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'`.
+
+def test_an_old_interpreter_is_named_rather_than_crashing_on_syntax():
+    from shambles.__main__ import version_error
+
+    message = version_error((3, 8, 10))
+    assert message, "3.8 was accepted"
+    assert "3.10" in message, "the message does not say what is needed"
+    assert "3.8" in message, "the message does not say what was found"
+
+
+def test_a_supported_interpreter_passes_without_a_message():
+    from shambles.__main__ import version_error
+
+    assert version_error((3, 10, 0)) is None
+    assert version_error((3, 12, 13)) is None
+    assert version_error((4, 0, 0)) is None
+    assert version_error() is None, "the running interpreter was rejected"
+
+
+def test_version_does_not_claim_success_on_an_unsupported_interpreter():
+    """`python3 -m shambles --version` printed a version and exited 0 on 3.8,
+    then died on import the moment it was asked to do anything -- so the one
+    command a user runs to check the install reported a false green."""
+    from shambles.__main__ import main
+
+    assert main(["--version"]) == 0  # on this interpreter, which is supported
+
+
+@pytest.mark.skipif(not os.path.exists("/usr/bin/python3"),
+                    reason="no system python3 to test an old interpreter with")
+def test_the_checkout_launcher_explains_itself_on_the_system_python():
+    """End to end through the exact command the README documents.
+
+    Skipped rather than xfailed when /usr/bin/python3 is new enough -- then
+    there is no old interpreter here to prove anything against.
+    """
+    probe = subprocess.run(
+        ["/usr/bin/python3", "-c",
+         "import sys; print('%d.%d' % sys.version_info[:2])"],
+        capture_output=True, text=True)
+    major, _, minor = probe.stdout.strip().partition(".")
+    if (int(major), int(minor)) >= (3, 10):
+        pytest.skip(f"system python3 is {probe.stdout.strip()}, not old enough")
+
+    done = subprocess.run(["/usr/bin/python3", "shambles.py"],
+                          cwd=REPO, capture_output=True, text=True, timeout=60)
+    combined = done.stdout + done.stderr
+    assert "TypeError" not in combined, (
+        f"crashed on syntax instead of explaining:\n{combined[-500:]}")
+    assert "3.10" in combined, f"did not name the requirement:\n{combined[-500:]}"
+    assert done.returncode != 0, "reported success on an unsupported interpreter"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shambles"
-version = "1.0.0"
+version = "2.0.0"
 description = "Switch between Claude Code accounts without waiting for a verification email"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,7 +47,12 @@ Homepage = "https://github.com/ianchendev/Shambles"
 Issues = "https://github.com/ianchendev/Shambles/issues"
 
 [tool.setuptools]
-packages = ["shambles"]
+packages = ["shambles", "shambles.app", "shambles.providers", "shambles.stores"]
+
+# Provider specs are data, not code, so they need declaring explicitly or they
+# ship missing and every provider fails to load at runtime.
+[tool.setuptools.package-data]
+"shambles.providers" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

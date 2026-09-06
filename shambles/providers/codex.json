@@ -1,0 +1,93 @@
+{
+  "id": "codex",
+  "display_name": "Codex",
+  "surfaces": [
+    {
+      "id": "terminal",
+      "label": "Terminal",
+      "detail": "Codex CLI"
+    },
+    {
+      "id": "vscode",
+      "label": "VS Code",
+      "detail": "openai.chatgpt"
+    },
+    {
+      "id": "chatgpt",
+      "label": "ChatGPT",
+      "detail": "Codex inside ChatGPT.app"
+    }
+  ],
+  "config_dir": {
+    "env": "CODEX_HOME",
+    "default": "~/.codex",
+    "strict": true,
+    "strict_note": "if the variable is set the directory must already exist, or Codex errors out"
+  },
+  "store": {
+    "*": {
+      "kind": "file",
+      "path": "{config_dir}/auth.json",
+      "mode": "0600",
+      "note": "same path on darwin, linux and win32 \u2014 no XDG, no %APPDATA%. A keyring backend exists but is off by default."
+    }
+  },
+  "liveness": {
+    "kind": "jwt",
+    "pointer": "tokens.access_token",
+    "claim": "exp",
+    "unit": "epoch_seconds",
+    "fallback": {
+      "pointer": "last_refresh",
+      "unit": "rfc3339",
+      "stale_after_days": 8
+    }
+  },
+  "identity": {
+    "kind": "jwt",
+    "pointer": "tokens.id_token",
+    "email": "https://api.openai.com/profile.email",
+    "display_name": "https://api.openai.com/profile.name",
+    "org": "https://api.openai.com/auth.organizations.0.title",
+    "plan": "https://api.openai.com/auth.chatgpt_plan_type"
+  },
+  "companion": null,
+  "companion_note": "none \u2014 auth.json is self-contained, so there is no splice step and no way for identity and token to desynchronize",
+  "policy": {
+    "rotates": true,
+    "rotates_note": "a snapshot taken before a refresh is DEAD; the old refresh token was invalidated by the rotation. Profiles must be re-stashed after use, not only on switch-away.",
+    "warn_days": 2
+  },
+  "login": {
+    "binary": "codex",
+    "command": [
+      "codex",
+      "login"
+    ],
+    "hint": "Run 'codex login' in a terminal.",
+    "email_flag": null
+  },
+  "provenance": {
+    "client_versions": [
+      "0.147.0-alpha.1.2"
+    ],
+    "measured": "2026-08-06",
+    "platforms_executed": [
+      "darwin"
+    ],
+    "platforms_from_source_only": [
+      "linux",
+      "win32"
+    ],
+    "source": "github.com/openai/codex, codex-rs/login/src/auth/",
+    "observed_lifetimes": {
+      "id_token_hours": 1,
+      "access_token_days": 10
+    }
+  },
+  "surfaces_note": "all three share one auth.json. Desktop sharing is strong inference, not documented: ChatGPT.app bundles the identical binary and keeps its non-credential state in ~/.codex",
+  "token": {
+    "pointer": "tokens.refresh_token",
+    "note": "emptied in place when the login is cleared, as with Claude"
+  }
+}
