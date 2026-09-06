@@ -17,3 +17,6 @@ macos/.swiftpm/
 #   iconutil -c icns macos/Resources/AppIcon.iconset -o macos/Resources/AppIcon.icns
 macos/Resources/AppIcon.iconset/
 macos/Resources/AppIcon.icns
+
+.superpowers/*
+.worktrees/
