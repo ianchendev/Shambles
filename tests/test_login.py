@@ -1,3 +1,4 @@
+import os
 import threading
 
 import pytest
@@ -132,3 +133,65 @@ def test_the_package_imports_no_networking_module():
                           for name in names if name in banned]
 
     assert offenders == [], "\n".join(offenders)
+
+
+def test_login_process_passes_the_explicit_environment_to_the_child(
+        paths, monkeypatch):
+    from io import StringIO
+
+    seen = []
+    done = threading.Event()
+    child_env = {"HOME": str(paths.home), "PATH": "/fake/vendor/bin"}
+    monkeypatch.setattr("shambles.login.shutil.which",
+                        lambda binary, **kwargs: "/fake/vendor/bin/codex")
+
+    class Child:
+        stdout = StringIO("")
+
+        def wait(self):
+            return 0
+
+    def popen(argv, **kwargs):
+        seen.append(kwargs)
+        return Child()
+
+    process = login.LoginProcess(["codex", "login"], env=child_env, popen=popen)
+    process.start(on_line=lambda line: None, on_exit=lambda code: done.set())
+
+    assert done.wait(timeout=1)
+    assert seen[0]["env"] == child_env
+
+
+@pytest.mark.parametrize("provider_id", ["claude", "codex"])
+@pytest.mark.parametrize("override", [False, True])
+def test_login_environment_matches_the_provider_context(
+        paths, monkeypatch, provider_id, override):
+    from shambles.providers import spec as specmod
+
+    config_key = "CODEX_HOME" if provider_id == "codex" else "CLAUDE_CONFIG_DIR"
+    monkeypatch.setenv(config_key, str(paths.home / "unrelated-config"))
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_CLIENT_ID", "unrelated-client")
+    provider_env = {"USER": "test-user"}
+    if override:
+        provider_env[config_key] = str(paths.home / "selected-config")
+        provider_env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = ""
+    provider = providers.load(provider_id, env=provider_env)
+    parent_env = dict(os.environ)
+
+    child_env = login.environment(provider, home=paths.home, platform="linux")
+
+    assert child_env["HOME"] == str(paths.home.resolve())
+    assert child_env["USERPROFILE"] == str(paths.home.resolve())
+    assert child_env["USER"] == "test-user"
+    assert child_env["PATH"] == parent_env["PATH"]
+    assert (specmod.config_dir(provider.spec, home=paths.home, env=child_env)
+            == specmod.config_dir(provider.spec, home=paths.home, env=provider_env))
+    if provider_id == "claude":
+        assert "CLAUDE_CODE_OAUTH_CLIENT_ID" not in child_env
+        for platform in ("darwin", "win32"):
+            expected = provider.store(home=paths.home, platform=platform)
+            actual = providers.load("claude", env=child_env).store(
+                home=paths.home, platform=platform)
+            assert actual.service == expected.service
+            assert actual.account == expected.account
+    assert dict(os.environ) == parent_env

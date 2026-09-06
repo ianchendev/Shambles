@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="300"
+     viewBox="0 0 1000 300" role="img"
+     aria-labelledby="title description">
+  <title id="title">Shambles</title>
+  <desc id="description">
+    Shambles terminal-style wordmark in terracotta and gold. Switch Claude
+    and Codex accounts safely. Offline.
+  </desc>
+
+  <rect width="1000" height="300" rx="18" fill="#0b1020"/>
+  <rect x="18" y="18" width="964" height="264" rx="11"
+        fill="none" stroke="#d9a441" stroke-width="3"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+     font-weight="700">
+    <rect x="42" y="5" width="116" height="28" rx="7" fill="#0b1020"/>
+    <text x="52" y="26" font-size="18" fill="#e07a5f">&gt;_ ⇄</text>
+
+    <rect x="846" y="5" width="112" height="28" rx="7" fill="#0b1020"/>
+    <text x="858" y="26" font-size="16" letter-spacing="1"
+          fill="#d9a441">OFFLINE</text>
+
+    <text x="52" y="79" font-size="13" xml:space="preserve"
+          fill="#e07a5f">
+      <tspan x="52" dy="0">███████╗██╗  ██╗ █████╗ ███╗   ███╗██████╗ ██╗     ███████╗███████╗</tspan>
+      <tspan x="52" dy="24">██╔════╝██║  ██║██╔══██╗████╗ ████║██╔══██╗██║     ██╔════╝██╔════╝</tspan>
+      <tspan x="52" dy="24">███████╗███████║███████║██╔████╔██║██████╔╝██║     █████╗  ███████╗</tspan>
+      <tspan x="52" dy="24">╚════██║██╔══██║██╔══██║██║╚██╔╝██║██╔══██╗██║     ██╔══╝  ╚════██║</tspan>
+      <tspan x="52" dy="24">███████║██║  ██║██║  ██║██║ ╚═╝ ██║██████╔╝███████╗███████╗███████║</tspan>
+      <tspan x="52" dy="24">╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═════╝ ╚══════╝╚══════╝╚══════╝</tspan>
+    </text>
+
+    <text x="500" y="252" text-anchor="middle" font-size="17"
+          letter-spacing=".4" fill="#d9a441">
+      Switch Claude and Codex accounts safely.
+    </text>
+  </g>
+</svg>

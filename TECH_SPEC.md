@@ -328,6 +328,68 @@ with `ENOTDIR` on POSIX, so the symlink must be unlinked first. Both operations
 are metadata-only and the window is microseconds, but it is real — which is why
 migration should run with no Claude Code sessions active.
 
+### 1.12 Application service boundary
+
+`shambles.app.service.ShamblesService` is the application boundary for the
+migrated script CLI and the target boundary for native shells. The current Tk
+GUI still contains its legacy direct calls into `switcher`, `login`, and
+`eject`; migrating it to this service remains outstanding. New interfaces must
+render service data and ask the service to perform operations. This keeps
+credential ordering, provider lookup, error mapping, and post-operation state
+in one tested implementation as each interface is migrated.
+
+The service exposes these operations:
+
+| Operation | Contract |
+|---|---|
+| `snapshot()` | Read and return one `Snapshot` for every configured provider. |
+| `plan_switch(provider, account)` | Read-only `ActionPlan`; switching does not require confirmation. |
+| `switch(provider, account)` | Switch through `switcher` and return an `ActionResult`. |
+| `save_current(provider, name)` | Stash the live login under a new name and return the result. |
+| `add(provider, name)` | Create and activate an empty profile; the result marks it as needing login. |
+| `rename(provider, old, new)` | Rename a profile and return the result. |
+| `refresh()` | Restash active credentials where the provider requires rotation, then snapshot. |
+| `plan_remove(provider, name)` | Read-only confirmation plan warning that the saved login is removed. |
+| `remove(plan)` | Execute only a valid removal plan; reject mismatched plans without mutation. |
+| `start_login(provider, account, on_line, on_done)` | Activate the target, start the vendor command asynchronously, and return a cancellable `LoginHandle`. |
+| `plan_eject()` | Survey the installation and return a read-only confirmation plan. |
+| `eject(plan)` | Execute only a valid eject plan; reject mismatched plans without mutation. |
+
+The stable value types are frozen dataclasses. `ActionError` contains `code`,
+`message`, and optional `recovery`; `ActionPlan` contains `action`, `provider`,
+`account`, `requires_confirmation`, `prompt`, and warnings; and `ActionResult`
+contains `ok`, `action`, `summary`, warnings, an optional `Snapshot`, and an
+optional `ActionError`. `ActionResult.to_dict()` converts tuples to JSON lists,
+serializes the snapshot with the snapshot wire contract, and emits errors as
+plain dictionaries.
+
+Every completed service mutation, including a handled failure, carries a fresh
+snapshot when disk state is readable. A failed snapshot read preserves `ok`
+and the operation error, returns `snapshot=None`, and adds a fixed warning;
+raw exception details are never included in that warning.
+
+Login completion validates the actual live store through the provider's
+`has_login()` and `liveness()` methods, verifies that the requested profile
+still exists and is active, and applies `switcher.belongs_to()` before saving
+with `switcher.stash_live_login()`. Unknown expiry alone does not reject a
+present token. The final snapshot is read after saving. The login layer passes
+the injected home and provider configuration to the child without changing the
+parent environment or Claude's secure-store selection. Completion and its
+callback remain available even when validation or snapshot reads fail.
+
+Plans with the wrong action or missing required provider/account fields are
+rejected before mutation with an `invalid_plan` error and no snapshot. Login
+output exposes only supported HTTPS authorization endpoints and allowed
+authorization parameters. Credential fields, userinfo, fragments and unknown
+URLs are hidden; all other output becomes `[vendor output hidden]`.
+
+The CLI is a compatibility adapter. It consumes service results but preserves
+the established human-readable output, `list --json` snapshot shape,
+`switch --json` payload, and exit codes expected by native shells. A client
+must not assume that the CLI emits the complete `ActionResult` wire shape.
+If the result snapshot is unavailable, successful `switch --json` keeps its
+existing keys with `needs_login: null` and the service warning.
+
 ---
 
 ## 2. Concurrency & Lock Handling
