@@ -55,6 +55,12 @@ def test_every_module_is_packaged():
     assert "shambles" in packaged
 
 
+def test_tui_package_and_styles_are_packaged():
+    setuptools = _pyproject()["tool"]["setuptools"]
+    assert "shambles.app.tui" in setuptools["packages"]
+    assert setuptools["package-data"]["shambles.app.tui"] == ["*.tcss"]
+
+
 def test_version_flag_prints_and_exits_zero():
     out = subprocess.run(
         [sys.executable, "-m", "shambles", "--version"],
