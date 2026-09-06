@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import replace
 
 import pytest
+from textual.events import Key
 
 from shambles.app.service import ActionError, ActionResult
 from shambles.app.snapshot import Account, Group, Snapshot, Surface
@@ -111,6 +112,31 @@ async def test_refresh_keeps_provider_and_account_after_reordering(service):
         assert service.current == before
 
 
+@pytest.mark.parametrize("key", ["j", "down"])
+@pytest.mark.parametrize("reorder", [False, True])
+async def test_rapid_refresh_preserves_cursor_before_selection_messages_arrive(
+    service, key, reorder,
+):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        if reorder:
+            group = service.current.groups[0]
+            service.refreshed = replace(service.current, groups=[
+                replace(group, accounts=list(reversed(group.accounts))),
+                service.current.groups[1],
+            ])
+
+        # Queue keys together: highlight/detail notifications can still be
+        # pending when refresh starts handling the very next input event.
+        app.post_message(Key(key, key))
+        app.post_message(Key("r", "r"))
+        await pilot.pause()
+
+        assert (app.selected_provider, app.selected_account) == ("claude", "Work")
+        assert app.query_one(AccountList).highlighted == (0 if reorder else 1)
+        assert "work@example.test" in screen_text(app)
+
+
 async def test_refresh_falls_back_to_active_account_if_selection_disappears(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
@@ -187,6 +213,21 @@ async def test_wide_onboarding_has_the_exact_static_readme_wordmark(empty_servic
         assert app.query_one("#onboarding").display
         assert app.query_one("#onboarding-brand").content == brand_text(BrandVariant.WIDE)
         assert "SHAMBLES" in screen_text(app)
+
+
+@pytest.mark.parametrize("width", [78, 100])
+async def test_wide_onboarding_keeps_controls_visible_at_minimum_height(
+    empty_service, width,
+):
+    app = ShamblesTUI(empty_service, motion=False)
+    async with app.run_test(size=(width, 16)) as pilot:
+        await pilot.pause()
+        assert not app.query_one("#terminal-too-small").display
+        assert app.query_one("#welcome-body").display
+        assert app.query_one("#welcome-copy").region.bottom <= 16
+        assert "r Refresh   ? Help   q Quit" in screen_text(app)
+        for row in brand_text(BrandVariant.WIDE).splitlines():
+            assert row in screen_text(app)
 
 
 async def test_onboarding_draws_each_border_phase_then_stays_settled(empty_service, stepped_motion):

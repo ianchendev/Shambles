@@ -143,7 +143,7 @@ class Onboarding(Widget):
         width: 100%; height: 2; text-style: bold; content-align: center middle;
     }
     Onboarding #welcome-copy {
-        width: 100%; height: auto; margin-top: 1; content-align: center middle;
+        width: 100%; height: auto; content-align: center middle;
     }
     Onboarding.too-short #welcome-body { display: none; }
     Onboarding.too-short #terminal-too-small { display: block; }
@@ -318,6 +318,13 @@ class ShamblesTUI(App["LaunchRequest | None"]):
             accounts.focus()
 
     async def action_refresh_snapshot(self) -> None:
+        # Cursor movement is immediate, but its selection messages may still
+        # be queued behind this refresh key. Capture identity from the current
+        # snapshot before the refreshed snapshot can reorder its rows.
+        for account_list in self.query(AccountList):
+            index = account_list.highlighted
+            if index is not None:
+                self.selected_provider, self.selected_account = self._accounts()[index]
         result = self.service.refresh()
         if result.snapshot is not None:
             await self.render_snapshot(result.snapshot)
