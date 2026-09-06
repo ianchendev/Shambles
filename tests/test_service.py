@@ -1,4 +1,5 @@
-from helpers import (NOW, make_claude_json, make_live_claude_login,
+from helpers import (NOW, healthy_ms, make_claude_json,
+                     make_live_claude_login, make_live_codex_login,
                      make_profile)
 from shambles import providers, state
 from shambles.app.service import (ActionError, ActionPlan, ActionResult,
@@ -78,3 +79,108 @@ def test_snapshot_formats_usage_dates_for_every_client(paths):
     window = group.accounts[0].usage[0]
     assert window.resets_label
     assert window.age_label == "10m ago"
+
+
+def test_remove_requires_a_plan_and_confirmation(paths):
+    make_profile(paths, "claude", "Old")
+    app = service(paths)
+    plan = app.plan_remove("claude", "Old")
+    assert plan.requires_confirmation is True
+    assert paths.profile_dir("claude", "Old").exists()
+    result = app.remove(plan)
+    assert result.ok is True
+    assert not paths.profile_dir("claude", "Old").exists()
+    assert result.snapshot is not None
+
+
+def test_remove_rejects_a_different_action_plan_without_mutation(paths):
+    make_profile(paths, "claude", "Old")
+    wrong_plan = ActionPlan("eject", "claude", "Old", True,
+                            "Eject Shambles?")
+
+    result = service(paths).remove(wrong_plan)
+
+    assert result.ok is False
+    assert result.error.code == "invalid_plan"
+    assert paths.profile_dir("claude", "Old").exists()
+
+
+def test_rename_returns_the_new_profile_selected(paths):
+    make_profile(paths, "claude", "Work", active=True)
+    result = service(paths).rename("claude", "Work", "Job")
+    assert result.ok is True
+    assert state.read_active(paths, "claude") == "Job"
+
+
+def test_eject_plan_lists_profiles_without_mutation(paths):
+    make_profile(paths, "claude", "Work", active=True)
+    plan = service(paths).plan_eject()
+    assert plan.requires_confirmation is True
+    assert "Work" in plan.warnings[0]
+    assert state.read_active(paths, "claude") == "Work"
+
+
+def test_save_current_returns_the_saved_profile_snapshot(paths):
+    make_claude_json(paths, email="work@example.com")
+    make_live_claude_login(paths)
+
+    result = service(paths).save_current("claude", "Work")
+
+    assert result.ok is True
+    assert state.read_active(paths, "claude") == "Work"
+    account = next(a for g in result.snapshot.groups
+                   for a in g.accounts if a.name == "Work")
+    assert account.active is True
+
+
+def test_add_returns_the_new_empty_profile_snapshot(paths):
+    make_profile(paths, "claude", "Work", active=True)
+    make_claude_json(paths, email="work@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+    result = service(paths).add("claude", "Fresh")
+
+    assert result.ok is True
+    assert state.read_active(paths, "claude") == "Fresh"
+    account = next(a for g in result.snapshot.groups
+                   for a in g.accounts if a.name == "Fresh")
+    assert account.active is True
+    assert account.needs_login is True
+
+
+def test_refresh_restashes_rotated_credentials_before_snapshot(paths):
+    make_profile(paths, "codex", "Work", email="work@example.com",
+                 refresh_expires_ms=1, active=True)
+    make_live_codex_login(paths, email="work@example.com",
+                          exp_ms=healthy_ms())
+
+    result = service(paths).refresh()
+
+    assert result.ok is True
+    account = next(a for g in result.snapshot.groups
+                   for a in g.accounts if a.name == "Work")
+    assert account.needs_login is False
+
+
+def test_eject_executes_only_its_confirmation_plan(paths):
+    make_profile(paths, "claude", "Work", active=True)
+    make_live_claude_login(paths, access_token="tok-Work")
+    app = service(paths)
+
+    result = app.eject(app.plan_eject())
+
+    assert result.ok is True
+    assert state.read_active(paths, "claude") is None
+    assert result.snapshot is not None
+
+
+def test_eject_rejects_a_different_action_plan_without_mutation(paths):
+    make_profile(paths, "claude", "Work", active=True)
+    wrong_plan = ActionPlan("remove", "claude", "Work", True,
+                            "Remove Work?")
+
+    result = service(paths).eject(wrong_plan)
+
+    assert result.ok is False
+    assert result.error.code == "invalid_plan"
+    assert state.read_active(paths, "claude") == "Work"
