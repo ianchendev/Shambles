@@ -173,6 +173,66 @@ async def test_active_account_enter_performs_no_switch(service):
         assert app.screen.id != "result"
 
 
+@pytest.mark.parametrize("height", [8, 15])
+@pytest.mark.parametrize("resize", [False, True])
+async def test_undersized_terminal_cannot_begin_switch(service, monkeypatch, height, resize):
+    app = ShamblesTUI(service)
+    begin_calls = []
+    begin_switch = app._begin_switch
+
+    def record_begin(plan, confirmed):
+        begin_calls.append((plan, confirmed))
+        begin_switch(plan, confirmed)
+
+    monkeypatch.setattr(app, "_begin_switch", record_begin)
+    async with app.run_test(size=(80, 24 if resize else height)) as pilot:
+        await pilot.press("j")
+        if resize:
+            await pilot.resize_terminal(80, height)
+        await pilot.pause()
+        assert app.selected_account == "Work"
+        assert not app.query_one("#dashboard-body").display
+        assert "Terminal is too small" in screen_text(app)
+
+        await pilot.press("enter")
+        assert begin_calls == []
+        assert service.plan_calls == []
+        assert service.switch_calls == []
+
+        await pilot.press("k", "j", "?")
+        assert app.selected_account == "Work"
+        assert app.screen.id == "help"
+        await pilot.press("escape", "q")
+        assert not app.is_running
+        assert app.return_value is None
+
+
+async def test_switch_reenabled_when_terminal_reaches_minimum_height(service):
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(80, 8)) as pilot:
+        await pilot.press("j", "enter")
+        assert service.switch_calls == []
+        await pilot.resize_terminal(80, 16)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert service.switch_calls == [("claude", "Work")]
+        assert app.screen.id == "result"
+
+
+async def test_confirmed_switch_refuses_mutation_after_terminal_shrinks(service):
+    service.switch_plan = ActionPlan(
+        "switch", "claude", "Work", True, "Confirm switching Work?",
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "enter")
+        assert app.screen.id == "confirm-action"
+        await pilot.resize_terminal(80, 8)
+        await pilot.press("enter")
+        assert service.switch_calls == []
+        assert not app.mutation_running
+
+
 @pytest.mark.parametrize("key", ["enter", "r", "j", "?"])
 async def test_switch_failure_stays_visible_until_escape(service, key):
     service.switch_result = ActionResult(
