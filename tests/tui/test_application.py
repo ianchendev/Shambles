@@ -6,6 +6,7 @@ import threading
 
 import pytest
 from textual.events import Key
+from textual.widgets import Input
 
 from shambles.app.service import ActionError, ActionPlan, ActionResult
 from shambles.app.snapshot import Account, Group, Snapshot, Surface
@@ -13,6 +14,20 @@ from shambles.app.tui.application import BoxPhase, OnboardingFrame, ShamblesTUI
 from shambles.app.tui.brand import BrandVariant, brand_text
 from shambles.app.tui.dashboard import Dashboard
 from shambles.app.tui.widgets import AccountList
+
+
+class FakeLoginHandle:
+    """A controllable stand-in for ``service.LoginHandle``."""
+
+    def __init__(self):
+        self.cancelled = False
+        self._done = threading.Event()
+
+    def cancel(self):
+        self.cancelled = True
+
+    def wait(self, timeout=None):
+        return self._done.wait(timeout)
 
 
 class SnapshotService:
@@ -34,6 +49,35 @@ class SnapshotService:
         self.release_switch = threading.Event()
         self.block_switch = False
         self.refresh_calls = 0
+
+        # Lifecycle actions (save/add/rename/remove/eject) share one blocking
+        # knob because the TUI runs every one of them through the same
+        # mutation worker; a test only needs to prove that worker is
+        # exclusive, not repeat the proof per action.
+        self.mutation_started = threading.Event()
+        self.release_mutation = threading.Event()
+        self.block_mutation = False
+
+        self.save_calls = []
+        self.save_result = None
+        self.add_calls = []
+        self.add_result = None
+        self.rename_calls = []
+        self.rename_result = None
+        self.remove_plan_calls = []
+        self.remove_plan = None
+        self.remove_calls = []
+        self.remove_result = None
+        self.eject_plan_calls = 0
+        self.eject_plan = None
+        self.eject_calls = []
+        self.eject_result = None
+
+        self.login_calls = []
+        self.login_result = None
+        self.login_handle = None
+        self._login_on_line = None
+        self._login_on_done = None
 
     def snapshot(self):
         return self.current
@@ -60,6 +104,70 @@ class SnapshotService:
         if self.switch_exception is not None:
             raise self.switch_exception
         return self.switch_result
+
+    def _await_mutation_release(self):
+        self.mutation_started.set()
+        if self.block_mutation:
+            if not self.release_mutation.wait(5):
+                raise TimeoutError("Test did not release its mutation worker")
+
+    def save_current(self, provider, name):
+        self._await_mutation_release()
+        self.save_calls.append((provider, name))
+        return self.save_result or ActionResult(
+            True, "save_current", f"Saved {name}.", snapshot=self.current)
+
+    def add(self, provider, name):
+        self._await_mutation_release()
+        self.add_calls.append((provider, name))
+        return self.add_result or ActionResult(
+            True, "add", f"Added {name}.", snapshot=self.current)
+
+    def rename(self, provider, old_name, new_name):
+        self._await_mutation_release()
+        self.rename_calls.append((provider, old_name, new_name))
+        return self.rename_result or ActionResult(
+            True, "rename", f"Renamed to {new_name}.", snapshot=self.current)
+
+    def plan_remove(self, provider, name):
+        self.remove_plan_calls.append((provider, name))
+        return self.remove_plan or ActionPlan(
+            "remove", provider, name, True, f"Remove {name}?",
+            ("The saved login will be removed.",))
+
+    def remove(self, plan):
+        self._await_mutation_release()
+        self.remove_calls.append(plan)
+        return self.remove_result or ActionResult(
+            True, "remove", f"Removed {plan.account}.", snapshot=self.current)
+
+    def plan_eject(self):
+        self.eject_plan_calls += 1
+        return self.eject_plan or ActionPlan(
+            "eject", None, None, True, "Eject Shambles?",
+            ("1 account will be ejected.",))
+
+    def eject(self, plan):
+        self._await_mutation_release()
+        self.eject_calls.append(plan)
+        return self.eject_result or ActionResult(
+            True, "eject", "Ejected.", snapshot=self.current)
+
+    def start_login(self, provider, account, on_line, on_done):
+        self.login_calls.append((provider, account))
+        self._login_on_line = on_line
+        self._login_on_done = on_done
+        handle = FakeLoginHandle()
+        self.login_handle = handle
+        return handle
+
+    def send_login_line(self, line):
+        self._login_on_line(line)
+
+    def finish_login(self, result=None):
+        outcome = result or self.login_result or ActionResult(
+            True, "login", "Logged in to Work.", snapshot=self.current)
+        self._login_on_done(outcome)
 
 
 @pytest.fixture
@@ -346,6 +454,358 @@ async def test_switch_finishing_while_help_is_open_keeps_result_visible(service)
         assert app.screen.id == "help"
         await pilot.press("escape")
         assert app.selected_account == "Work"
+
+
+# --- Account action menu ----------------------------------------------------
+
+async def test_menu_opens_for_selected_account_and_lists_its_actions(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "m")
+        assert app.screen.id == "account-menu"
+        assert "Actions for Work" in screen_text(app)
+        assert "Save current login" in screen_text(app)
+        assert "Add new profile" in screen_text(app)
+        assert "Rename" in screen_text(app)
+        assert "Remove" in screen_text(app)
+
+
+async def test_menu_can_be_cancelled_without_any_mutation(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m")
+        assert app.screen.id == "account-menu"
+        await pilot.press("escape")
+        assert app.screen.id != "account-menu"
+        assert app.is_running
+        assert service.save_calls == []
+        assert service.add_calls == []
+        assert service.rename_calls == []
+        assert service.remove_calls == []
+
+
+@pytest.mark.parametrize("height", [8, 15])
+async def test_undersized_terminal_cannot_open_menu_login_or_eject(service, height):
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(80, height)) as pilot:
+        await pilot.press("m")
+        assert app.screen.id != "account-menu"
+        await pilot.press("l")
+        assert service.login_calls == []
+        await pilot.press("x")
+        assert service.eject_plan_calls == 0
+
+
+# --- Save --------------------------------------------------------------
+
+async def test_save_prompts_for_a_name_and_saves_the_current_login(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m", "s")
+        assert app.screen.id == "name-input"
+        assert "Save the current claude login" in screen_text(app)
+        await pilot.press(*"backup", "enter")
+        await pilot.pause()
+        assert service.save_calls == [("claude", "backup")]
+        assert app.screen.id == "result"
+        assert "Saved backup." in screen_text(app)
+
+
+async def test_save_can_be_cancelled_without_calling_the_service(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m", "s")
+        assert app.screen.id == "name-input"
+        await pilot.press("escape")
+        assert service.save_calls == []
+        assert app.screen.id != "name-input"
+
+
+async def test_save_failure_shows_the_service_error(service):
+    service.save_result = ActionResult(
+        False, "save_current",
+        error=ActionError("profile_missing", "No live login found.",
+                          "Log in first."),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m", "s", "enter")
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "No live login found." in screen_text(app)
+        assert "Log in first." in screen_text(app)
+
+
+# --- Add ---------------------------------------------------------------
+
+async def test_add_prompts_for_a_name_and_creates_an_empty_profile(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m", "a")
+        assert app.screen.id == "name-input"
+        assert "Add a new claude profile" in screen_text(app)
+        await pilot.press(*"fresh", "enter")
+        await pilot.pause()
+        assert service.add_calls == [("claude", "fresh")]
+        assert app.screen.id == "result"
+        assert "Added fresh." in screen_text(app)
+
+
+async def test_add_can_be_cancelled_without_calling_the_service(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m", "a")
+        assert app.screen.id == "name-input"
+        await pilot.press("escape")
+        assert service.add_calls == []
+        assert app.screen.id != "name-input"
+
+
+# --- Rename --------------------------------------------------------------
+
+async def test_rename_prefills_the_selected_account_name(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "m", "n")
+        assert app.screen.id == "name-input"
+        assert "Rename Work" in screen_text(app)
+        assert app.screen.query_one(Input).value == "Work"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert service.rename_calls == [("claude", "Work", "Work")]
+        assert app.screen.id == "result"
+        assert "Renamed to Work." in screen_text(app)
+
+
+async def test_rename_can_edit_the_prefilled_name(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "m", "n")
+        for _ in "Work":
+            await pilot.press("backspace")
+        await pilot.press(*"Job", "enter")
+        await pilot.pause()
+        assert service.rename_calls == [("claude", "Work", "Job")]
+
+
+async def test_rename_failure_shows_the_service_error(service):
+    service.rename_result = ActionResult(
+        False, "rename",
+        error=ActionError("profile_missing", "That account no longer exists.",
+                          "Refresh and try again."),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "m", "n", "enter")
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "That account no longer exists." in screen_text(app)
+
+
+# --- Remove --------------------------------------------------------------
+
+async def test_remove_needs_explicit_confirmation(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m", "d")
+        assert app.screen.id == "confirm-action"
+        assert service.remove_calls == []
+        await pilot.press("escape")
+        assert service.remove_calls == []
+
+
+async def test_remove_confirmed_calls_the_service_and_shows_a_result(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "m", "d")
+        assert "Remove Work?" in screen_text(app)
+        assert "The saved login will be removed." in screen_text(app)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(service.remove_calls) == 1
+        assert (service.remove_calls[0].provider,
+                service.remove_calls[0].account) == ("claude", "Work")
+        assert app.screen.id == "result"
+        assert "Removed Work." in screen_text(app)
+
+
+async def test_remove_failure_shows_the_service_error(service):
+    service.remove_result = ActionResult(
+        False, "remove",
+        error=ActionError("active_profile_protected",
+                          "Switch away before removing it.",
+                          "Choose a different account first."),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m", "d", "enter")
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "Switch away before removing it." in screen_text(app)
+
+
+async def test_undersized_terminal_refuses_a_confirmed_removal(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m", "d")
+        assert app.screen.id == "confirm-action"
+        await pilot.resize_terminal(80, 8)
+        await pilot.press("enter")
+        assert service.remove_calls == []
+        assert not app.mutation_running
+
+
+async def test_concurrent_mutation_blocks_new_lifecycle_actions_until_released(service):
+    service.block_mutation = True
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.press("m", "d", "enter")
+            assert service.mutation_started.wait(5)
+            assert app.mutation_running
+            await pilot.press("m")
+            assert app.screen.id != "account-menu"
+            await pilot.press("l")
+            assert service.login_calls == []
+            await pilot.press("x")
+            assert service.eject_plan_calls == 0
+            await pilot.press("r")
+            assert service.refresh_calls == 0
+        finally:
+            service.release_mutation.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert not app.mutation_running
+
+
+# --- Eject -----------------------------------------------------------------
+
+async def test_eject_needs_explicit_confirmation(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("x")
+        assert app.screen.id == "confirm-action"
+        assert "Eject Shambles?" in screen_text(app)
+        assert "1 account will be ejected." in screen_text(app)
+        assert service.eject_calls == []
+        await pilot.press("escape")
+        assert service.eject_calls == []
+
+
+async def test_eject_confirmed_calls_the_service_and_shows_a_result(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("x", "enter")
+        await pilot.pause()
+        assert len(service.eject_calls) == 1
+        assert app.screen.id == "result"
+        assert "Ejected." in screen_text(app)
+
+
+async def test_eject_failure_shows_the_service_error(service):
+    service.eject_result = ActionResult(
+        False, "eject",
+        error=ActionError("operation_refused", "Eject was refused.",
+                          "Review the message and retry."),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("x", "enter")
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "Eject was refused." in screen_text(app)
+
+
+# --- Login -------------------------------------------------------------
+
+async def test_login_starts_immediately_and_shows_progress(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "l")
+        assert app.screen.id == "login-progress"
+        assert service.login_calls == [("claude", "Work")]
+        assert "Logging in to Work" in screen_text(app)
+
+
+async def test_login_progress_shows_incoming_lines(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        service.send_login_line("Open https://example.test/authorize")
+        await pilot.pause()
+        assert "Open https://example.test/authorize" in screen_text(app)
+
+
+async def test_login_can_be_cancelled(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        await pilot.press("escape")
+        assert service.login_handle.cancelled is True
+
+
+async def test_login_finished_after_cancel_still_shows_a_result(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        await pilot.press("escape")
+        assert app.screen.id != "login-progress"
+        service.finish_login(ActionResult(
+            False, "login",
+            error=ActionError("login_failed", "The vendor login command failed.",
+                              "Review the output and retry."),
+        ))
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert not app.mutation_running
+
+
+async def test_login_success_shows_result_and_refreshes_snapshot(service):
+    service.login_result = ActionResult(
+        True, "login", "Logged in to Personal.",
+        snapshot=Snapshot(1, groups=[
+            Group("claude", "Claude", accounts=[
+                Account("Personal", active=True, email="updated@example.test"),
+                Account("Work"),
+            ]),
+            service.current.groups[1],
+        ]),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        service.finish_login()
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "Logged in to Personal." in screen_text(app)
+        assert app.snapshot is service.login_result.snapshot
+        assert not app.mutation_running
+
+
+async def test_login_failure_shows_result_without_a_launch_option(service):
+    service.login_result = ActionResult(
+        False, "login",
+        error=ActionError("login_failed", "The vendor login command failed.",
+                          "Review the output and retry."),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        service.finish_login()
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "The vendor login command failed." in screen_text(app)
+        assert "Launch" not in screen_text(app)
+
+
+async def test_help_lists_lifecycle_shortcuts(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("?")
+        assert "Account actions" in screen_text(app)
+        assert "Log in to selected account" in screen_text(app)
+        assert "Eject Shambles" in screen_text(app)
 
 
 @pytest.mark.parametrize("keys", [("j", "k"), ("down", "up")])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from enum import Enum
+from typing import Callable
 
 from rich.cells import cell_len
 from textual import events, work
@@ -16,18 +17,42 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
 
-from ..service import ActionError, ActionPlan, ActionResult, ShamblesService
+from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
+                       ShamblesService)
 from ..snapshot import Snapshot
 from .brand import BrandVariant, brand_text, variant_for
 from .dashboard import Dashboard, MINIMUM_HEIGHT
 from .overlays import ConfirmAction, ResultScreen
 from .widgets import AccountList
+from .workflows import AccountMenu, LoginProgress, NameInputScreen
 
 
 class SwitchFinished(Message):
     def __init__(self, provider: str, result: ActionResult):
         super().__init__()
         self.provider = provider
+        self.result = result
+
+
+class MutationFinished(Message):
+    """One save/add/rename/remove/eject worker has produced a result."""
+
+    def __init__(self, result: ActionResult):
+        super().__init__()
+        self.result = result
+
+
+class LoginLine(Message):
+    """One line of sanitized vendor login output, forwarded off-thread."""
+
+    def __init__(self, line: str):
+        super().__init__()
+        self.line = line
+
+
+class LoginFinished(Message):
+    def __init__(self, result: ActionResult):
+        super().__init__()
         self.result = result
 
 
@@ -210,6 +235,9 @@ class HelpScreen(ModalScreen[None]):
                 "j / Down     Next account\n"
                 "k / Up       Previous account\n"
                 "Enter        Switch selected account\n"
+                "m            Account actions (save, add, rename, remove)\n"
+                "l            Log in to selected account\n"
+                "x            Eject Shambles\n"
                 "r            Refresh local state\n"
                 "?            Help\n"
                 "q            Quit\n"
@@ -240,6 +268,9 @@ class ShamblesTUI(App[str | None]):
         Binding("r", "refresh_snapshot", "Refresh"),
         Binding("question_mark", "help", "Help"),
         Binding("enter", "switch_selected", "Switch", priority=True),
+        Binding("m", "open_menu", "Menu"),
+        Binding("l", "login_selected", "Login"),
+        Binding("x", "eject", "Eject"),
         Binding("escape", "settle_onboarding", "Skip", show=False),
         Binding("q", "quit", "Quit"),
     ]
@@ -261,6 +292,7 @@ class ShamblesTUI(App[str | None]):
         self.selected_account: str | None = None
         self._onboarding_seen = False
         self._mutation_pending = False
+        self._login_handle: LoginHandle | None = None
         self._choose_selection()
 
     @property
@@ -271,9 +303,15 @@ class ShamblesTUI(App[str | None]):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if action == "switch_selected" and self.size.height < MINIMUM_HEIGHT:
+        gated = {"switch_selected", "refresh_snapshot",
+                "open_menu", "login_selected", "eject"}
+        # Refresh only rereads/restashes already-active credentials; it does
+        # not begin a new credential mutation, so (like before) it alone is
+        # exempt from the undersized-terminal guard.
+        height_gated = gated - {"refresh_snapshot"}
+        if action in height_gated and self.size.height < MINIMUM_HEIGHT:
             return False
-        if action in {"switch_selected", "refresh_snapshot"}:
+        if action in gated:
             return not self.mutation_running and not self.screen.is_modal
         if action in {"next_account", "previous_account"}:
             return not self.screen.is_modal
@@ -419,6 +457,145 @@ class ShamblesTUI(App[str | None]):
     def _choose_launch(self, provider: str | None) -> None:
         if provider is not None:
             self.exit(provider)
+
+    def action_open_menu(self) -> None:
+        if not self.check_action("open_menu", ()):
+            return
+        self._capture_selection()
+        provider, account = self.selected_provider, self.selected_account
+        if provider is None or account is None:
+            return
+        self.push_screen(
+            AccountMenu(provider, account),
+            lambda choice: self._menu_chosen(provider, account, choice),
+        )
+
+    def _menu_chosen(self, provider: str, account: str, choice: str | None) -> None:
+        if choice == "save":
+            self.push_screen(
+                NameInputScreen(f"Save the current {provider} login as:"),
+                lambda name: self._begin_save(provider, name),
+            )
+        elif choice == "add":
+            self.push_screen(
+                NameInputScreen(f"Add a new {provider} profile named:"),
+                lambda name: self._begin_add(provider, name),
+            )
+        elif choice == "rename":
+            self.push_screen(
+                NameInputScreen(f"Rename {account} to:", initial=account),
+                lambda name: self._begin_rename(provider, account, name),
+            )
+        elif choice == "remove":
+            plan = self.service.plan_remove(provider, account)
+            if plan.requires_confirmation:
+                self.push_screen(
+                    ConfirmAction(plan),
+                    lambda confirmed: self._begin_mutation(
+                        lambda: self.service.remove(plan), confirmed,
+                    ),
+                )
+            else:
+                self._begin_mutation(lambda: self.service.remove(plan), True)
+
+    def _begin_save(self, provider: str, name: str | None) -> None:
+        if name is None:
+            return
+        self._begin_mutation(lambda: self.service.save_current(provider, name))
+
+    def _begin_add(self, provider: str, name: str | None) -> None:
+        if name is None:
+            return
+        self._begin_mutation(lambda: self.service.add(provider, name))
+
+    def _begin_rename(
+        self, provider: str, old_name: str, new_name: str | None,
+    ) -> None:
+        if new_name is None:
+            return
+        self._begin_mutation(
+            lambda: self.service.rename(provider, old_name, new_name))
+
+    def action_eject(self) -> None:
+        if not self.check_action("eject", ()):
+            return
+        plan = self.service.plan_eject()
+        if plan.requires_confirmation:
+            self.push_screen(
+                ConfirmAction(plan),
+                lambda confirmed: self._begin_mutation(
+                    lambda: self.service.eject(plan), confirmed,
+                ),
+            )
+        else:
+            self._begin_mutation(lambda: self.service.eject(plan), True)
+
+    def _begin_mutation(
+        self, run: Callable[[], ActionResult], confirmed: bool = True,
+    ) -> None:
+        if (not confirmed or self.mutation_running
+                or self.size.height < MINIMUM_HEIGHT):
+            return
+        # Reserve the mutation slot before scheduling the worker, exactly as
+        # switch does: cancelling an exclusive thread cannot undo its writes.
+        self._mutation_pending = True
+        self.perform_mutation(run)
+
+    @work(thread=True, exclusive=True, group="mutation")
+    def perform_mutation(self, run: Callable[[], ActionResult]) -> None:
+        try:
+            result = run()
+        except Exception:
+            # Unexpected store/OS failures must not expose an exception dump
+            # or close the interface before the user can read the result.
+            result = ActionResult(False, "mutation", error=ActionError(
+                "action_failed", "Could not complete the requested action.",
+                "Refresh local state and retry.",
+            ))
+        self.post_message(MutationFinished(result))
+
+    async def on_mutation_finished(self, event: MutationFinished) -> None:
+        self._capture_selection()
+        if event.result.snapshot is not None:
+            await self.render_snapshot(event.result.snapshot)
+        await self.push_screen(ResultScreen(event.result))
+        self._mutation_pending = False
+
+    def action_login_selected(self) -> None:
+        if not self.check_action("login_selected", ()):
+            return
+        self._capture_selection()
+        provider, account = self.selected_provider, self.selected_account
+        if provider is None or account is None:
+            return
+        self._mutation_pending = True
+        self._login_handle = self.service.start_login(
+            provider, account,
+            on_line=lambda line: self.post_message(LoginLine(line)),
+            on_done=lambda result: self.post_message(LoginFinished(result)),
+        )
+        self.push_screen(LoginProgress(provider, account), self._login_cancelled)
+
+    def _login_cancelled(self, _: None) -> None:
+        # The service still delivers an eventual LoginFinished once the
+        # cancelled vendor process actually exits; the mutation slot is
+        # released there, not here, so a still-terminating subprocess cannot
+        # race a freshly started mutation.
+        if self._login_handle is not None:
+            self._login_handle.cancel()
+
+    def on_login_line(self, event: LoginLine) -> None:
+        if isinstance(self.screen, LoginProgress):
+            self.screen.add_line(event.line)
+
+    async def on_login_finished(self, event: LoginFinished) -> None:
+        self._mutation_pending = False
+        self._capture_selection()
+        if event.result.snapshot is not None:
+            await self.render_snapshot(event.result.snapshot)
+        if isinstance(self.screen, LoginProgress):
+            self.pop_screen()
+        await self.push_screen(ResultScreen(event.result))
 
     def action_settle_onboarding(self) -> None:
         for frame in self.query(OnboardingFrame):
