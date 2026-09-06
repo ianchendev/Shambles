@@ -271,6 +271,8 @@ class ShamblesTUI(App[str | None]):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "switch_selected" and self.size.height < MINIMUM_HEIGHT:
+            return False
         if action in {"switch_selected", "refresh_snapshot"}:
             return not self.mutation_running and not self.screen.is_modal
         if action in {"next_account", "previous_account"}:
@@ -363,7 +365,7 @@ class ShamblesTUI(App[str | None]):
                 self.selected_provider, self.selected_account = self._accounts()[index]
 
     def action_switch_selected(self) -> None:
-        if self.mutation_running or self.screen.is_modal:
+        if not self.check_action("switch_selected", ()):
             return
         self.action_settle_onboarding()
         self._capture_selection()
@@ -384,6 +386,7 @@ class ShamblesTUI(App[str | None]):
 
     def _begin_switch(self, plan: ActionPlan, confirmed: bool) -> None:
         if (not confirmed or self.mutation_running
+                or self.size.height < MINIMUM_HEIGHT
                 or plan.provider is None or plan.account is None):
             return
         # Reserve the mutation slot before scheduling the worker:
