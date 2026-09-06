@@ -12,7 +12,8 @@ import pytest
 from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
                      make_profile)
 from shambles import providers, state
-from shambles.app import snapshot as snap
+from shambles.app import cli, snapshot as snap
+from shambles.app.service import ActionResult
 
 
 @pytest.fixture
@@ -219,6 +220,17 @@ def test_the_json_flag_emits_one_line_for_easy_piping(paths, capsys):
     assert len(capsys.readouterr().out.strip().splitlines()) == 1
 
 
+def test_cli_switch_calls_application_service(paths, monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        "shambles.app.cli.ShamblesService.switch",
+        lambda self, provider, account:
+            called.append((provider, account)) or ActionResult(True, "switch"))
+    assert cli.main(["--home", str(paths.home), "switch",
+                     "claude", "Work"]) == 0
+    assert called == [("claude", "Work")]
+
+
 def test_switching_through_the_cli_uses_the_shared_switcher(paths):
     """The CLI does not reimplement the switch. A second implementation is a
     second chance to get the ordering wrong, and the ordering is what stops a
@@ -239,3 +251,13 @@ def test_a_refused_switch_reports_why_and_exits_non_zero(paths, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert "Nope" in payload["error"]["message"]
+
+
+def test_an_unknown_provider_still_exits_non_zero(paths, capsys):
+    from shambles.__main__ import main
+
+    assert main(["--home", str(paths.home), "switch", "unknown", "Work",
+                 "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "unknown_provider"
