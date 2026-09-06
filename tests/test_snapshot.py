@@ -12,7 +12,8 @@ import pytest
 from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
                      make_profile)
 from shambles import providers, state
-from shambles.app import snapshot as snap
+from shambles.app import cli, snapshot as snap
+from shambles.app.service import ActionResult
 
 
 @pytest.fixture
@@ -175,7 +176,8 @@ def test_the_contract_exposes_every_field_a_shell_renders(paths):
         "name", "email", "display_name", "plan", "active", "state",
         "needs_login", "login_hint", "usage"}
     assert set(group["accounts"][0]["usage"][0]) == {
-        "label", "used_percent", "resets_at_ms", "stale"}
+        "label", "used_percent", "resets_at_ms", "resets_label",
+        "age_label", "stale"}
 
 
 def test_the_panel_and_the_window_agree_about_disk(paths):
@@ -218,6 +220,80 @@ def test_the_json_flag_emits_one_line_for_easy_piping(paths, capsys):
     assert len(capsys.readouterr().out.strip().splitlines()) == 1
 
 
+def test_cli_switch_calls_application_service(paths, monkeypatch):
+    called = []
+    result_snapshot = snap.Snapshot(snap.CONTRACT_VERSION, [
+        snap.Group("claude", "Claude", accounts=[snap.Account("Work")]),
+    ])
+    monkeypatch.setattr(
+        "shambles.app.cli.ShamblesService.switch",
+        lambda self, provider, account:
+            called.append((provider, account))
+            or ActionResult(True, "switch", snapshot=result_snapshot))
+    assert cli.main(["--home", str(paths.home), "switch",
+                     "claude", "Work"]) == 0
+    assert called == [("claude", "Work")]
+
+
+def test_switch_json_keeps_the_native_shell_contract(paths, capsys):
+    """The macOS SwitchOutcome decoder consumes these exact legacy fields."""
+    make_profile(paths, "claude", "Work", active=True)
+    make_profile(paths, "claude", "Personal", token=False)
+    make_live_claude_login(paths)
+
+    assert cli.main(["--home", str(paths.home), "switch", "claude",
+                     "Personal", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "version": snap.CONTRACT_VERSION,
+        "ok": True,
+        "provider": "claude",
+        "switched_to": "Personal",
+        "needs_login": True,
+        "warnings": [],
+    }
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_switch_cli_survives_an_unavailable_snapshot(paths, capsys, monkeypatch,
+                                                   as_json):
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    make_profile(paths, "codex", "Personal", token=False)
+
+    def broken_snapshot(self):
+        raise OSError("snapshot-private-sentinel")
+
+    monkeypatch.setattr("shambles.app.service.ShamblesService.snapshot",
+                        broken_snapshot)
+    args = ["--home", str(paths.home), "switch", "codex", "Personal"]
+    if as_json:
+        args.append("--json")
+    assert cli.main(args) == 0
+    out = capsys.readouterr()
+    assert "snapshot-private-sentinel" not in out.out + out.err
+    if as_json:
+        data = json.loads(out.out)
+        assert data["ok"] is True
+        assert data["switched_to"] == "Personal"
+        assert data["needs_login"] is None
+        assert data["warnings"]
+    else:
+        assert out.out.startswith("Switched codex to Personal.\n")
+
+
+def test_switch_text_keeps_provider_and_login_hint(paths, capsys):
+    make_profile(paths, "claude", "Work", active=True)
+    make_profile(paths, "claude", "Personal", token=False)
+    make_live_claude_login(paths)
+
+    assert cli.main(["--home", str(paths.home), "switch", "claude",
+                     "Personal"]) == 0
+    assert capsys.readouterr().out == (
+        "Switched claude to Personal.\n"
+        "  Run 'claude auth login' in a terminal.\n"
+    )
+
+
 def test_switching_through_the_cli_uses_the_shared_switcher(paths):
     """The CLI does not reimplement the switch. A second implementation is a
     second chance to get the ordering wrong, and the ordering is what stops a
@@ -237,4 +313,15 @@ def test_a_refused_switch_reports_why_and_exits_non_zero(paths, capsys):
                  "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
+    assert payload["error"]["code"] == "refused"
     assert "Nope" in payload["error"]["message"]
+
+
+def test_an_unknown_provider_still_exits_non_zero(paths, capsys):
+    from shambles.__main__ import main
+
+    assert main(["--home", str(paths.home), "switch", "unknown", "Work",
+                 "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "unknown_provider"

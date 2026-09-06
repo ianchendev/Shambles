@@ -44,6 +44,8 @@ class Window:
     label: str
     used_percent: int | None
     resets_at_ms: int | None = None
+    resets_label: str | None = None
+    age_label: str | None = None
     stale: bool = False
 
 
@@ -118,7 +120,11 @@ def _windows(profile, *, now_ms: int) -> list:
     if not usage:
         return []
     stale = usage.is_stale(now_ms)
-    return [Window(bar.label, bar.percent, stale=stale) for bar in usage.bars]
+    return [Window(bar.label, bar.percent,
+                   resets_label=bar.resets_label(),
+                   age_label=usage.age_label(now_ms),
+                   stale=stale)
+            for bar in usage.bars]
 
 
 def to_dict(snapshot: Snapshot) -> dict:
@@ -146,6 +152,8 @@ def to_dict(snapshot: Snapshot) -> dict:
                                 "label": w.label,
                                 "used_percent": w.used_percent,
                                 "resets_at_ms": w.resets_at_ms,
+                                "resets_label": w.resets_label,
+                                "age_label": w.age_label,
                                 "stale": w.stale,
                             }
                             for w in a.usage

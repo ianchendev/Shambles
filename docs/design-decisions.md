@@ -349,6 +349,52 @@ The repo is 1745 readable lines. The failure mode here is a framework.
 
 ---
 
+## DD-5 — One application service owns operations and state refresh
+
+**Status: Decided — implemented 2026-09-06**
+
+### Context
+
+The GUI, CLI, and future native shells need the same account operations and the
+same view of provider state. Calling the filesystem mechanisms from each
+interface would duplicate safety-sensitive ordering and allow stale state to
+leak into a view.
+
+### Decision
+
+`ShamblesService` is the application boundary for the migrated script CLI and
+the target boundary for native shells and the Tk GUI. The current Tk GUI still
+calls `switcher`, `login`, and `eject` directly; its migration is an outstanding
+follow-up. Once migrated, interfaces may render `Snapshot`, `ActionPlan`, and
+`ActionResult` values, and may pass a confirmed plan back to the service, but
+must not call those mechanism modules directly.
+
+Plans are read-only and make destructive intent explicit: remove and eject
+require confirmation, while switch is directly executable. Successful and
+handled-failure results include a fresh snapshot when readable. A failed
+snapshot read preserves the operation's outcome and adds a fixed warning.
+Login is asynchronous: the vendor receives the injected home and provider
+configuration, and completion validates the live credential and identity
+before saving through the switcher. Callbacks receive supported authorization
+URLs or fixed progress text, and structured results even if a later read fails.
+
+The CLI deliberately adapts `ActionResult` into the established native-shell
+output. This preserves existing human-readable and JSON command contracts while
+the application service remains the single implementation of the operation.
+
+### Consequences
+
+- New interfaces get one tested operation boundary and cannot accidentally
+  bypass switch ordering, provider selection, or error mapping.
+- A result snapshot is authoritative for the state immediately after the
+  operation; interfaces should not perform a second mechanism-level read to
+  reconstruct it. An unavailable snapshot is `None`; the CLI retains its
+  success payload with `needs_login: null` and a warning in that case.
+- The CLI's compatibility payload is stable but is not a promise to expose
+  every field in `ActionResult.to_dict()`.
+
+---
+
 ## Open items
 
 - **DD-2 is a leaning, not a commitment.** Revisit if the lapsed state proves

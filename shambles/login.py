@@ -21,8 +21,10 @@ import re
 import shutil
 import subprocess
 import threading
+from pathlib import Path
 
 from .errors import ShamblesError
+from .providers import spec as specmod
 
 
 #: Both vendors print a URL to visit when they cannot launch a browser, which
@@ -45,6 +47,54 @@ def find_url(line: str) -> str | None:
     if not match:
         return None
     return match.group(0).rstrip(_TRAILING)
+
+
+_AUTH_ENDPOINTS = frozenset({
+    "https://auth.openai.com/authorize",
+    "https://auth.openai.com/oauth/authorize",
+    "https://claude.ai/oauth/authorize",
+    "https://console.anthropic.com/oauth/authorize",
+})
+_AUTH_PARAMETERS = frozenset({
+    "response_type", "client_id", "redirect_uri", "scope", "state",
+    "code_challenge", "code_challenge_method", "login_hint", "prompt",
+    "id_token_add_organizations", "codex_cli_simplified_flow", "originator",
+})
+
+
+def authorization_url(line: str) -> str | None:
+    """Expose supported sign-in requests, never arbitrary URLs from stdout.
+
+    This is a narrow output filter, not an OAuth implementation. Unknown
+    endpoints/parameters, fragments, userinfo and nested query strings fail
+    closed. State and PKCE challenges must survive for the vendor's own flow.
+    No networking or URL-opening module is needed to check this small grammar.
+    """
+    url = find_url(line)
+    if not url:
+        return None
+    endpoint, _, query = url.partition("?")
+    if endpoint not in _AUTH_ENDPOINTS:
+        return None
+    seen = set()
+    for field in query.split("&") if query else ():
+        key, separator, value = field.partition("=")
+        if key not in _AUTH_PARAMETERS or key in seen or not separator:
+            return None
+        seen.add(key)
+        # Decode once and reject remaining escapes as well as URL delimiters;
+        # double encoding must not smuggle a second URL or credential field.
+        value = re.sub(r"%([0-9a-fA-F]{2})",
+                       lambda match: chr(int(match.group(1), 16)), value)
+        if not re.fullmatch(r"[A-Za-z0-9._~+ :/@,-]*", value):
+            return None
+        if key == "redirect_uri" and not re.fullmatch(
+                r"http://(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?/"
+                r"(?:auth/callback|callback)|"
+                r"https://(?:console\.anthropic\.com|platform\.claude\.com)"
+                r"/oauth/code", value):
+            return None
+    return url
 
 
 #: URL openers, most reliable first.
@@ -165,6 +215,39 @@ def command(provider, *, email: str | None = None) -> list[str]:
     return argv
 
 
+def environment(provider, *, home, platform) -> dict[str, str]:
+    """Give the child the same home and configuration as its provider store.
+
+    Preserve PATH and the desktop session. Provider-owned configuration and
+    secure-store selectors come from the injected provider environment, not
+    unrelated values in the parent. In particular, do not introduce a Claude
+    config override when none existed: that would change its Keychain name.
+    """
+    child = dict(os.environ)
+    provider_env = provider.env
+    child.update(provider_env)
+    config_key = provider.spec.get("config_dir", {}).get("env")
+    selectors = {config_key} if config_key else set()
+    for block in provider.spec.get("store", {}).values():
+        selectors.update(value for key, value in block.items()
+                         if key.endswith("_env"))
+    for key in selectors:
+        child.pop(key, None)
+        if key in provider_env:
+            child[key] = provider_env[key]
+    if config_key and provider_env.get(config_key):
+        child[config_key] = str(specmod.config_dir(
+            provider.spec, home=home, env=provider_env))
+    resolved_home = str(Path(home).resolve())
+    child["HOME"] = resolved_home
+    child["USERPROFILE"] = resolved_home
+    if platform == "win32":
+        drive, tail = os.path.splitdrive(resolved_home)
+        child["HOMEDRIVE"] = drive
+        child["HOMEPATH"] = tail
+    return child
+
+
 class LoginProcess:
     """One run of a vendor login command.
 
@@ -180,8 +263,9 @@ class LoginProcess:
     work.
     """
 
-    def __init__(self, argv, *, popen=subprocess.Popen):
+    def __init__(self, argv, *, env=None, popen=subprocess.Popen):
         self._argv = list(argv)
+        self._env = dict(env) if env is not None else None
         self._popen = popen
         self._process = None
         self._thread = None
@@ -192,7 +276,8 @@ class LoginProcess:
         return self._process is not None and self._process.poll() is None
 
     def start(self, *, on_line, on_exit) -> None:
-        if shutil.which(self._argv[0]) is None:
+        if shutil.which(self._argv[0], path=(self._env.get("PATH", os.defpath)
+                                           if self._env is not None else None)) is None:
             raise LoginUnavailableError(NOT_ON_PATH.format(binary=self._argv[0]))
         try:
             self._process = self._popen(
@@ -202,6 +287,7 @@ class LoginProcess:
                 stdin=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,
+                env=self._env,
             )
         except OSError as exc:
             raise LoginUnavailableError(

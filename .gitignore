@@ -18,3 +18,4 @@ macos/Resources/AppIcon.iconset/
 macos/Resources/AppIcon.icns
 
 .superpowers/*
+.worktrees/
