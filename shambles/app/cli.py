@@ -10,10 +10,10 @@ The boundary is therefore observable by hand: whatever the menu bar shows,
 ``shambles list --json`` prints the same thing, so a rendering bug and a logic
 bug can be told apart without a debugger.
 
-Switching goes through :mod:`shambles.switcher`, the same code the window
-uses. A second implementation of the switch would be a second chance to get
-the ordering wrong, and the ordering is what stops a failed switch destroying
-the account it switched away from.
+Switching goes through :class:`shambles.app.service.ShamblesService`, the same
+boundary the window uses. A second implementation of the switch would be a
+second chance to get the ordering wrong, and the ordering is what stops a
+failed switch destroying the account it switched away from.
 """
 
 import argparse
@@ -21,10 +21,9 @@ import json
 import sys
 
 from .. import providers as registry
-from .. import switcher
-from ..errors import ShamblesError
 from ..paths import Paths
 from . import snapshot as snapshot_mod
+from .service import ShamblesService
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -36,16 +35,14 @@ def _paths(args) -> Paths:
     return Paths.for_home(override) if override else Paths.real()
 
 
-def _providers(args):
-    chosen = getattr(args, "provider", None)
-    return [registry.load(chosen)] if chosen else registry.all_providers()
+def _service(args):
+    return ShamblesService(paths=_paths(args),
+                           providers=registry.all_providers(),
+                           platform=sys.platform)
 
 
 def cmd_list(args) -> int:
-    snap = snapshot_mod.build(paths=_paths(args),
-                              providers=registry.all_providers(),
-                              platform=sys.platform,
-                              now_ms=switcher.now_ms())
+    snap = _service(args).snapshot()
     payload = snapshot_mod.to_dict(snap)
 
     if args.json:
@@ -75,28 +72,18 @@ def cmd_list(args) -> int:
 
 
 def cmd_switch(args) -> int:
-    paths = _paths(args)
     try:
-        provider = registry.load(args.provider)
+        result = _service(args).switch(args.provider, args.account)
     except KeyError as exc:
         return _fail(args, "unknown_provider", str(exc).strip("'"))
-
-    try:
-        switcher.switch(paths, provider, args.account, platform=sys.platform)
-    except ShamblesError as exc:
-        return _fail(args, "refused", str(exc))
-
-    needs_login = not paths.credentials(provider.id, args.account).exists()
     if args.json:
-        json.dump({"version": snapshot_mod.CONTRACT_VERSION, "ok": True,
-                   "provider": provider.id, "switched_to": args.account,
-                   "needs_login": needs_login, "warnings": []}, sys.stdout)
+        json.dump(result.to_dict(), sys.stdout)
         sys.stdout.write("\n")
+    elif result.ok:
+        print(result.summary)
     else:
-        print(f"Switched {provider.id} to {args.account}.")
-        if needs_login:
-            print(f"  {provider.login_hint()}")
-    return EXIT_OK
+        sys.stderr.write(result.error.message.rstrip() + "\n")
+    return EXIT_OK if result.ok else EXIT_FAILED
 
 
 def _fail(args, code: str, message: str) -> int:
