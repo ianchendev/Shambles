@@ -14,6 +14,8 @@ from .snapshot import Snapshot
 
 
 ERROR_CODES = {
+    login.LoginUnavailableError: (
+        "login_unavailable", "Install the vendor CLI and retry."),
     ProfileNotFoundError: (
         "profile_missing", "Choose an account that still exists."),
     AlreadyManagedError: (
@@ -79,12 +81,11 @@ class LoginHandle:
         return self._process.running
 
 
-def _safe_login_line(line):
-    lowered = line.casefold()
-    if any(word in lowered for word in
-           ("access_token", "refresh_token", "id_token")):
-        return "[credential output hidden]"
-    return line
+def _safe_login_line(_line):
+    # Vendor stdout has no stable schema and can contain credentials under
+    # spellings Shambles cannot enumerate safely. Treat every byte as secret;
+    # callers receive only a fixed progress message.
+    return "[vendor output hidden]"
 
 
 class ShamblesService:
@@ -160,6 +161,12 @@ class ShamblesService:
         process = login.LoginProcess(login.command(provider))
         completed = threading.Event()
 
+        def deliver(result):
+            try:
+                on_done(result)
+            finally:
+                completed.set()
+
         def finish(exit_code):
             fresh = self.snapshot()
             if exit_code:
@@ -178,7 +185,8 @@ class ShamblesService:
                      if candidate.name == account),
                     None,
                 )
-                if requested is None or requested.needs_login:
+                if (requested is None or not requested.active
+                        or requested.needs_login):
                     result = ActionResult(
                         False, "login", snapshot=fresh,
                         error=ActionError(
@@ -191,15 +199,22 @@ class ShamblesService:
                         True, "login", f"Logged in to {account}.",
                         snapshot=fresh,
                     )
-            try:
-                on_done(result)
-            finally:
-                completed.set()
+            deliver(result)
 
-        process.start(
-            on_line=lambda line: on_line(_safe_login_line(line)),
-            on_exit=finish,
-        )
+        try:
+            switcher.switch(self.paths, provider, account,
+                            platform=self.platform)
+        except ShamblesError as exc:
+            deliver(self._failure("login", exc))
+            return LoginHandle(process, completed)
+
+        try:
+            process.start(
+                on_line=lambda line: on_line(_safe_login_line(line)),
+                on_exit=finish,
+            )
+        except login.LoginUnavailableError as exc:
+            deliver(self._failure("login", exc))
         return LoginHandle(process, completed)
 
     def plan_remove(self, provider_id, name):
