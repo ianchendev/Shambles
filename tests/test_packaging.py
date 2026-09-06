@@ -37,10 +37,17 @@ def test_console_script_points_at_a_real_callable():
     assert callable(main)
 
 
-def test_declares_no_runtime_dependencies():
-    """Tkinter ships with Python and is not installable from PyPI, so the
-    dependency list must stay empty -- otherwise pipx install fails."""
-    assert _pyproject()["project"].get("dependencies", []) == []
+def test_declares_textual_as_the_only_runtime_dependency():
+    """Tkinter ships with Python and is not installable from PyPI."""
+    assert _pyproject()["project"].get("dependencies", []) == ["textual>=8.2,<9"]
+
+
+def test_tui_dependencies_are_declared():
+    project = _pyproject()["project"]
+    assert "textual>=8.2,<9" in project["dependencies"]
+    dev = project["optional-dependencies"]["dev"]
+    assert "pytest-asyncio>=0.24" in dev
+    assert "pytest-textual-snapshot>=1.1" in dev
 
 
 def test_every_module_is_packaged():
