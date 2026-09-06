@@ -1,0 +1,120 @@
+Screen {
+    background: #0b1020;
+    color: #f4f1de;
+}
+
+Dashboard {
+    width: 100%;
+    height: 100%;
+    background: #0b1020;
+}
+
+#dashboard-body {
+    width: 100%;
+    height: 100%;
+    padding: 1 2;
+}
+
+#dashboard-title {
+    height: 3;
+    color: #e07a5f;
+    text-style: bold;
+    content-align: center middle;
+}
+
+#surface-pills {
+    height: 2;
+    color: #d9a441;
+    content-align: center middle;
+}
+
+#main-panes {
+    width: 100%;
+    height: 1fr;
+}
+
+#account-list {
+    width: 1fr;
+    height: 100%;
+    background: #11182b;
+    border: ascii #d9a441;
+}
+
+#account-list > AccountRow,
+#account-list:focus > AccountRow {
+    height: auto;
+    color: #f4f1de;
+    background: #11182b;
+    text-style: none;
+}
+
+.account-row {
+    height: 1;
+}
+
+#account-list > AccountRow.-highlight .account-row {
+    background: #e07a5f;
+    color: #0b1020;
+    text-style: bold;
+}
+
+#account-details,
+#inline-details {
+    background: #11182b;
+    border: ascii #e07a5f;
+    padding: 1 2;
+}
+
+#account-details {
+    width: 2fr;
+    height: 100%;
+    margin-left: 1;
+}
+
+#inline-details {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    color: #f4f1de;
+    text-style: none;
+}
+
+#terminal-too-small {
+    display: none;
+    width: 100%;
+    height: 100%;
+    color: #d9a441;
+    text-style: bold;
+    content-align: center middle;
+    padding: 1;
+}
+
+Dashboard.wide #inline-details {
+    display: none;
+}
+
+Dashboard.medium #account-details,
+Dashboard.compact #account-details {
+    display: none;
+}
+
+Dashboard.medium #inline-details,
+Dashboard.compact #inline-details {
+    display: block;
+}
+
+Dashboard.compact #surface-pills {
+    display: none;
+}
+
+Dashboard.compact #dashboard-body {
+    padding: 0 1;
+}
+
+Dashboard.too-short #dashboard-body {
+    display: none;
+}
+
+Dashboard.too-short #terminal-too-small {
+    display: block;
+}
