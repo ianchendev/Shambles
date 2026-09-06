@@ -222,13 +222,48 @@ def test_the_json_flag_emits_one_line_for_easy_piping(paths, capsys):
 
 def test_cli_switch_calls_application_service(paths, monkeypatch):
     called = []
+    result_snapshot = snap.Snapshot(snap.CONTRACT_VERSION, [
+        snap.Group("claude", "Claude", accounts=[snap.Account("Work")]),
+    ])
     monkeypatch.setattr(
         "shambles.app.cli.ShamblesService.switch",
         lambda self, provider, account:
-            called.append((provider, account)) or ActionResult(True, "switch"))
+            called.append((provider, account))
+            or ActionResult(True, "switch", snapshot=result_snapshot))
     assert cli.main(["--home", str(paths.home), "switch",
                      "claude", "Work"]) == 0
     assert called == [("claude", "Work")]
+
+
+def test_switch_json_keeps_the_native_shell_contract(paths, capsys):
+    """The macOS SwitchOutcome decoder consumes these exact legacy fields."""
+    make_profile(paths, "claude", "Work", active=True)
+    make_profile(paths, "claude", "Personal", token=False)
+    make_live_claude_login(paths)
+
+    assert cli.main(["--home", str(paths.home), "switch", "claude",
+                     "Personal", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "version": snap.CONTRACT_VERSION,
+        "ok": True,
+        "provider": "claude",
+        "switched_to": "Personal",
+        "needs_login": True,
+        "warnings": [],
+    }
+
+
+def test_switch_text_keeps_provider_and_login_hint(paths, capsys):
+    make_profile(paths, "claude", "Work", active=True)
+    make_profile(paths, "claude", "Personal", token=False)
+    make_live_claude_login(paths)
+
+    assert cli.main(["--home", str(paths.home), "switch", "claude",
+                     "Personal"]) == 0
+    assert capsys.readouterr().out == (
+        "Switched claude to Personal.\n"
+        "  Run 'claude auth login' in a terminal.\n"
+    )
 
 
 def test_switching_through_the_cli_uses_the_shared_switcher(paths):
@@ -250,6 +285,7 @@ def test_a_refused_switch_reports_why_and_exits_non_zero(paths, capsys):
                  "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
+    assert payload["error"]["code"] == "refused"
     assert "Nope" in payload["error"]["message"]
 
 
