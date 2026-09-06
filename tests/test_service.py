@@ -1,3 +1,4 @@
+from conftest import posix_only
 from helpers import (NOW, healthy_ms, make_claude_json,
                      make_live_claude_login, make_live_codex_login,
                      make_profile)
@@ -186,8 +187,10 @@ def test_eject_rejects_a_different_action_plan_without_mutation(paths):
     assert state.read_active(paths, "claude") == "Work"
 
 
+@posix_only
 def test_login_rechecks_disk_instead_of_trusting_exit_zero(
         paths, fake_vendor):
+    make_profile(paths, "codex", "Personal", token=False)
     fake_vendor("codex", lines=("Signed in",))
     done = []
     handle = service(paths).start_login(
@@ -198,7 +201,9 @@ def test_login_rechecks_disk_instead_of_trusting_exit_zero(
     assert done[0].error.code == "login_not_written"
 
 
+@posix_only
 def test_login_output_is_sanitized(paths, fake_vendor):
+    make_profile(paths, "codex", "Personal", token=False)
     fake_vendor("codex", lines=('{"access_token":"secret"}', "Signed in"))
     lines = []
     handle = service(paths).start_login(
@@ -208,6 +213,23 @@ def test_login_output_is_sanitized(paths, fake_vendor):
     assert "secret" not in "\n".join(lines)
 
 
+@posix_only
+def test_login_output_never_forwards_arbitrary_vendor_bytes(
+        paths, fake_vendor):
+    make_profile(paths, "codex", "Personal", token=False)
+    fake_vendor("codex", lines=("opaque-secret-bytes",))
+    lines = []
+
+    handle = service(paths).start_login(
+        "codex", "Personal", on_line=lines.append,
+        on_done=lambda result: None)
+
+    assert handle.wait(timeout=10)
+    assert lines
+    assert set(lines) == {"[vendor output hidden]"}
+
+
+@posix_only
 def test_failed_login_returns_an_error_with_a_fresh_snapshot(
         paths, fake_vendor):
     make_profile(paths, "codex", "Personal", active=True)
@@ -221,4 +243,89 @@ def test_failed_login_returns_an_error_with_a_fresh_snapshot(
     assert handle.wait(timeout=10)
     assert done[0].ok is False
     assert done[0].error.code == "login_failed"
+    assert done[0].snapshot is not None
+
+
+@posix_only
+def test_login_activates_the_requested_account_before_launch(
+        paths, fake_vendor):
+    make_profile(paths, "codex", "Work", email="work@example.com",
+                 active=True)
+    make_live_codex_login(paths, email="work@example.com",
+                          exp_ms=healthy_ms())
+    make_profile(paths, "codex", "Personal")
+    fake_vendor("codex", exit_code=1)
+
+    handle = service(paths).start_login(
+        "codex", "Personal", on_line=lambda line: None,
+        on_done=lambda result: None)
+
+    assert handle.wait(timeout=10)
+    assert state.read_active(paths, "codex") == "Personal"
+
+
+@posix_only
+def test_login_rejects_a_missing_target_without_launching_vendor(
+        paths, fake_vendor):
+    fake_vendor("codex", lines=("vendor started",))
+    lines, done = [], []
+
+    handle = service(paths).start_login(
+        "codex", "Missing", on_line=lines.append,
+        on_done=done.append)
+
+    assert handle.wait(timeout=10)
+    assert lines == []
+    assert done[0].error.code == "profile_missing"
+
+
+def test_login_does_not_accept_a_different_active_account(
+        paths, monkeypatch):
+    make_profile(paths, "codex", "Work", email="work@example.com",
+                 active=True)
+    make_live_codex_login(paths, email="work@example.com",
+                          exp_ms=healthy_ms())
+    make_profile(paths, "codex", "Personal", email="personal@example.com")
+    processes = []
+
+    class DeferredLoginProcess:
+        running = True
+
+        def __init__(self, argv):
+            processes.append(self)
+
+        def start(self, *, on_line, on_exit):
+            self.on_exit = on_exit
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr(
+        "shambles.app.service.login.LoginProcess", DeferredLoginProcess)
+    app = service(paths)
+    done = []
+    handle = app.start_login(
+        "codex", "Personal", on_line=lambda line: None,
+        on_done=done.append)
+    app.switch("codex", "Work")
+
+    processes[0].on_exit(0)
+
+    assert handle.wait(timeout=10)
+    assert done[0].ok is False
+    assert done[0].error.code == "login_not_written"
+
+
+def test_login_launch_failure_uses_the_result_callback(paths, monkeypatch):
+    make_profile(paths, "codex", "Personal", token=False, active=True)
+    monkeypatch.setenv("PATH", "")
+    done = []
+
+    handle = service(paths).start_login(
+        "codex", "Personal", on_line=lambda line: None,
+        on_done=done.append)
+
+    assert handle.wait(timeout=10)
+    assert done[0].ok is False
+    assert done[0].error.code == "login_unavailable"
     assert done[0].snapshot is not None
