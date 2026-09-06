@@ -330,11 +330,13 @@ migration should run with no Claude Code sessions active.
 
 ### 1.12 Application service boundary
 
-`shambles.app.service.ShamblesService` is the application boundary shared by
-the GUI and native shells. Interfaces render its data and ask it to perform
-operations; they do not call `switcher`, `login`, or `eject` directly. This
-keeps credential ordering, provider lookup, error mapping, and post-operation
-state in one tested implementation.
+`shambles.app.service.ShamblesService` is the application boundary for the
+migrated script CLI and the target boundary for native shells. The current Tk
+GUI still contains its legacy direct calls into `switcher`, `login`, and
+`eject`; migrating it to this service remains outstanding. New interfaces must
+render service data and ask the service to perform operations. This keeps
+credential ordering, provider lookup, error mapping, and post-operation state
+in one tested implementation as each interface is migrated.
 
 The service exposes these operations:
 
@@ -364,11 +366,11 @@ plain dictionaries.
 Every completed service mutation, including a handled failure, carries a fresh
 snapshot of disk state. Login completion also re-reads the snapshot and accepts
 success only when the requested account is still active and has a usable login;
-an exit code alone is not proof that the vendor wrote credentials. Invalid
-remove/eject plans are rejected before mutation and return an `invalid_plan`
-error without a snapshot. Login output is sanitized before delivery: only a
-normalized HTTP(S) sign-in URL is exposed; all other vendor output is replaced
-with `[vendor output hidden]`.
+an exit code alone is not proof that the vendor wrote credentials. Plans with
+the wrong action or missing required provider/account fields are rejected before
+mutation with an `invalid_plan` error and no snapshot. Login output is
+sanitized before delivery: only a normalized HTTP(S) sign-in URL is exposed;
+all other vendor output is replaced with `[vendor output hidden]`.
 
 The CLI is a compatibility adapter. It consumes service results but preserves
 the established human-readable output, `list --json` snapshot shape,
