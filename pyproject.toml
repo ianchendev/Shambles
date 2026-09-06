@@ -24,12 +24,14 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
-# Deliberately empty. Tkinter ships with Python and cannot be installed from
-# PyPI; listing it here would make `pipx install shambles` fail outright.
-dependencies = []
+dependencies = ["textual>=8.2,<9"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pytest-textual-snapshot>=1.1",
+]
 
 [project.scripts]
 # Console launcher. Keeps --version and --help usable on every platform.
@@ -58,3 +60,4 @@ packages = ["shambles", "shambles.app", "shambles.providers", "shambles.stores"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+asyncio_mode = "auto"
