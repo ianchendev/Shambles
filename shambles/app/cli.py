@@ -76,14 +76,28 @@ def cmd_switch(args) -> int:
         result = _service(args).switch(args.provider, args.account)
     except KeyError as exc:
         return _fail(args, "unknown_provider", str(exc).strip("'"))
+
+    if not result.ok:
+        return _fail(args, "refused", result.error.message)
+
+    switched = next(
+        account
+        for group in result.snapshot.groups
+        if group.provider == args.provider
+        for account in group.accounts
+        if account.name == args.account
+    )
     if args.json:
-        json.dump(result.to_dict(), sys.stdout)
+        json.dump({"version": snapshot_mod.CONTRACT_VERSION, "ok": True,
+                   "provider": args.provider, "switched_to": args.account,
+                   "needs_login": switched.needs_login,
+                   "warnings": list(result.warnings)}, sys.stdout)
         sys.stdout.write("\n")
-    elif result.ok:
-        print(result.summary)
     else:
-        sys.stderr.write(result.error.message.rstrip() + "\n")
-    return EXIT_OK if result.ok else EXIT_FAILED
+        print(f"Switched {args.provider} to {args.account}.")
+        if switched.needs_login and switched.login_hint:
+            print(f"  {switched.login_hint}")
+    return EXIT_OK
 
 
 def _fail(args, code: str, message: str) -> int:
