@@ -2,11 +2,12 @@
 
 from copy import deepcopy
 from dataclasses import replace
+import threading
 
 import pytest
 from textual.events import Key
 
-from shambles.app.service import ActionError, ActionResult
+from shambles.app.service import ActionError, ActionPlan, ActionResult
 from shambles.app.snapshot import Account, Group, Snapshot, Surface
 from shambles.app.tui.application import BoxPhase, OnboardingFrame, ShamblesTUI
 from shambles.app.tui.brand import BrandVariant, brand_text
@@ -21,14 +22,44 @@ class SnapshotService:
         self.current = snapshot
         self.refreshed = snapshot
         self.refresh_result = None
+        self.switch_calls = []
+        self.plan_calls = []
+        self.switch_plan = None
+        self.switch_result = ActionResult(
+            True, "switch", "Switched to Work.", snapshot=snapshot,
+        )
+        self.switch_thread = None
+        self.switch_exception = None
+        self.switch_started = threading.Event()
+        self.release_switch = threading.Event()
+        self.block_switch = False
+        self.refresh_calls = 0
 
     def snapshot(self):
         return self.current
 
     def refresh(self):
+        self.refresh_calls += 1
         return self.refresh_result or ActionResult(
             True, "refresh", snapshot=self.refreshed
         )
+
+    def plan_switch(self, provider, account):
+        self.plan_calls.append((provider, account))
+        return self.switch_plan or ActionPlan(
+            "switch", provider, account, False, f"Switch to {account}?"
+        )
+
+    def switch(self, provider, account):
+        self.switch_calls.append((provider, account))
+        self.switch_thread = threading.get_ident()
+        self.switch_started.set()
+        if self.block_switch:
+            if not self.release_switch.wait(5):
+                raise TimeoutError("Test did not release its switch worker")
+        if self.switch_exception is not None:
+            raise self.switch_exception
+        return self.switch_result
 
 
 @pytest.fixture
@@ -61,6 +92,200 @@ def stepped_motion(monkeypatch):
 
 def screen_text(app):
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+async def test_enter_switches_selected_account_and_shows_fresh_result(service):
+    before = deepcopy(service.current)
+    service.switch_result = ActionResult(
+        True, "switch", "Switched to Work.",
+        warnings=("Restart existing sessions.",),
+        snapshot=Snapshot(1, groups=[
+            Group("claude", "Claude", accounts=[
+                Account("Work", active=True, email="updated@example.test"),
+                Account("Personal"),
+            ]),
+            service.current.groups[1],
+        ]),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        assert app.query_one(AccountList).has_focus
+        await pilot.press("j", "enter")
+        await pilot.pause()
+
+        assert service.switch_calls == [("claude", "Work")]
+        assert service.plan_calls == [("claude", "Work")]
+        assert service.switch_thread != threading.get_ident()
+        assert app.screen.id == "result"
+        assert app.screen.result is service.switch_result
+        assert "Switched to Work." in screen_text(app)
+        assert "Restart existing sessions." in screen_text(app)
+        assert "Launch" in screen_text(app)
+        assert app.snapshot is service.switch_result.snapshot
+
+        await pilot.press("escape")
+        assert (app.selected_provider, app.selected_account) == ("claude", "Work")
+        assert app.query_one(AccountList).highlighted == 0
+        assert "updated@example.test" in screen_text(app)
+        assert service.current == before
+
+
+async def test_switch_worker_rejects_duplicate_input_and_refresh_but_allows_navigation(service):
+    service.block_switch = True
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.press("j", "enter", "enter", "enter", "r")
+            await pilot.pause()
+            assert service.switch_started.is_set()
+            assert service.switch_calls == [("claude", "Work")]
+            assert service.refresh_calls == 0
+            await pilot.press("j", "?")
+            assert app.screen.id == "help"
+            await pilot.press("escape")
+            assert (app.selected_provider, app.selected_account) == ("codex", "Personal")
+        finally:
+            service.release_switch.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.screen.id == "result"
+        await pilot.press("escape", "r")
+        assert service.refresh_calls == 1
+        assert (app.selected_provider, app.selected_account) == ("codex", "Personal")
+
+
+async def test_rapid_switch_uses_visible_cursor_before_selection_messages_arrive(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        app.post_message(Key("j", "j"))
+        app.post_message(Key("enter", "enter"))
+        await pilot.pause()
+        assert service.switch_calls == [("claude", "Work")]
+
+
+async def test_active_account_enter_performs_no_switch(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        assert service.switch_calls == []
+        assert service.plan_calls == []
+        assert app.is_running
+        assert app.screen.id != "result"
+
+
+@pytest.mark.parametrize("key", ["enter", "r", "j", "?"])
+async def test_switch_failure_stays_visible_until_escape(service, key):
+    service.switch_result = ActionResult(
+        False, "switch", warnings=("Account status is unavailable. Refresh to retry.",),
+        error=ActionError(
+            "store_unavailable", "The store is locked.", "Unlock it and retry.",
+        ),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "enter")
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "The store is locked." in screen_text(app)
+        assert "Unlock it and retry." in screen_text(app)
+        assert "Account status is unavailable." in screen_text(app)
+        assert "Launch" not in screen_text(app)
+        await pilot.press(key)
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert app.is_running
+        assert service.switch_calls == [("claude", "Work")]
+        assert service.refresh_calls == 0
+        await pilot.press("escape")
+        assert app.snapshot is service.current
+        assert app.selected_account == "Work"
+
+
+async def test_switch_launch_choice_exits_with_original_provider_after_navigation(service):
+    service.block_switch = True
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.press("j", "enter", "j")
+            assert app.selected_provider == "codex"
+        finally:
+            service.release_switch.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.return_value is None
+        assert app.is_running
+        await pilot.press("enter")
+        assert not app.is_running
+        assert app.return_value == "claude"
+
+
+@pytest.mark.parametrize("ok", [True, False])
+async def test_switch_result_is_quittable_without_launching(service, ok):
+    service.switch_result = ActionResult(ok, "switch", "Switch result")
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "enter")
+        await pilot.pause()
+        await pilot.press("q")
+        assert not app.is_running
+        assert app.return_value is None
+
+
+async def test_unexpected_switch_failure_stays_visible_without_exception_details(service):
+    service.switch_exception = RuntimeError("sensitive upstream exception")
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "enter")
+        await pilot.pause()
+        assert app.is_running
+        assert app.screen.id == "result"
+        assert not app.screen.result.ok
+        assert "Could not switch accounts." in screen_text(app)
+        assert "sensitive upstream" not in screen_text(app)
+        assert not app.mutation_running
+        await pilot.press("escape", "r")
+        assert service.refresh_calls == 1
+
+
+async def test_switch_honors_service_confirmation_plan_and_cancel(service):
+    service.switch_plan = ActionPlan(
+        "switch", "claude", "Work", True, "Confirm switching Work?",
+        warnings=("The running session retains its login.",),
+    )
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "enter")
+        assert service.switch_calls == []
+        assert "Confirm switching Work?" in screen_text(app)
+        assert "The running session retains its login." in screen_text(app)
+        await pilot.press("r", "j")
+        assert service.refresh_calls == 0
+        await pilot.press("escape")
+        assert service.switch_calls == []
+        assert app.selected_account == "Work"
+        await pilot.press("enter", "enter")
+        await pilot.pause()
+        assert service.switch_calls == [("claude", "Work")]
+        assert app.screen.id == "result"
+
+
+async def test_switch_finishing_while_help_is_open_keeps_result_visible(service):
+    service.block_switch = True
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.press("j", "enter", "?")
+            assert app.screen.id == "help"
+        finally:
+            service.release_switch.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "Switched to Work." in screen_text(app)
+        await pilot.press("escape")
+        assert app.screen.id == "help"
+        await pilot.press("escape")
+        assert app.selected_account == "Work"
 
 
 @pytest.mark.parametrize("keys", [("j", "k"), ("down", "up")])
@@ -184,6 +409,8 @@ async def test_help_can_be_dismissed_without_changing_selection(service):
         await pilot.press("j", "?")
         assert app.screen.id == "help"
         assert "Refresh" in screen_text(app)
+        assert "Enter" in screen_text(app)
+        assert "Switch selected account" in screen_text(app)
         await pilot.press("escape")
         assert app.selected_account == "Work"
         await pilot.press("k")
