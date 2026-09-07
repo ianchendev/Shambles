@@ -1,7 +1,7 @@
 # Shambles — Multi-channel Install & Opt-in Update Notice
 
 **Date:** 2026-09-08
-**Status:** APPROVED — awaiting implementation plan
+**Status:** APPROVED — plan at [`../plans/2026-09-08-install-and-update-notice.md`](../plans/2026-09-08-install-and-update-notice.md)
 
 Give users Claude-like install paths on Linux, macOS, and Windows: **npm as
 primary**, **curl / irm scripts** when Node is absent, while keeping pipx and
