@@ -1,7 +1,7 @@
 """Entrypoint dispatch and same-terminal launch.
 
 ``selected_frontend`` decides which frontend a raw ``argv`` selects, before
-any package-internal import runs -- which is why it and ``COMMANDS`` live in
+any package-internal import runs -- which is why it lives in
 ``shambles.__main__`` rather than ``shambles.app.cli``: picking "gui" versus
 "tui" versus "cli" has to happen before either Tkinter or Textual is
 imported. ``replace_process`` is the only place ``execvp`` is called, and
@@ -18,7 +18,6 @@ import pytest
 from shambles import login as login_mod
 from shambles import providers
 from shambles import __main__ as entrypoint
-from shambles.__main__ import COMMANDS
 from shambles.app.launch import LaunchRequest, replace_process
 
 
@@ -158,10 +157,6 @@ def test_no_motion_flag_alone_off_a_tty_still_falls_back_to_cli(monkeypatch):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
     assert selected_frontend(["--no-motion"]) == "cli"
-
-
-def test_commands_names_every_recognized_subcommand():
-    assert COMMANDS == ("list", "switch", "tui", "gui")
 
 
 # -- shambles.__main__.main dispatch --------------------------------------
