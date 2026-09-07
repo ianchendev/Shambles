@@ -26,3 +26,7 @@ def test_install_sh_mentions_every_unix_artifact():
         if name.endswith(".exe"):
             continue
         assert name in text, f"install.sh missing {name}"
+
+def test_install_ps1_mentions_windows_artifact():
+    text = Path("scripts/install.ps1").read_text(encoding="utf-8")
+    assert "shambles-windows-x64.exe" in text
