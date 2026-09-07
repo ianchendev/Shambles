@@ -308,14 +308,13 @@ just switched to.
 ### NO_COLOR
 
 `NO_COLOR` — the [convention](https://no-color.org), detected automatically,
-nothing Shambles-specific to set — turns off one thing: the box-drawing
-animation shown while onboarding, before any account has been saved yet. It
-settles straight to the finished frame instead of drawing in over a few
-frames. It doesn't strip color from the rest of the interface; there's no
-separate NO_COLOR-driven color stripping beyond that animation. `SHAMBLES_NO_MOTION=1`
-does the same thing as an alternative for scripts and session managers that
-set environment variables more easily than flags, and `--no-motion` does it
-as a flag, accepted before or after the subcommand.
+nothing Shambles-specific to set — makes the whole interface monochrome, not
+just one screen of it. It also settles the box-drawing animation shown while
+onboarding, before any account has been saved yet, straight to its finished
+frame instead of drawing it in over a few frames. `SHAMBLES_NO_MOTION=1` does
+that animation-skipping part on its own, as an alternative for scripts and
+session managers that set environment variables more easily than flags, and
+`--no-motion` does it as a flag, accepted before or after the subcommand.
 
 ### No update checks
 
@@ -589,7 +588,7 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pytest
 ```
 
-505 tests. Every one runs against a synthetic home in `tmp_path`. None reads or
+800+ tests. Every one runs against a synthetic home in `tmp_path`. None reads or
 writes your real `~/.claude`.
 
 CI runs the suite on Linux and Windows across Python 3.10 and 3.12, under
