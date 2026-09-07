@@ -135,6 +135,86 @@ def test_the_package_imports_no_networking_module():
     assert offenders == [], "\n".join(offenders)
 
 
+def _imported_names(source_path):
+    """Every name a module imports, as the bare final segment.
+
+    Covers both ``import x.y`` and ``from ..pkg import y`` (relative or not)
+    -- ``rsplit(".", 1)[-1]`` collapses ``shambles.switcher`` and
+    ``..switcher`` and a bare ``switcher`` down to the same ``"switcher"``,
+    which is what a caller actually wants to ban regardless of how the
+    import spells its path.
+    """
+    import ast
+
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            names.add(module)
+            names.update(f"{module}.{alias.name}" for alias in node.names)
+    return {name.rsplit(".", 1)[-1] for name in names if name}
+
+
+def test_tui_modules_do_not_import_mutation_layers_directly():
+    """The terminal UI's screens/widgets talk only to ``ShamblesService``.
+
+    ``switcher``, ``login`` and ``eject`` are the modules that actually touch
+    credentials on disk or spawn a vendor process. Nothing under
+    ``shambles/app/tui/`` may import any of them directly -- every mutation
+    the TUI performs has to go through the service boundary
+    (``tests/tui/test_dashboard.py::test_widget_modules_do_not_import_mutation_layers``
+    already pins this for ``widgets.py`` and ``dashboard.py``; this covers
+    every module in the package, including ``application.py`` and
+    ``workflows.py``, which is where a service-bypassing shortcut would most
+    plausibly be added next).
+    """
+    import pathlib
+
+    forbidden = {"switcher", "login", "eject"}
+    offenders = []
+    for source in sorted(pathlib.Path("shambles/app/tui").glob("*.py")):
+        hit = _imported_names(source) & forbidden
+        if hit:
+            offenders.append(f"{source} imports {sorted(hit)}")
+
+    assert offenders == [], "\n".join(offenders)
+
+
+def test_launch_module_may_import_login_but_not_switcher_or_eject():
+    """``app/launch.py`` is the one documented exception.
+
+    It needs ``login.binary()`` to know which executable to ``execvp`` into
+    after Textual hands the terminal back -- see its module docstring -- but
+    it must never reach into ``switcher`` or ``eject``, which mutate stored
+    credentials rather than just naming a command to run.
+    """
+    import pathlib
+
+    names = _imported_names(pathlib.Path("shambles/app/launch.py"))
+    assert "login" in names, "launch.py should still use login.binary()"
+    assert not names & {"switcher", "eject"}
+
+
+def test_the_ast_import_scan_actually_flags_a_forbidden_import(tmp_path):
+    """A non-vacuous check on the two tests above: a fixture module that
+    imports a forbidden name must actually be caught, not silently pass
+    because the scan itself is a no-op."""
+    sneaky = tmp_path / "sneaky.py"
+    sneaky.write_text("from .. import switcher\n", encoding="utf-8")
+    assert _imported_names(sneaky) & {"switcher", "login", "eject"} == {"switcher"}
+
+    also_sneaky = tmp_path / "also_sneaky.py"
+    also_sneaky.write_text("import shambles.eject\n", encoding="utf-8")
+    assert _imported_names(also_sneaky) & {"switcher", "login", "eject"} == {"eject"}
+
+    clean = tmp_path / "clean.py"
+    clean.write_text("from ..service import ActionResult\n", encoding="utf-8")
+    assert _imported_names(clean) & {"switcher", "login", "eject"} == set()
+
+
 def test_login_process_passes_the_explicit_environment_to_the_child(
         paths, monkeypatch):
     from io import StringIO
