@@ -17,6 +17,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
 
+from ...errors import ShamblesError
 from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
                        ShamblesService)
 from ..snapshot import Snapshot
@@ -284,7 +285,7 @@ class ShamblesTUI(App[str | None]):
         self.snapshot = service.snapshot()
         self.motion = (
             motion
-            and "NO_COLOR" not in os.environ
+            and not self.no_color
             and os.environ.get("SHAMBLES_NO_MOTION") != "1"
         )
         self.unicode = unicode
@@ -383,7 +384,18 @@ class ShamblesTUI(App[str | None]):
         if self.mutation_running or self.screen.is_modal:
             return
         self._capture_selection()
-        result = self.service.refresh()
+        try:
+            result = self.service.refresh()
+        except ShamblesError:
+            # Unlike the other mutation paths, refresh runs synchronously on
+            # the UI thread rather than in a worker -- but it can still raise
+            # StoreUnavailableError (a ShamblesError) out of
+            # switcher.restash_active. An uncaught raise here would crash the
+            # whole app instead of reporting through the normal result UI.
+            result = ActionResult(False, "refresh", error=ActionError(
+                "refresh_failed", "Could not refresh local state.",
+                "Retry, or unlock/restore the credential store.",
+            ))
         if result.snapshot is not None:
             await self.render_snapshot(result.snapshot)
         feedback = list(result.warnings)
