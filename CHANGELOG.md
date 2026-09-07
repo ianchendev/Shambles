@@ -20,11 +20,12 @@ Notable changes per release. Dates are the tag date.
   the vendor process replaces Shambles rather than running alongside it.
 - **`--no-motion` and `NO_COLOR`** disable the terminal interface's onboarding
   box-draw animation; `NO_COLOR` is detected automatically, the same
-  convention respected by most other terminal tools.
+  convention respected by most other terminal tools, and also makes the whole
+  interface monochrome, not just the animation.
 - **`SHAMBLES_NO_MOTION=1`** does the same as `--no-motion`, for scripts and
   session managers that set environment variables more easily than flags.
 
-### Notes
+### Known limitations
 
 - Bare `shambles` only opens the terminal interface when both stdin and
   stdout are attached to a real terminal. Anything else (a pipe, a script, a
