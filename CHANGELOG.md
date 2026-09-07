@@ -2,6 +2,42 @@
 
 Notable changes per release. Dates are the tag date.
 
+## Unreleased
+
+### Added
+
+- **A terminal interface.** Running `shambles` on an interactive terminal now
+  opens a keyboard-driven dashboard (`j`/`k` or the arrow keys to move,
+  `Enter` to switch, `m` for the account menu, `l` to log in, `x` to eject,
+  `?` for help) instead of requiring the Tk window. `shambles tui` opens it
+  explicitly; `shambles gui` still opens the window; `shambles list` and
+  `shambles switch` are unchanged and remain the scriptable, non-interactive
+  path. See the README's "Terminal interface" section for the full shortcut
+  list.
+- **Same-terminal launch after switching.** From the terminal interface's
+  result screen, choosing Launch hands the current terminal to the vendor CLI
+  (`claude` or `codex`) in place — Textual exits and tears down first, then
+  the vendor process replaces Shambles rather than running alongside it.
+- **`--no-motion` and `NO_COLOR`** disable the terminal interface's onboarding
+  box-draw animation; `NO_COLOR` is detected automatically, the same
+  convention respected by most other terminal tools.
+- **`SHAMBLES_NO_MOTION=1`** does the same as `--no-motion`, for scripts and
+  session managers that set environment variables more easily than flags.
+
+### Notes
+
+- Bare `shambles` only opens the terminal interface when both stdin and
+  stdout are attached to a real terminal. Anything else (a pipe, a script, a
+  non-interactive shell) falls through to the usage message the same as
+  before — this release adds no new implicit behaviour for non-interactive
+  callers.
+- The terminal interface goes through the same `ShamblesService` core as
+  `shambles list`/`shambles switch`, and reads and writes exactly the same
+  files the Tk window does — see "What it touches" in the README. The
+  restart requirement is unchanged too: a Claude Code session already running
+  keeps the login it loaded at startup, in a terminal or in VS Code, no
+  matter which interface performed the switch.
+
 ## 2.0.0 — 2026-08-07
 
 A redesign. Everything below happens automatically on first launch; there is

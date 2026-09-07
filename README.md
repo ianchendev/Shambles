@@ -249,6 +249,81 @@ does not pick it up, run *Developer: Reload Window*.
 An already-running session keeps the token it loaded at startup — the switch is
 a change on disk, not a change inside a live process.
 
+## Terminal interface
+
+`shambles` opens a keyboard-driven dashboard instead of the Tk window whenever
+it's run on an actual interactive terminal — stdin and stdout both need to be
+one. No `DISPLAY`, no Tk, works the same over SSH:
+
+```bash
+shambles      # terminal interface, if run on an interactive terminal
+shambles tui  # open it explicitly either way
+shambles gui  # open the Tk window instead
+```
+
+Piped input or output, a script, a cron job — anything where stdin or stdout
+isn't a real terminal — falls through to the usage message, exactly as it did
+before this existed. `shambles list` and `shambles switch ...` are unaffected
+either way; they're the same non-interactive path they always were.
+
+It is a second front end on the same core, not a separate tool: it reads and
+writes exactly what [What it touches](#what-it-touches) describes, through
+the same service the Tk window and `shambles switch` use. Switching an
+account here has the identical effect, and the identical restart requirement,
+as switching it anywhere else — a Claude Code session already running, in a
+terminal or in VS Code, keeps the login it loaded at startup no matter which
+interface performed the switch. Start a new session, or reload the VS Code
+window.
+
+### Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `j` / `↓` | Next account |
+| `k` / `↑` | Previous account |
+| `Enter` | Switch to the selected account (asks first, if the account needs confirming) |
+| `m` | Account menu — save the current login, add, rename, remove |
+| `l` | Log in the selected account (runs the vendor's own login command) |
+| `x` | Eject — see [Leaving cleanly](#leaving-cleanly) |
+| `r` | Refresh |
+| `?` | Help |
+| `q` | Quit |
+| `Esc` | Skip the onboarding animation, or close whatever is open |
+
+Inside the account menu: `s` save current, `a` add, `n` rename, `d` remove,
+`Esc` cancel. Every confirmation, result and login-progress screen takes
+`Enter` to confirm or continue and `Esc` to cancel; `q` quits from any of
+them. The same reference is one keystroke away inside the app: press `?`.
+
+### Launching straight back into the vendor CLI
+
+After a successful switch, the result screen offers **Launch** next to
+Escape. Choosing it closes the terminal interface — Textual restores the
+terminal first — and replaces the Shambles process in place with `claude` or
+`codex` (`execvp`, not a child process), inheriting the environment
+unchanged. There's no second window: the terminal `shambles` was running in
+becomes the vendor CLI's terminal, immediately signed in as the account you
+just switched to.
+
+### NO_COLOR
+
+`NO_COLOR` — the [convention](https://no-color.org), detected automatically,
+nothing Shambles-specific to set — turns off one thing: the box-drawing
+animation shown while onboarding, before any account has been saved yet. It
+settles straight to the finished frame instead of drawing in over a few
+frames. It doesn't strip color from the rest of the interface; there's no
+separate NO_COLOR-driven color stripping beyond that animation. `SHAMBLES_NO_MOTION=1`
+does the same thing as an alternative for scripts and session managers that
+set environment variables more easily than flags, and `--no-motion` does it
+as a flag, accepted before or after the subcommand.
+
+### No update checks
+
+Same as the rest of Shambles (see [Is this safe?](#is-this-safe) below): the
+terminal interface makes no network call of any kind, so there is nothing in
+it that checks for a newer version, phones home, or reports usage. The `?`
+help screen says so in the app itself.
+
 ## If CLAUDE_CONFIG_DIR is set
 
 Claude Code honours `CLAUDE_CONFIG_DIR`, and it relocates the **whole** config
