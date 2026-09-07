@@ -23,6 +23,7 @@ import sys
 from .. import providers as registry
 from ..paths import Paths
 from . import snapshot as snapshot_mod
+from .launch import LaunchRequest, replace_process
 from .service import ShamblesService
 
 EXIT_OK = 0
@@ -39,6 +40,30 @@ def _service(args):
     return ShamblesService(paths=_paths(args),
                            providers=registry.all_providers(),
                            platform=sys.platform)
+
+
+def cmd_tui(args) -> int:
+    from .tui.application import run_tui
+
+    service = _service(args)
+    provider = run_tui(service, motion=not getattr(args, "no_motion", False))
+    # run_tui returns only after Textual restores the terminal. Keep the
+    # process handoff here; the TUI itself returns only a provider ID.
+    if provider is not None:
+        replace_process(LaunchRequest(provider), providers=service.providers)
+    return EXIT_OK
+
+
+def cmd_gui(args) -> int:
+    try:
+        import tkinter  # noqa: F401
+    except ModuleNotFoundError:
+        from shambles.__main__ import TK_MISSING
+        sys.stderr.write(TK_MISSING)
+        return EXIT_FAILED
+
+    from ..gui import run
+    return run(paths=_paths(args))
 
 
 def cmd_list(args) -> int:
@@ -127,11 +152,22 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--home", default=argparse.SUPPRESS,
                         help=argparse.SUPPRESS)
+    common.add_argument("--no-motion", action="store_true",
+                        default=argparse.SUPPRESS,
+                        help="disable nonessential terminal motion")
 
     parser = argparse.ArgumentParser(
         prog="shambles", parents=[common],
         description="Switch between Claude and Codex accounts.")
     sub = parser.add_subparsers(dest="command")
+
+    terminal = sub.add_parser("tui", parents=[common],
+                              help="open the terminal interface")
+    terminal.set_defaults(func=cmd_tui)
+
+    graphical = sub.add_parser("gui", parents=[common],
+                               help="open the graphical interface")
+    graphical.set_defaults(func=cmd_gui)
 
     listing = sub.add_parser("list", parents=[common],
                              help="show every account and its state")

@@ -16,7 +16,12 @@ from shambles import __version__
 USAGE = """\
 shambles — switch between Claude Code accounts
 
-  shambles              open the window
+  shambles              open the terminal interface on an interactive terminal
+  shambles tui          explicitly open the terminal interface
+  shambles gui          open the window instead
+  shambles list         list accounts
+  shambles switch ...   switch accounts without opening an interface
+  shambles --no-motion  disable nonessential terminal motion
   shambles --version    print the version
   shambles --help       show this message
 
@@ -24,12 +29,19 @@ Profiles live in ~/.claude-profiles/. The active one is whichever
 ~/.claude currently points at.
 """
 
-#: Subcommands answered on stdout instead of by opening a window.
-#:
-#: Not merely a convenience: a Windows tray app manages a different Claude Code
-#: install from the one inside WSL, and only a CLI running inside WSL can reach
-#: that one. The macOS menu bar app consumes `list --json` for the same reason.
-COMMANDS = ("list", "switch")
+#: Every subcommand `shambles.app.cli` knows how to dispatch. `list` and
+#: `switch` are answered on stdout rather than by opening anything -- a
+#: Windows tray app manages a different Claude Code install from the one
+#: inside WSL, and only a CLI running inside WSL can reach that one, and the
+#: macOS menu bar app consumes `list --json` for the same reason. `tui` and
+#: `gui` open a frontend instead, chosen by :func:`selected_frontend` below.
+COMMANDS = ("list", "switch", "tui", "gui")
+
+#: Flags that do not, by themselves, stop a bare invocation from being
+#: "bare". Present or not, `shambles --no-motion` on an interactive terminal
+#: still opens the TUI -- just with less motion -- rather than falling
+#: through to a usage message the way an unrecognized subcommand would.
+_TUI_FLAGS = ("--no-motion",)
 
 TK_MISSING = """\
 Shambles needs Tkinter, which is not installed.
@@ -85,6 +97,35 @@ def version_error(version_info=None):
                           have=".".join(str(part) for part in info))
 
 
+def _command(argv):
+    """Find the subcommand without mistaking an option value for one.
+
+    Argument validation belongs to the CLI parser. This only identifies an
+    implicit TUI invocation before either frontend is imported.
+    """
+    tokens = iter(argv)
+    for token in tokens:
+        if token == "--home":
+            next(tokens, None)
+        elif token in _TUI_FLAGS or token.startswith("--home="):
+            continue
+        else:
+            return token
+    return None
+
+
+def selected_frontend(argv):
+    command = _command(argv)
+    if command in ("gui", "tui"):
+        return command
+    if command is None and all(
+        stream is not None and stream.isatty()
+        for stream in (sys.stdin, sys.stdout)
+    ):
+        return "tui"
+    return "cli"
+
+
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
 
@@ -104,22 +145,13 @@ def main(argv=None) -> int:
         print(USAGE, end="")
         return 0
 
-    # Checked before Tkinter is imported so the CLI works headless, over SSH
-    # and inside WSL. Scans every token rather than only the first: global
-    # flags may precede the subcommand, and testing argv[0] alone sent
-    # `shambles --home X list` to the window where it died on missing Tkinter.
-    if any(token in COMMANDS for token in argv):
-        from shambles.app.cli import main as cli_main
-        return cli_main(argv)
+    if selected_frontend(argv) == "tui" and _command(argv) is None:
+        argv.append("tui")
 
-    try:
-        import tkinter  # noqa: F401
-    except ModuleNotFoundError:
-        sys.stderr.write(TK_MISSING)
-        return 1
-
-    from shambles.gui import run
-    return run()
+    # Frontend imports happen only in their CLI handlers, after validation.
+    # With no subcommand the parser prints help and returns EXIT_USAGE.
+    from shambles.app.cli import main as cli_main
+    return cli_main(argv)
 
 
 if __name__ == "__main__":

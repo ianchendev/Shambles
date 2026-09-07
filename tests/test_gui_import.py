@@ -11,6 +11,36 @@ from helpers import (DAY_MS, NOW, healthy_ms, make_claude_json,
 from shambles import gui, motion, profiles, providers, state, widgets
 
 
+def test_explicit_gui_reports_missing_tkinter(monkeypatch, capsys):
+    import builtins
+    from shambles.__main__ import main
+
+    original_import = builtins.__import__
+
+    def missing_tkinter(name, *args, **kwargs):
+        if name == "tkinter":
+            raise ModuleNotFoundError("No module named 'tkinter'")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_tkinter)
+    assert main(["gui"]) == 1
+    assert "Shambles needs Tkinter" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [
+    ["--home", "{home}", "gui"],
+    ["gui", "--home", "{home}"],
+])
+def test_explicit_gui_honours_the_requested_home(argv, monkeypatch, home):
+    from shambles.__main__ import main
+
+    seen = []
+    monkeypatch.setattr(gui, "run", lambda paths=None:
+                        seen.append(paths.home) or 0)
+    assert main([arg.format(home=str(home)) for arg in argv]) == 0
+    assert seen == [home]
+
+
 @pytest.fixture
 def claude():
     return providers.load("claude")
