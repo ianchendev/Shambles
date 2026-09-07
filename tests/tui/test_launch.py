@@ -259,7 +259,7 @@ def test_cli_tui_command_defaults_motion_on(monkeypatch, home):
                         lambda service, **kw: seen.update(kw) or None)
 
     assert cli.main(["--home", str(home), "tui"]) == cli.EXIT_OK
-    assert seen == {"motion": True}
+    assert seen["motion"] is True
 
 
 def test_cli_tui_command_honours_no_motion_after_the_subcommand(monkeypatch, home):
@@ -270,7 +270,7 @@ def test_cli_tui_command_honours_no_motion_after_the_subcommand(monkeypatch, hom
                         lambda service, **kw: seen.update(kw) or None)
 
     assert cli.main(["--home", str(home), "tui", "--no-motion"]) == cli.EXIT_OK
-    assert seen == {"motion": False}
+    assert seen["motion"] is False
 
 
 def test_cli_tui_command_honours_no_motion_before_the_subcommand(monkeypatch, home):
@@ -281,7 +281,32 @@ def test_cli_tui_command_honours_no_motion_before_the_subcommand(monkeypatch, ho
                         lambda service, **kw: seen.update(kw) or None)
 
     assert cli.main(["--no-motion", "--home", str(home), "tui"]) == cli.EXIT_OK
-    assert seen == {"motion": False}
+    assert seen["motion"] is False
+
+
+def test_cli_tui_command_derives_unicode_from_stdout_encoding(monkeypatch, home):
+    """``cmd_tui`` must thread a real ``unicode=`` value through to
+    ``run_tui`` -- not rely on its default -- or the ASCII branding fallback
+    is unreachable outside tests. UTF-8 stdout should request Unicode
+    rendering; a non-UTF-8 encoding should request the ASCII fallback."""
+    from shambles.app import cli
+
+    class FakeStdout:
+        def __init__(self, encoding):
+            self.encoding = encoding
+
+    seen = {}
+    monkeypatch.setattr("shambles.app.tui.application.run_tui",
+                        lambda service, **kw: seen.update(kw) or None)
+
+    monkeypatch.setattr(cli.sys, "stdout", FakeStdout("UTF-8"))
+    assert cli.main(["--home", str(home), "tui"]) == cli.EXIT_OK
+    assert seen["unicode"] is True
+
+    seen.clear()
+    monkeypatch.setattr(cli.sys, "stdout", FakeStdout("cp1252"))
+    assert cli.main(["--home", str(home), "tui"]) == cli.EXIT_OK
+    assert seen["unicode"] is False
 
 
 @pytest.mark.parametrize("argv", [
@@ -310,7 +335,10 @@ def test_bare_no_motion_reaches_tui_with_the_synthetic_home(monkeypatch, home):
                         lambda service, **kw: seen.append((service.paths.home, kw)))
 
     assert entrypoint.main(["--no-motion", "--home", str(home)]) == 0
-    assert seen == [(home, {"motion": False})]
+    assert len(seen) == 1
+    seen_home, seen_kwargs = seen[0]
+    assert seen_home == home
+    assert seen_kwargs["motion"] is False
 
 
 def test_vendor_exec_happens_after_the_tui_returns(monkeypatch, home):

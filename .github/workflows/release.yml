@@ -52,16 +52,33 @@ jobs:
       # binary builds green, passes a --version smoke test, and then fails at
       # runtime the moment it tries to load a provider. The separator differs
       # by platform, which is why the two lines cannot be merged.
+      #
+      # The second --add-data does the same for the TUI's stylesheet:
+      # ShamblesTUI.CSS_PATH = "theme.tcss" is resolved and read from disk by
+      # Textual at runtime, relative to shambles/app/tui/application.py --
+      # it is not imported, so PyInstaller never sees it on its own. The TUI
+      # is the bare `shambles` command's default frontend on an interactive
+      # terminal, so a binary missing this crashes on startup with a Textual
+      # StylesheetError, while --version/--help stay green because neither
+      # touches Textual.
+      #
+      # If a future PyInstaller/Textual upgrade ever fails to bundle a widget
+      # module Textual only reaches through its lazy `__getattr__`-based
+      # submodule loading (textual.widgets._input, _list_view, etc.) -- i.e.
+      # the binary builds and starts but crashes on first use of some widget
+      # -- try adding --collect-all textual before assuming it's a code bug.
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: pyinstaller --onefile --name shambles
              --add-data "shambles/providers/*.json:shambles/providers"
+             --add-data "shambles/app/tui/*.tcss:shambles/app/tui"
              shambles/__main__.py
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: pyinstaller --onefile --windowed --name shambles
              --add-data "shambles/providers/*.json;shambles/providers"
+             --add-data "shambles/app/tui/*.tcss;shambles/app/tui"
              shambles/__main__.py
 
       # Both platforms, always. A Linux-only smoke test let a broken Windows

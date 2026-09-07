@@ -46,7 +46,12 @@ def cmd_tui(args) -> int:
     from .tui.application import run_tui
 
     service = _service(args)
-    provider = run_tui(service, motion=not getattr(args, "no_motion", False))
+    encoding = (sys.stdout.encoding or "").lower().replace("-", "")
+    provider = run_tui(
+        service,
+        motion=not getattr(args, "no_motion", False),
+        unicode=encoding in ("utf8", "utf"),
+    )
     # run_tui returns only after Textual restores the terminal. Keep the
     # process handoff here; the TUI itself returns only a provider ID.
     if provider is not None:

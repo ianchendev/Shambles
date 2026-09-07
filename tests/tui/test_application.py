@@ -37,6 +37,7 @@ class SnapshotService:
         self.current = snapshot
         self.refreshed = snapshot
         self.refresh_result = None
+        self.refresh_exception = None
         self.switch_calls = []
         self.plan_calls = []
         self.switch_plan = None
@@ -84,6 +85,8 @@ class SnapshotService:
 
     def refresh(self):
         self.refresh_calls += 1
+        if self.refresh_exception is not None:
+            raise self.refresh_exception
         return self.refresh_result or ActionResult(
             True, "refresh", snapshot=self.refreshed
         )
@@ -908,6 +911,24 @@ async def test_refresh_without_snapshot_keeps_accounts_and_shows_feedback(servic
         assert app.selected_account == "Work"
         assert app.snapshot is service.current
         assert "Refresh unavailable" in screen_text(app)
+
+
+async def test_refresh_reports_a_raised_store_error_instead_of_crashing(service):
+    """``refresh()`` can raise ``StoreUnavailableError`` out of
+    ``switcher.restash_active`` -- unlike every other mutation path, this one
+    runs synchronously on the UI thread rather than in a guarded worker, so
+    an uncaught raise here would crash the whole app instead of reporting
+    through the normal result UI."""
+    from shambles.stores.base import StoreUnavailableError
+
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j")
+        service.refresh_exception = StoreUnavailableError("store locked")
+        await pilot.press("r")
+        assert app.selected_account == "Work"
+        assert app.snapshot is service.current
+        assert "Could not refresh local state" in screen_text(app)
 
 
 async def test_refresh_can_enter_and_leave_onboarding(service, empty_service):
