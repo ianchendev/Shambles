@@ -29,14 +29,6 @@ Profiles live in ~/.claude-profiles/. The active one is whichever
 ~/.claude currently points at.
 """
 
-#: Every subcommand `shambles.app.cli` knows how to dispatch. `list` and
-#: `switch` are answered on stdout rather than by opening anything -- a
-#: Windows tray app manages a different Claude Code install from the one
-#: inside WSL, and only a CLI running inside WSL can reach that one, and the
-#: macOS menu bar app consumes `list --json` for the same reason. `tui` and
-#: `gui` open a frontend instead, chosen by :func:`selected_frontend` below.
-COMMANDS = ("list", "switch", "tui", "gui")
-
 #: Flags that do not, by themselves, stop a bare invocation from being
 #: "bare". Present or not, `shambles --no-motion` on an interactive terminal
 #: still opens the TUI -- just with less motion -- rather than falling
