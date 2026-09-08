@@ -2,6 +2,7 @@
 
 from typing import Optional, Tuple
 
+from rich.cells import cell_len
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -30,6 +31,12 @@ def _paint_footer(text: str) -> str:
         key, _, label = part.partition(" ")
         painted.append(f"[#e07a5f]{key}[/] {label}")
     return " [#d9a441]·[/] ".join(painted)
+
+
+def _footer_for_width(width: int, *, wide: bool) -> str:
+    if wide and cell_len(FULL_FOOTER) <= width:
+        return FULL_FOOTER
+    return COMPACT_FOOTER
 
 
 class Dashboard(Widget):
@@ -65,12 +72,12 @@ class Dashboard(Widget):
             f"Terminal is too small. Use at least {MINIMUM_HEIGHT} rows.",
             id="terminal-too-small",
         )
+        yield Static(id="dashboard-header", markup=False)
         with Vertical(id="dashboard-body"):
-            yield Static(id="dashboard-header", markup=False)
             with Horizontal(id="main-panes"):
                 yield AccountList(self.snapshot, id="account-list")
                 yield account_details
-            yield Static(id="shortcut-footer")
+        yield Static(id="shortcut-footer")
 
     def on_resize(self, event: events.Resize) -> None:
         width, height = event.size.width, event.size.height
@@ -85,7 +92,7 @@ class Dashboard(Widget):
             header_text(width, height, unicode=unicode)
         )
         self.query_one("#shortcut-footer", Static).update(
-            _paint_footer(FULL_FOOTER if wide else COMPACT_FOOTER)
+            _paint_footer(_footer_for_width(width, wide=wide))
         )
 
     async def on_account_list_selected(self, event: AccountList.Selected) -> None:

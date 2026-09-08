@@ -348,6 +348,19 @@ async def test_wide_dashboard_shows_lockup_and_footer(snapshot):
         assert app.query_one(Dashboard).has_class("wide")
 
 
+async def test_wide_minimum_shows_full_bleed_lockup_and_fitting_footer(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(78, 24)) as pilot:
+        await pilot.pause()
+        screen = screen_text(app)
+        assert app.query_one(Dashboard).has_class("wide")
+        assert "OFFLINE" in screen
+        assert "j/k move" not in screen
+        assert "q quit" in screen
+        assert "? help" in screen
+        assert "a add" in screen
+
+
 async def test_wide_but_short_drops_lockup_and_uses_inline_details(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(78, 16)) as pilot:

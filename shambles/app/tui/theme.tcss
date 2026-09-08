@@ -11,8 +11,7 @@ Dashboard {
 
 #dashboard-body {
     width: 100%;
-    height: 100%;
-    padding: 1 2;
+    height: 1fr;
 }
 
 #dashboard-header {
@@ -26,12 +25,12 @@ Dashboard {
     width: 100%;
     height: 1;
     color: #d9a441;
-    padding: 0 1;
 }
 
 #main-panes {
     width: 100%;
     height: 1fr;
+    padding: 1 2;
 }
 
 #account-list {
@@ -113,7 +112,7 @@ Dashboard.compact #inline-details {
     display: block;
 }
 
-Dashboard.compact #dashboard-body {
+Dashboard.compact #main-panes {
     padding: 0 1;
 }
 
@@ -126,7 +125,9 @@ Dashboard.ascii #inline-details {
     border: ascii #e07a5f;
 }
 
-Dashboard.too-short #dashboard-body {
+Dashboard.too-short #dashboard-body,
+Dashboard.too-short #dashboard-header,
+Dashboard.too-short #shortcut-footer {
     display: none;
 }
 
