@@ -166,9 +166,13 @@ class AccountRow(ListItem):
     def __init__(self, group: Group, account: Account, *children):
         self.group = group
         self.account = account
+        widgets = list(children)
+        headers = [widget for widget in widgets if "group-header" in widget.classes]
+        rest = [widget for widget in widgets if widget not in headers]
         super().__init__(
+            *headers,
             Static(_account_row(group, account), classes="account-row"),
-            *children,
+            *rest,
         )
 
 
@@ -194,15 +198,21 @@ class AccountList(ListView):
         rows = []
         self._selected_row: Optional[AccountRow] = None
         self._inline_details: Optional[AccountDetails] = None
+        previous_group = None
         for index, (group, account) in enumerate(accounts):
+            children = []
+            if group is not previous_group:
+                children.append(Static(group.display_name, classes="group-header"))
+                previous_group = group
+            details = None
             if index == initial_index:
                 details = AccountDetails(id="inline-details")
                 details.show_account(group, account)
-                row = AccountRow(group, account, details)
+                children.append(details)
+            row = AccountRow(group, account, *children)
+            if details is not None:
                 self._selected_row = row
                 self._inline_details = details
-            else:
-                row = AccountRow(group, account)
             rows.append(row)
         super().__init__(*rows, initial_index=initial_index, **kwargs)
 

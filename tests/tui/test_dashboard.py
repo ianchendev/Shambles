@@ -233,6 +233,20 @@ async def test_wide_account_headers_keep_identity_separate_from_login_state(snap
         assert "Login required" not in screen
 
 
+async def test_list_groups_by_provider_and_keeps_one_line_rows(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        screen = screen_text(app)
+        assert "Claude" in screen  # Group.display_name in fixture
+        assert "Codex" in screen
+        assert "Claude / Work" not in screen
+        accounts = app.query_one(AccountList)
+        assert accounts.highlighted == 0  # Work is active
+        await pilot.press("down")
+        assert accounts.highlighted == 1
+
+
 @pytest.mark.parametrize("width", [60, 40])
 async def test_usage_percentage_and_stale_copy_remain_visible(snapshot, width):
     group = snapshot.groups[0]
