@@ -371,9 +371,12 @@ chip for what to do about it. Hovering anything with something to say gives you
 a tooltip immediately — the name, the chip, the ✕, the ⓘ beside a usage bar,
 and both footer buttons.
 
-Usage bars are read from the figures the vendor caches for that account, not
-fetched. They turn red at 80%, and a figure older than an hour is dimmed and
-labelled `as of 20m ago` so a stale number is never mistaken for a live one.
+Usage bars come from what the vendor already wrote to your disk, never from a
+request: Claude Code's own cache in `~/.claude.json`, and — for the account
+Codex is currently signed in as — the newest session log under
+`~/.codex/sessions`. They turn red at 80%, and a figure older than an hour is
+dimmed and labelled `as of 20m ago` so a stale number is never mistaken for a
+live one.
 
 ### Adding an account, in detail
 
