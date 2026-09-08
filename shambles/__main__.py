@@ -25,6 +25,11 @@ shambles — switch between Claude Code accounts
   shambles --version    print the version
   shambles --help       show this message
 
+  shambles config get update.check         are update checks on?
+  shambles config set update.check true    ask GitHub for the latest release
+                                           tag, at most once a day (off by
+                                           default; sends nothing about you)
+
 Profiles live in ~/.claude-profiles/. The active one is whichever
 ~/.claude currently points at.
 """
@@ -106,6 +111,53 @@ def _command(argv):
     return None
 
 
+def _home(argv):
+    """The value of ``--home``, if the line carries one, else None.
+
+    :func:`_command` already steps over this option on its way to the
+    subcommand, but ``--version`` answers before the CLI parser ever runs, so
+    it has to read the value itself or report on the wrong home directory.
+    Validation still belongs to the parser; a malformed ``--home`` here just
+    names a directory with nothing in it, which reads as "no notice".
+    """
+    tokens = iter(argv)
+    for token in tokens:
+        if token == "--home":
+            return next(tokens, None)
+        if token.startswith("--home="):
+            return token[len("--home="):]
+    return None
+
+
+def _update_notice(argv):
+    """A line about a newer release, or "" -- read from the cache, never fetched.
+
+    ``update_check.TIMEOUT_S`` bounds one socket operation rather than a whole
+    lookup, so a fetch in front of ``--version`` could hold up an install
+    check for as long as DNS, connect and read take to each give up in turn.
+    This reads what some earlier run already wrote and stops there.
+
+    The imports are inside the body for the reason :data:`MIN_PYTHON` gives:
+    those modules annotate with ``str | None``, which the interpreters this
+    file still has to run on cannot evaluate. By the time anything reaches
+    here, :func:`version_error` has already turned those interpreters away.
+
+    Catch-all, because ``--version`` is what people run when everything else
+    is broken. Whatever is wrong with the home directory, the version prints.
+    """
+    try:
+        from shambles.paths import Paths
+        from shambles.update_check import notice_from_cache
+
+        home = _home(argv)
+        notice = notice_from_cache(
+            Paths.for_home(home) if home else Paths.real(),
+            current_version=__version__)
+    except Exception:
+        return ""
+    return notice + "\n" if notice else ""
+
+
 def selected_frontend(argv):
     command = _command(argv)
     if command in ("gui", "tui"):
@@ -132,6 +184,11 @@ def main(argv=None) -> int:
 
     if "--version" in argv or "-V" in argv:
         print(f"shambles {__version__}")
+        # The notice goes to stderr on purpose. Installers and shell scripts
+        # read this command's stdout, often whole -- a second line there
+        # would break every one of them, while a person at a terminal sees
+        # both streams either way.
+        sys.stderr.write(_update_notice(argv))
         return 0
     if "--help" in argv or "-h" in argv:
         print(USAGE, end="")

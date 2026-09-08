@@ -1,10 +1,31 @@
+import ast
 import os
+import pathlib
 import threading
 
 import pytest
 
 from conftest import posix_only
 from shambles import login, providers
+
+#: Modules that can put bytes on a wire. None of them belongs in a tool whose
+#: security argument is that it only moves files around on one machine.
+NETWORK_MODULES = {"socket", "urllib", "requests", "http", "ssl", "ftplib",
+                   "telnetlib", "smtplib", "asyncio"}
+
+#: The one exemption, and the single module it buys. Opt-in update checks
+#: (off by default) need one GitHub Releases lookup, and it lives in exactly
+#: one file so that reviewing the network surface means reading one file.
+#: Paths are relative to the repository root so the scan does not depend on
+#: where pytest was started from.
+ALLOWED_NETWORK_IMPORTS = {
+    pathlib.Path("shambles/update_check.py"): {"urllib"},
+}
+
+#: Found through an imported module rather than assumed to sit under the
+#: working directory, so the scan covers the package the tests actually ran
+#: against wherever pytest was started from.
+PACKAGE_DIR = pathlib.Path(login.__file__).resolve().parent
 
 
 @pytest.fixture
@@ -109,19 +130,21 @@ def test_the_error_reads_as_prose_not_a_traceback(codex, monkeypatch):
     assert "Shambles does not sign you in itself" in message
 
 
-def test_the_package_imports_no_networking_module():
-    """The README's load-bearing security claim, asserted mechanically.
+def _networking_imports(package_dir, allowed):
+    """Every networking import under ``package_dir`` the allowlist does not buy.
 
-    Task 9 adds subprocess, which DD-2 permits. It does not add network
-    reach, and that is the half the security argument rests on.
+    ``allowed`` maps a repository-relative file to the module names that one
+    file may import; anything else it imports still counts as an offence, so
+    the exemption cannot quietly widen into "and whatever else it likes".
     """
-    import ast
-    import pathlib
+    package_dir = pathlib.Path(package_dir).resolve()
+    exempt = {(package_dir.parent / path).resolve(): names
+              for path, names in allowed.items()}
 
-    banned = {"socket", "urllib", "requests", "http", "ssl", "ftplib",
-              "telnetlib", "smtplib", "asyncio"}
     offenders = []
-    for source in pathlib.Path("shambles").rglob("*.py"):
+    for source in sorted(package_dir.rglob("*.py")):
+        permitted = exempt.get(source.resolve(), set())
+        named = source.relative_to(package_dir.parent).as_posix()
         tree = ast.parse(source.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             names = []
@@ -129,10 +152,53 @@ def test_the_package_imports_no_networking_module():
                 names = [alias.name.split(".")[0] for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names = [node.module.split(".")[0]]
-            offenders += [f"{source}:{node.lineno} imports {name}"
-                          for name in names if name in banned]
+            offenders += [
+                f"{named}:{node.lineno} imports {name}"
+                for name in names
+                if name in NETWORK_MODULES and name not in permitted]
 
+    return offenders
+
+
+def test_the_package_imports_no_networking_module():
+    """The README's load-bearing security claim, asserted mechanically.
+
+    Task 9 adds subprocess, which DD-2 permits. It does not add network
+    reach, and that is the half the security argument rests on. The one
+    exemption is the opt-in update check; see
+    :data:`ALLOWED_NETWORK_IMPORTS` and the test below it.
+    """
+    offenders = _networking_imports(PACKAGE_DIR, ALLOWED_NETWORK_IMPORTS)
     assert offenders == [], "\n".join(offenders)
+
+
+def test_the_networking_exemption_is_one_file_and_one_module():
+    """Stated as its own assertion so widening it is a visible edit here,
+    not a quiet addition to a dict somebody skims past."""
+    assert ALLOWED_NETWORK_IMPORTS == {
+        pathlib.Path("shambles/update_check.py"): {"urllib"}}
+
+
+def test_the_networking_scan_still_catches_everything_else(tmp_path):
+    """A non-vacuous check on the scan above.
+
+    An allowlist is only worth having if the thing it carves an exception out
+    of still bites, so this runs the same scan over a fake package: the
+    exempted file may import ``urllib`` and nothing more, and its neighbour
+    may import neither.
+    """
+    package = tmp_path / "fake_pkg"
+    package.mkdir()
+    (package / "exempt.py").write_text(
+        "import urllib.request\nimport socket\n", encoding="utf-8")
+    (package / "ordinary.py").write_text("import urllib.request\n",
+                                         encoding="utf-8")
+
+    offenders = _networking_imports(
+        package, {pathlib.Path("fake_pkg/exempt.py"): {"urllib"}})
+
+    assert offenders == ["fake_pkg/exempt.py:2 imports socket",
+                         "fake_pkg/ordinary.py:1 imports urllib"]
 
 
 def _imported_names(source_path):
