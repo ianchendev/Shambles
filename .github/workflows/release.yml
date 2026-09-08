@@ -17,6 +17,20 @@ jobs:
           - os: ubuntu-latest
             artifact: shambles-linux-x86_64
             built: dist/shambles
+          - os: ubuntu-24.04-arm
+            artifact: shambles-linux-arm64
+            built: dist/shambles
+          # macos-15-intel is the last x86_64 macOS image GitHub offers (the
+          # macos-13 label was retired in December 2025) and it disappears in
+          # August 2027. macos-15 is Apple Silicon, so the two labels are what
+          # produce the two different macOS artifacts -- PyInstaller builds for
+          # the architecture it runs on and does not cross-compile.
+          - os: macos-15-intel
+            artifact: shambles-macos-x86_64
+            built: dist/shambles
+          - os: macos-15
+            artifact: shambles-macos-arm64
+            built: dist/shambles
           - os: windows-latest
             artifact: shambles-windows-x64.exe
             built: dist/shambles.exe
@@ -40,18 +54,27 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a python -m pytest
 
+      # No xvfb on macOS: Tk talks to the window server, not X11, and the GUI
+      # tests already skip themselves on a TclError when no display answers.
+      - name: Test (macOS)
+        if: runner.os == 'macOS'
+        run: python -m pytest
+
       - name: Test (Windows)
         if: runner.os == 'Windows'
         run: python -m pytest
 
       # --windowed only on Windows: it suppresses the console window for a GUI
-      # app there. On Linux it would swallow the --version and --help output.
+      # app there. On Linux it would swallow the --version and --help output,
+      # and on macOS it would produce a .app bundle instead of the single
+      # executable the installers download.
       #
       # --add-data is not optional. Provider specs are package data, and
       # PyInstaller bundles only what it can see imported. Without this the
       # binary builds green, passes a --version smoke test, and then fails at
-      # runtime the moment it tries to load a provider. The separator differs
-      # by platform, which is why the two lines cannot be merged.
+      # runtime the moment it tries to load a provider. macOS takes the same
+      # ':' separator as Linux, so those runners share a step; only Windows'
+      # ';' forces a second copy of the command.
       #
       # The second --add-data does the same for the TUI's stylesheet:
       # ShamblesTUI.CSS_PATH = "theme.tcss" is resolved and read from disk by
@@ -67,8 +90,8 @@ jobs:
       # submodule loading (textual.widgets._input, _list_view, etc.) -- i.e.
       # the binary builds and starts but crashes on first use of some widget
       # -- try adding --collect-all textual before assuming it's a code bug.
-      - name: Build (Linux)
-        if: runner.os == 'Linux'
+      - name: Build (Linux, macOS)
+        if: runner.os != 'Windows'
         run: pyinstaller --onefile --name shambles
              --add-data "shambles/providers/*.json:shambles/providers"
              --add-data "shambles/app/tui/*.tcss:shambles/app/tui"
@@ -81,12 +104,12 @@ jobs:
              --add-data "shambles/app/tui/*.tcss;shambles/app/tui"
              shambles/__main__.py
 
-      # Both platforms, always. A Linux-only smoke test let a broken Windows
+      # Every platform, always. A Linux-only smoke test let a broken Windows
       # binary through once already: PyInstaller runs the entry file as a
       # top-level script, so a relative import inside it killed the bundle on
       # startup. Only the Linux job noticed.
-      - name: Smoke-test the binary (Linux)
-        if: runner.os == 'Linux'
+      - name: Smoke-test the binary (Linux, macOS)
+        if: runner.os != 'Windows'
         run: |
           ./dist/shambles --version
           ./dist/shambles --help
@@ -129,7 +152,25 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: |
-            Download the binary for your platform below, or install with pipx:
+            Install with one command — Linux, macOS, or WSL:
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash
+
+            # or pin this release
+            curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s ${{ github.ref_name }}
+            ```
+
+            Windows PowerShell:
+
+            ```powershell
+            irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex
+            ```
+
+            The scripts download the binary for your OS and architecture from
+            the latest release (or the tag you pin) into `~/.local/bin`, or
+            `%LOCALAPPDATA%\Shambles` on Windows — no sudo, no admin. You can
+            also grab a binary from the asset list below, or install with pipx:
 
             ```bash
             pipx install git+https://github.com/ianchendev/Shambles
@@ -148,8 +189,10 @@ jobs:
             nobody has confirmed a switch takes effect. See
             `docs/token-storage.md`.
 
-            **macOS is not supported.** Credentials live in the Keychain there,
-            so there is no file to swap.
+            **macOS account switching is not supported.** There are macOS
+            binaries below now and the installer will fetch one, but installing
+            is not switching support: credentials live in the Keychain there,
+            so there is no file for Shambles to swap.
 
             **Upgrading from 1.x?** First launch merges your split session
             history back into one shared `~/.claude`, automatically and without
