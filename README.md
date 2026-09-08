@@ -59,18 +59,47 @@ allowance.
 
 ## Install
 
-**Recommended — pipx.** No signing warnings, works identically on Linux and
-inside WSL:
+**One command.** The script picks the binary for your OS and architecture out
+of the latest [Release](https://github.com/ianchendev/Shambles/releases) and
+puts it in `~/.local/bin` — no sudo, nothing to build:
 
 ```bash
-sudo apt install python3-tk                              # the only dependency
+curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash
+
+# or pin a release
+curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.0.0
+```
+
+Windows PowerShell, which installs into `%LOCALAPPDATA%\Shambles` and adds
+that directory to your user PATH:
+
+```powershell
+irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex
+```
+
+Two things worth knowing before you paste either one. The binaries are
+**unsigned**, so Windows SmartScreen warns on first run — that is what an
+unsigned publisher looks like. And **a successful install is not a working
+switch**: the script fetches whatever binary matches your machine, which says
+nothing about whether Shambles can swap an account there. The table below is
+the part that says.
+
+`install.sh` also knows the macOS and arm64-Linux asset names, but those
+binaries are built for the first time by the *next* tagged release; against
+the current latest release it gets a 404 there. Use pipx on those platforms
+until then.
+
+**Or pipx**, which involves no unsigned binary and works identically on Linux
+and inside WSL:
+
+```bash
+sudo apt install python3-tk                              # only for the Tk window
 pipx install git+https://github.com/ianchendev/Shambles
 shambles
 ```
 
 **Or download a binary** from [Releases](https://github.com/ianchendev/Shambles/releases)
-— a single file, nothing to install. See the platform notes below first; the
-binaries are unsigned, so Windows SmartScreen will warn on first run.
+yourself — a single file, nothing to install. Same unsigned caveat as above.
 
 **Or from a checkout:**
 
@@ -83,6 +112,13 @@ python3 shambles.py          # or: python3 -m shambles
 3.8 — Ubuntu 20.04 among them — name the interpreter instead
 (`python3.12 shambles.py`); running it on an older one stops with a message
 saying so rather than a syntax error from somewhere in the package.
+
+**Not npm, yet.** Shambles is not published to npm, so `npm install -g
+shambles` fails today. A launcher package is designed and planned
+([plan](docs/superpowers/plans/2026-09-06-npm-distribution.md)) but it stays
+unpublished until the macOS and Windows credential-store work below is
+resolved — shipping a one-line install to platforms where switching does not
+work is exactly the thing this README is trying not to do.
 
 ### Before you install, check it applies to you
 
@@ -316,12 +352,50 @@ that animation-skipping part on its own, as an alternative for scripts and
 session managers that set environment variables more easily than flags, and
 `--no-motion` does it as a flag, accepted before or after the subcommand.
 
-### No update checks
+## Update checks
 
-Same as the rest of Shambles (see [Is this safe?](#is-this-safe) below): the
-terminal interface makes no network call of any kind, so there is nothing in
-it that checks for a newer version, phones home, or reports usage. The `?`
-help screen says so in the app itself.
+**Off by default**, and off means off: with the setting unset, no interface —
+terminal, Tk window, or `shambles switch` — makes a network call of any kind.
+Nothing here reports usage or phones home under any setting. The `?` help
+screen says so in the app itself.
+
+If you would rather hear about new releases:
+
+```bash
+shambles config set update.check true     # turn it on
+shambles config get update.check          # prints true or false
+shambles config set update.check false    # turn it off again
+```
+
+What that signs you up for, in full: at most one unauthenticated `GET` per
+day to the public GitHub Releases endpoint for this repository, from which
+Shambles reads one field — the tag of the latest release. No token, no
+account, no machine ID and no query string go with it, so nothing in the
+request says who you are. The only thing kept is
+`~/.shambles/update-cache.json`, holding that tag and the time of the lookup;
+no account name, email or token goes near it. A failed lookup still counts as
+the day's attempt, so a machine that is offline is not made to sit through a
+connection timeout every time you start the app, and a lookup that fails for
+any reason at all — rate limit, captive portal, DNS, an unorderable tag —
+produces silence rather than an error.
+
+**It never downloads or replaces anything.** The entire feature is one
+sentence saying a newer version exists and how to get it; fetching it stays
+your decision.
+
+Where that sentence appears:
+
+- **In the terminal interface** — one line at the bottom of the dashboard,
+  and `u` dismisses it for the rest of the session. The lookup runs on a
+  background thread after the first frame is drawn, so a slow network cannot
+  hold up the interface, and quitting does not wait for it.
+- **On `shambles --version`** — printed to stderr, and only from the cache an
+  earlier run already filled. `--version` itself never makes a request, which
+  keeps it instant and keeps its stdout exactly one line for the scripts that
+  read it.
+
+The Tk window shows no notice and performs no lookup, whatever the setting
+says.
 
 ## If CLAUDE_CONFIG_DIR is set
 
@@ -485,12 +559,16 @@ Two things worth understanding:
 
 **It is entirely local and cannot touch your Claude or OpenAI account.**
 
-**No network.** There is no `socket`, no `urllib`, no `requests`. It cannot
-reach Anthropic's or OpenAI's servers, so it cannot affect your login,
-billing, rate limits or organisation membership. It only moves bytes between
-directories on your own disk. That is not a promise — `tests/test_login.py`
-walks the AST of every module in the package and fails on any networking
-import.
+**No network, with one exception you have to switch on yourself.** Shambles
+cannot reach Anthropic's or OpenAI's servers at all, so it cannot affect your
+login, billing, rate limits or organisation membership; it only moves bytes
+between directories on your own disk. The single module that may open a
+socket is `shambles/update_check.py`, which asks GitHub for the latest
+release tag and runs only once you have enabled
+[update checks](#update-checks) — see that section for exactly what the
+request contains. That division is not a promise: `tests/test_login.py` walks
+the AST of every module in the package, fails on any networking import, and
+permits `urllib` in that one file and nowhere else.
 
 **It executes exactly one kind of external program:** the vendor's own login
 command — `claude auth login` or `codex login` — and only when you click Add
@@ -593,8 +671,10 @@ writes your real `~/.claude`.
 
 CI runs the suite on Linux and Windows across Python 3.10 and 3.12, under
 `xvfb` so the GUI render and shutdown tests actually execute rather than skip.
-Tagging `v*` builds unsigned single-file binaries for Linux and Windows and
-attaches them to a GitHub Release — but only after the suite passes on both.
+Tagging `v*` builds unsigned single-file binaries for Linux (x86_64 and
+arm64), macOS (Intel and Apple Silicon) and Windows x64, and attaches them to
+a GitHub Release — but each binary is built only after the suite passes on
+that platform, and none is published unless all five build.
 
 The load-bearing test is
 `tests/test_switch.py::test_credentials_survive_a_round_trip_unmodified` — it

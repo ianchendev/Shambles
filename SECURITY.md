@@ -29,10 +29,23 @@ Useful context for judging impact. Fuller detail in
 - **Reads and writes OAuth credentials.** `~/.claude/.credentials.json` and
   per-profile copies under `~/.claude-profiles/`. Files are written `0600`,
   directories `0700`, applied to a temp file before an atomic rename so a
-  credential is never briefly world-readable.
-- **Never transmits anything.** There are no network calls in the codebase, and
-  no runtime dependencies. Tokens are copied byte-for-byte and never parsed
-  beyond reading an expiry timestamp.
+  credential is never briefly world-readable. Tokens are copied byte-for-byte
+  and never parsed beyond reading an expiry timestamp.
+- **Transmits nothing unless you turn on update checks.** One module in the
+  package, `shambles/update_check.py`, may open a socket, and only when
+  `update.check` is explicitly enabled (`shambles config set update.check
+  true`; the default is off). Enabled, it makes at most one unauthenticated
+  `GET` per day to the public GitHub Releases endpoint — no token, no account,
+  no machine ID, no query string — and keeps a release tag and a timestamp in
+  `~/.shambles/update-cache.json`. It never downloads a release and never
+  replaces the running program. Nothing else in the codebase makes a network
+  call of any kind, and no credential or config path is ever part of a
+  request.
+- **That boundary is mechanically enforced.**
+  `tests/test_login.py::test_the_package_imports_no_networking_module`
+  AST-scans every module in the package and permits a networking import in
+  exactly one file, the one named above. Widening it means editing an
+  allowlist that a second test asserts the contents of.
 - **Never logs a token.** Not truncated, not masked. No token reaches stdout,
   a log file, or a dialog.
 - **Rewrites two keys in `~/.claude.json`** — `oauthAccount` and

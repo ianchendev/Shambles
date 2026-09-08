@@ -17,7 +17,8 @@
 - npm, Python, platform-package, and release versions must match exactly.
 - The npm packages contain no `preinstall`, `install`, or `postinstall` scripts.
 - The launcher never reads `~/.shambles`, `~/.claude`, or `~/.codex`.
-- Shambles performs no version check, update, telemetry, or outbound request.
+- The **npm launcher** performs no version check; the Python app may check
+  GitHub Releases only when `update.check` is enabled.
 - Publish platform packages before publishing the launcher.
 - Package names remain configurable until npm scope ownership is confirmed.
 - Windows stays experimental until live Credential Manager validation succeeds.
