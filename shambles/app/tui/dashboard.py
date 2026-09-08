@@ -10,11 +10,12 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from ..snapshot import Account, Group, Snapshot
-from .brand import BrandVariant, variant_for
+from .brand import BrandVariant, LOCKUP_MIN_HEIGHT, variant_for
 from .widgets import AccountDetails, AccountList
 
 
 MINIMUM_HEIGHT = 16
+BANNER_MIN_HEIGHT = LOCKUP_MIN_HEIGHT
 
 
 class Dashboard(Widget):
