@@ -299,6 +299,106 @@ def test_callers_get_the_real_lookup_without_having_to_wire_it_up():
     assert default is update_check.fetch_latest_tag
 
 
+# -- the cache-only read ----------------------------------------------------
+#
+# `--version` cannot afford `check_for_update`. TIMEOUT_S bounds one socket
+# operation, not the whole lookup, so DNS plus connect plus read can outlast
+# any single timeout -- and the one command that must answer instantly is the
+# one people run to ask whether the install worked. `notice_from_cache` is
+# that command's whole share of the feature: whatever some earlier run left
+# on disk, and never a byte more.
+
+
+def test_a_cache_only_read_repeats_what_the_last_lookup_found(paths):
+    settings.set_update_check(paths, True)
+    check_for_update(paths, current_version="2.0.0", now_s=1_000,
+                     fetch=answering("v2.1.0"))
+
+    notice = update_check.notice_from_cache(paths, current_version="2.0.0")
+
+    assert notice == (
+        "Shambles 2.1.0 is available (you have 2.0.0). Update with: "
+        "npm i -g shambles@latest — or re-run the install script.")
+
+
+def test_a_cache_only_read_is_silent_when_checks_are_off(paths):
+    """A cached tag is not a licence to keep talking -- the same rule
+    :func:`check_for_update` follows, applied to the offline path too."""
+    settings.set_update_check(paths, True)
+    check_for_update(paths, current_version="2.0.0", now_s=1_000,
+                     fetch=answering("v2.1.0"))
+    settings.set_update_check(paths, False)
+
+    assert update_check.notice_from_cache(paths, current_version="2.0.0") is None
+
+
+def test_a_cache_only_read_is_silent_with_nothing_cached(paths):
+    settings.set_update_check(paths, True)
+    assert update_check.notice_from_cache(paths, current_version="2.0.0") is None
+
+
+@pytest.mark.parametrize("cached", ["2.0.0", "1.9.9", "nightly", "2.1.0-rc1"])
+def test_a_cache_only_read_is_silent_unless_the_tag_is_newer(paths, cached):
+    settings.set_update_check(paths, True)
+    paths.ensure_store()
+    (paths.library_dir / "update-cache.json").write_text(
+        json.dumps({"checked_at": 1_000, "latest": cached}), encoding="utf-8")
+
+    assert update_check.notice_from_cache(paths, current_version="2.0.0") is None
+
+
+def test_a_cache_only_read_still_speaks_from_a_stale_cache(paths):
+    """Age decides whether it is time to look again, which this path never
+    does. A tag from last week is still the newest release anybody here knows
+    about, and going quiet on it would make the notice flicker in and out with
+    whatever ran most recently."""
+    settings.set_update_check(paths, True)
+    paths.ensure_store()
+    (paths.library_dir / "update-cache.json").write_text(
+        json.dumps({"checked_at": 1_000, "latest": "2.1.0"}), encoding="utf-8")
+
+    notice = update_check.notice_from_cache(paths, current_version="2.0.0")
+
+    assert notice is not None and "2.1.0" in notice
+
+
+def test_a_cache_only_read_writes_nothing_at_all(paths):
+    """Restamping here would spend the day's lookup budget on a read, and
+    creating the store would leave a directory behind for a command that was
+    only ever asked to print a number."""
+    settings.set_update_check(paths, True)
+    before = paths.settings_path.read_bytes()
+
+    update_check.notice_from_cache(paths, current_version="2.0.0")
+
+    assert not (paths.library_dir / "update-cache.json").exists()
+    assert paths.settings_path.read_bytes() == before
+
+
+def test_a_cache_only_read_survives_an_unreadable_cache(paths):
+    settings.set_update_check(paths, True)
+    paths.ensure_store()
+    (paths.library_dir / "update-cache.json").write_text("{{{", encoding="utf-8")
+
+    assert update_check.notice_from_cache(paths, current_version="2.0.0") is None
+
+
+def test_the_cache_only_read_takes_no_fetch_because_it_cannot_use_one(paths):
+    """Stated as a signature assertion rather than a behavioural one: there is
+    no argument to pass a network through, so no future caller can hand this
+    path one by accident."""
+    parameters = inspect.signature(update_check.notice_from_cache).parameters
+    assert "fetch" not in parameters
+
+
+def test_one_socket_operation_is_given_less_than_a_couple_of_seconds():
+    """``TIMEOUT_S`` bounds each of DNS, connect and read separately, so the
+    worst case a caller can be made to wait is a small multiple of it. Both
+    callers are now off the critical path, but a worker still has to end, and
+    an endpoint that cannot answer inside this has spent the day's attempt."""
+    assert update_check.TIMEOUT_S <= 2.0
+
+
 def test_importing_the_module_does_not_import_urllib():
     """``urllib.request`` is imported inside the fetch function's body, not at
     module scope, so ``import shambles`` -- which the GUI, the TUI and every

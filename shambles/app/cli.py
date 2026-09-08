@@ -21,6 +21,7 @@ import json
 import sys
 
 from .. import providers as registry
+from .. import settings
 from ..paths import Paths
 from . import snapshot as snapshot_mod
 from .launch import LaunchRequest, replace_process
@@ -29,6 +30,33 @@ from .service import ShamblesService
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_USAGE = 2
+
+#: Every setting ``config`` will read or write. One so far, and the list is
+#: printed verbatim when somebody names a key that is not in it, so a typo
+#: gets told what to type instead of what went wrong.
+CONFIG_KEYS = (settings.UPDATE_CHECK,)
+
+#: What ``true`` and ``false`` are allowed to look like: exactly those two
+#: words. :func:`shambles.settings.update_check_enabled` counts only a JSON
+#: ``true`` as on, so accepting ``yes`` or ``1`` here would write a file that
+#: reads back as off -- the CLI would report success for a switch it had not
+#: thrown.
+CONFIG_BOOLEANS = {"true": True, "false": False}
+
+CONFIG_USAGE = """\
+shambles config get update.check   print whether update checks are on
+shambles config set update.check true|false
+"""
+
+#: Said once, at the moment somebody turns the network on. Naming who is
+#: asked, how often and what is sent is the whole difference between an opt-in
+#: and a surprise.
+UPDATE_CHECK_ON = (
+    "Update checks are on. Shambles will ask GitHub for the latest release "
+    "tag at most once a day, and sends nothing about you or your accounts."
+)
+
+UPDATE_CHECK_OFF = "Update checks are off. Shambles will not contact GitHub."
 
 
 def _paths(args) -> Paths:
@@ -132,6 +160,46 @@ def cmd_switch(args) -> int:
     return EXIT_OK
 
 
+def cmd_config(args) -> int:
+    """``config`` with no action is not a command; say what the two are."""
+    sys.stderr.write(CONFIG_USAGE)
+    return EXIT_USAGE
+
+
+def cmd_config_get(args) -> int:
+    if args.key not in CONFIG_KEYS:
+        return _unknown_key(args.key)
+    print("true" if settings.update_check_enabled(_paths(args)) else "false")
+    return EXIT_OK
+
+
+def cmd_config_set(args) -> int:
+    """Write one setting, and say what turning it on signed the user up for.
+
+    The value is checked before anything is written, so a refused command
+    leaves the file exactly as it found it -- including not creating one.
+    """
+    if args.key not in CONFIG_KEYS:
+        return _unknown_key(args.key)
+    if args.value not in CONFIG_BOOLEANS:
+        sys.stderr.write(
+            f"{args.value!r} is not a value for {args.key}: "
+            "write true or false.\n")
+        return EXIT_USAGE
+
+    enabled = CONFIG_BOOLEANS[args.value]
+    settings.set_update_check(_paths(args), enabled)
+    print(UPDATE_CHECK_ON if enabled else UPDATE_CHECK_OFF)
+    return EXIT_OK
+
+
+def _unknown_key(key: str) -> int:
+    """Name the settings that do exist, rather than the one that does not."""
+    sys.stderr.write(f"Unknown setting {key!r}. Shambles has: "
+                     + ", ".join(CONFIG_KEYS) + ".\n")
+    return EXIT_USAGE
+
+
 def _fail(args, code: str, message: str) -> int:
     """Report a failure on the channel the caller asked for.
 
@@ -187,6 +255,26 @@ def build_parser() -> argparse.ArgumentParser:
     switching.add_argument("--json", action="store_true",
                            help="emit the machine-readable result")
     switching.set_defaults(func=cmd_switch)
+
+    # `config` carries a func of its own so a bare `shambles config` explains
+    # its two actions rather than printing the whole program's help; parsing a
+    # get/set below replaces it, because a subparser's defaults are applied
+    # after its parent's.
+    configuring = sub.add_parser("config", parents=[common],
+                                 help="read or change a setting")
+    configuring.set_defaults(func=cmd_config)
+    actions = configuring.add_subparsers(dest="action")
+
+    reading = actions.add_parser("get", parents=[common],
+                                 help="print a setting's current value")
+    reading.add_argument("key", help="update.check")
+    reading.set_defaults(func=cmd_config_get)
+
+    writing = actions.add_parser("set", parents=[common],
+                                 help="change a setting")
+    writing.add_argument("key", help="update.check")
+    writing.add_argument("value", help="true or false")
+    writing.set_defaults(func=cmd_config_set)
 
     return parser
 
