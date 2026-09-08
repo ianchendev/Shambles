@@ -14,24 +14,25 @@ import sys
 from shambles import __version__
 
 USAGE = """\
-shambles — switch between Claude Code accounts
+shambles — switch between Claude Code and Codex accounts
 
-  shambles              open the terminal interface on an interactive terminal
-  shambles tui          explicitly open the terminal interface
-  shambles gui          open the window instead
-  shambles list         list accounts
-  shambles switch ...   switch accounts without opening an interface
-  shambles --no-motion  disable nonessential terminal motion
-  shambles --version    print the version
-  shambles --help       show this message
+  shambles                     open the terminal interface, on a terminal
+  shambles tui                 open the terminal interface explicitly
+  shambles gui                 open the window instead
+  shambles list                list every account and its state
+  shambles list --json         the same thing, machine-readable
+  shambles switch claude Work  switch without opening an interface
+  shambles --no-motion         disable nonessential terminal motion
+  shambles --version           print the version
+  shambles --help              show this message
 
   shambles config get update.check         are update checks on?
   shambles config set update.check true    ask GitHub for the latest release
                                            tag, at most once a day (off by
                                            default; sends nothing about you)
 
-Profiles live in ~/.claude-profiles/. The active one is whichever
-~/.claude currently points at.
+Profiles live in ~/.shambles/<provider>/<Name>/, and the active one is named
+in ~/.shambles/<provider>/active.
 """
 
 #: Flags that do not, by themselves, stop a bare invocation from being
@@ -49,6 +50,20 @@ Shambles needs Tkinter, which is not installed.
 
 On Windows and macOS, Tkinter ships with Python — if you see this there,
 reinstall Python from python.org rather than using the Store build.
+"""
+
+TEXTUAL_MISSING = """\
+Shambles needs Textual for the terminal interface, and it is not installed.
+
+Running from a clone? Install the package, which brings Textual with it:
+
+  python3 -m venv .venv
+  .venv/bin/pip install -e .
+  .venv/bin/shambles
+
+Otherwise: pip install textual
+
+The window does not need it — try `shambles gui` instead.
 """
 
 

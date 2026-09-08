@@ -125,6 +125,18 @@ def test_a_broken_resets_timestamp_does_not_raise():
     assert usage.parse(blob).bars[0].resets_label() is None
 
 
+def test_a_resets_timestamp_of_the_wrong_type_does_not_raise():
+    """The cache is Claude Code's file, so its shape is not ours to trust.
+
+    An epoch number where a string belongs used to escape as a TypeError and
+    take down every caller, `shambles list` included.
+    """
+    blob = {"utilization": {"limits": [
+        {"kind": "session", "percent": 1, "severity": "normal",
+         "resets_at": 1788000000000}]}}
+    assert usage.parse(blob).bars[0].resets_label() is None
+
+
 # ---- bar colour: an explicit threshold, matching the extension ----------
 
 def test_eighty_percent_and_above_is_red():

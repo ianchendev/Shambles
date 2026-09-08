@@ -1,5 +1,6 @@
 """The packaging metadata has to stay in step with the code it ships."""
 
+import argparse
 import os
 import subprocess
 import sys
@@ -130,6 +131,43 @@ def test_version_does_not_claim_success_on_an_unsupported_interpreter():
     from shambles.__main__ import main
 
     assert main(["--version"]) == 0  # on this interpreter, which is supported
+
+
+def test_a_missing_textual_is_named_rather_than_traced(monkeypatch, capsys):
+    """Textual is a dependency, so a clone that was never installed has none.
+
+    The interpreter is new enough, Tkinter is beside the point, and the only
+    thing wrong is one uninstalled package -- which a traceback out of an
+    import three modules deep does not say. Tk already has TK_MISSING for the
+    same situation; this is its counterpart.
+    """
+    from shambles.app import cli
+
+    def no_textual():
+        raise ModuleNotFoundError("No module named 'textual'", name="textual")
+
+    monkeypatch.setattr(cli, "_tui_entry", no_textual)
+
+    assert cli.cmd_tui(argparse.Namespace()) == cli.EXIT_FAILED
+    printed = capsys.readouterr().err
+    assert "textual" in printed.lower(), "did not name the missing package"
+    assert "install" in printed.lower(), "did not say how to fix it"
+    assert "Traceback" not in printed
+
+
+def test_an_unrelated_import_failure_is_not_blamed_on_textual(monkeypatch):
+    """A broken import inside the TUI must not be reported as a missing
+    dependency -- that sends people to reinstall a package they already have.
+    """
+    from shambles.app import cli
+
+    def other_failure():
+        raise ModuleNotFoundError("No module named 'nope'", name="nope")
+
+    monkeypatch.setattr(cli, "_tui_entry", other_failure)
+
+    with pytest.raises(ModuleNotFoundError):
+        cli.cmd_tui(argparse.Namespace())
 
 
 @pytest.mark.skipif(not os.path.exists("/usr/bin/python3"),

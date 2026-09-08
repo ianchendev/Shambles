@@ -90,7 +90,7 @@ class Bar:
             return None
         try:
             when = datetime.datetime.fromisoformat(self.resets_at)
-        except ValueError:
+        except (TypeError, ValueError):
             return None
         return when.astimezone().strftime("%a %d %b, %H:%M")
 
