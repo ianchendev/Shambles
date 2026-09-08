@@ -20,7 +20,7 @@ from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
 from ..snapshot import Snapshot
 from .brand import header_text
 from .dashboard import Dashboard, MINIMUM_HEIGHT
-from .overlays import ConfirmAction, ResultScreen
+from .overlays import ConfirmAction, ResultScreen, overlay_panel_classes
 from .widgets import AccountList
 from .workflows import AccountMenu, AddAccountScreen, LoginProgress, NameInputScreen
 
@@ -112,7 +112,7 @@ class HelpScreen(ModalScreen[None]):
         super().__init__(id="help")
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(classes="overlay-panel"):
+        with VerticalScroll(classes=overlay_panel_classes(self)):
             yield Static("SHAMBLES help", classes="overlay-title", markup=False)
             yield Static(
                 "\n"

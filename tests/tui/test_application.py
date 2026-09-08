@@ -533,11 +533,25 @@ async def test_add_prompts_for_a_name_and_creates_an_empty_profile(service):
     async with app.run_test() as pilot:
         await pilot.press("a")  # top-level
         assert app.screen.id == "add-account"
+        await pilot.press("tab")  # name Input
         await pilot.press(*"fresh", "enter")
         await pilot.pause()
         assert service.add_calls == [("claude", "fresh")]
         assert app.screen.id == "result"
         assert "Added fresh." in screen_text(app)
+
+
+async def test_add_j_changes_the_selected_provider(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        assert app.screen.id == "add-account"
+        await pilot.press("j")
+        assert app.screen.query_one("#add-providers").highlighted == 1
+        assert app.screen.query_one(Input).value == ""
+        await pilot.press("tab", *"fresh", "enter")
+        await pilot.pause()
+        assert service.add_calls == [("codex", "fresh")]
 
 
 async def test_menu_a_uses_the_same_add_overlay(service):
@@ -813,6 +827,16 @@ async def test_help_lists_lifecycle_shortcuts(service):
         assert "Add" in help_text
         assert "Eject" in help_text
         assert "skip welcome motion" not in help_text
+
+
+async def test_overlays_use_ascii_borders_when_unicode_is_disabled(service):
+    app = ShamblesTUI(service, unicode=False)
+    async with app.run_test() as pilot:
+        await pilot.press("?")
+        assert "ascii" in app.screen.query_one(".overlay-panel").classes
+        await pilot.press("escape")
+        await pilot.press("a")
+        assert "ascii" in app.screen.query_one(".overlay-panel").classes
 
 
 @pytest.mark.parametrize("keys", [("j", "k"), ("down", "up")])

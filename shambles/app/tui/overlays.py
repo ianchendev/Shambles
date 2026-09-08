@@ -9,6 +9,14 @@ from textual.widgets import Static
 from ..service import ActionPlan, ActionResult
 
 
+def overlay_panel_classes(node, *extra: str) -> str:
+    """Gold overlay chrome, with ASCII borders when the app is not unicode."""
+    classes = ["overlay-panel", *extra]
+    if not getattr(node.app, "unicode", True):
+        classes.append("ascii")
+    return " ".join(classes)
+
+
 class ConfirmAction(ModalScreen[bool]):
     """Show the service's prompt and warnings before accepting a plan."""
 
@@ -26,7 +34,7 @@ class ConfirmAction(ModalScreen[bool]):
         self.plan = plan
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(classes="overlay-panel danger"):
+        with VerticalScroll(classes=overlay_panel_classes(self, "danger")):
             yield Static(self.plan.prompt, classes="overlay-title", markup=False)
             for warning in self.plan.warnings:
                 yield Static(warning, markup=False)
@@ -65,10 +73,8 @@ class ResultScreen(ModalScreen[str | None]):
         return self.can_launch if action == "launch" else True
 
     def compose(self) -> ComposeResult:
-        classes = "overlay-panel"
-        if not self.result.ok:
-            classes += " danger"
-        with VerticalScroll(classes=classes):
+        extra = ("danger",) if not self.result.ok else ()
+        with VerticalScroll(classes=overlay_panel_classes(self, *extra)):
             if self.result.summary:
                 yield Static(self.result.summary, classes="overlay-title", markup=False)
             if self.result.error is not None:

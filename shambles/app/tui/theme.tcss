@@ -149,6 +149,21 @@ Dashboard.too-short #terminal-too-small {
     border: tall #e07a5f;
 }
 
+.overlay-panel.ascii {
+    border: ascii #d9a441;
+}
+
+.overlay-panel.danger.ascii {
+    border: ascii #e07a5f;
+}
+
+#add-providers {
+    height: auto;
+    background: #11182b;
+    color: #f4f1de;
+    padding: 0;
+}
+
 .overlay-panel Static {
     height: auto;
 }
