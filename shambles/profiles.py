@@ -73,7 +73,7 @@ class Profile:
     usage: "usage_mod.Usage" = usage_mod.EMPTY
     #: Whether this provider exposes usage figures at all. Distinguishes "none
     #: recorded yet", which is worth explaining, from "never will be", which is
-    #: not -- Codex publishes nothing readable.
+    #: not -- Claude's companion cache and Codex session logs are the sources.
     publishes_usage: bool = False
 
 
@@ -112,9 +112,18 @@ def resolve_usage(paths, provider, name: str, active_name: str | None):
     which the UI renders with its age attached -- see :mod:`shambles.usage`
     for why a stashed figure is never trusted silently.
 
-    Only Claude publishes anything readable; every other provider returns
-    empty, which the card treats as a supported state rather than a gap.
+    Claude publishes a companion cache. Codex writes the same two windows
+    (5h / week) onto session logs under its config dir. Every other provider
+    returns empty, which the card treats as a supported state rather than a gap.
     """
+    if provider.id == "codex":
+        if active_name is None or name != active_name:
+            return usage_mod.EMPTY
+        from .providers import spec as specmod
+        return usage_mod.read_codex_usage(
+            specmod.config_dir(provider.spec, home=paths.home,
+                               env=getattr(provider, "env", None)))
+
     companion = provider.spec.get("companion")
     if not companion:
         return usage_mod.EMPTY
@@ -185,7 +194,7 @@ def discover(paths, provider, active_name: str | None, now_ms: int, *,
                                      active=is_active, now_ms=now_ms,
                                      platform=platform),
             usage=resolve_usage(paths, provider, name, active_name),
-            publishes_usage=bool(provider.spec.get("companion")),
+            publishes_usage=bool(provider.spec.get("companion")) or provider.id == "codex",
         ))
     return found
 

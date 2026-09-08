@@ -70,8 +70,30 @@ def _service(args):
                            platform=sys.platform)
 
 
-def cmd_tui(args) -> int:
+def _tui_entry():
+    """``run_tui``, imported through a function so its absence is catchable.
+
+    Textual is a declared dependency, so this fails only for a clone that was
+    never installed -- which is exactly the case worth a sentence instead of a
+    traceback.
+    """
     from .tui.application import run_tui
+
+    return run_tui
+
+
+def cmd_tui(args) -> int:
+    try:
+        run_tui = _tui_entry()
+    except ModuleNotFoundError as exc:
+        # Only Textual's own absence. A missing import inside the TUI is a
+        # bug, and reporting it as a missing dependency sends the reader off
+        # to reinstall something they already have.
+        if (exc.name or "").partition(".")[0] != "textual":
+            raise
+        from shambles.__main__ import TEXTUAL_MISSING
+        sys.stderr.write(TEXTUAL_MISSING)
+        return EXIT_FAILED
 
     service = _service(args)
     encoding = (sys.stdout.encoding or "").lower().replace("-", "")

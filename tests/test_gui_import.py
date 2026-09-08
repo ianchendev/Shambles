@@ -568,7 +568,7 @@ def test_a_bar_goes_red_at_eighty_percent(paths, make_app):
 
 
 def test_a_provider_publishing_no_usage_shows_no_bars(paths, make_app):
-    """Codex exposes nothing readable; that is a supported state, not a gap."""
+    """Codex with no session log has nothing to meter yet."""
     from helpers import make_profile
 
     make_profile(paths, "codex", "Personal", email="me@example.com", active=True)

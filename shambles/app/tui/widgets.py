@@ -1,5 +1,6 @@
 """Focused, read-only widgets for the terminal dashboard."""
 
+from dataclasses import replace
 from typing import Optional, Tuple
 
 from rich.table import Table
@@ -14,6 +15,10 @@ from ..snapshot import Account, Group, Snapshot, Window
 GOLD = "#d9a441"
 TERRACOTTA = "#e07a5f"
 MUTED = "#8b90a0"
+
+#: Wide inspector always shows both quota windows, matching the mockup.
+#: ``session`` is Claude's 5-hour bucket; Codex uses the same contract label.
+METER_SLOTS = (("5h", ("session", "5h")), ("week", ("week",)))
 
 
 def _chip(account: Account) -> str:
@@ -44,6 +49,23 @@ def usage_bar(percent: int | None, width: int = 20, *, unicode: bool = True) -> 
     filled = round(max(0, min(100, percent)) * width / 100)
     filled = max(0, min(width, filled))
     return filled_ch * filled + empty_ch * (width - filled)
+
+
+def _meter_windows(account: Account, *, compact: bool) -> list[Window]:
+    """Always 5h then week; missing windows render as empty unavailable bars."""
+    by_label = {window.label: window for window in account.usage or []}
+    windows = []
+    for display, aliases in METER_SLOTS:
+        found = next((by_label[name] for name in aliases if name in by_label), None)
+        if found is None:
+            windows.append(Window(display, None))
+        elif found.label == display:
+            windows.append(found)
+        else:
+            windows.append(replace(found, label=display))
+    if compact:
+        return windows[:1]
+    return windows
 
 
 def _account_row(group: Group, account: Account) -> Table:
@@ -133,14 +155,11 @@ def render_account_details(
     if pills:
         add_line(Text(_join(pills, unicode=unicode), style=GOLD))
 
-    windows = list(account.usage or [])
-    if compact:
-        windows = windows[:1]
-    if windows:
-        add_line(Text("USAGE", style=GOLD))
-        for window in windows:
-            for line in _meter_lines(window, width=width, unicode=unicode):
-                add_line(line)
+    windows = _meter_windows(account, compact=compact)
+    add_line(Text("USAGE", style=GOLD))
+    for window in windows:
+        for line in _meter_lines(window, width=width, unicode=unicode):
+            add_line(line)
 
     if not compact and group.surfaces:
         add_line(Text("SWITCHES", style=GOLD))

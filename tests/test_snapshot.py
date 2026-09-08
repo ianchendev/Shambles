@@ -136,9 +136,30 @@ def test_usage_reaches_the_contract_when_there_is_any(paths):
 
 
 def test_no_usage_is_a_supported_state_not_a_gap(paths):
-    """Codex publishes nothing readable, so an empty list has to be normal."""
+    """No Codex session log means an empty list, which the card already handles."""
     make_profile(paths, "codex", "Personal", active=True)
     assert group_of(paths, "codex").accounts[0].usage == []
+
+
+def test_codex_session_logs_reach_the_contract(paths):
+    from helpers import make_codex_session
+
+    make_profile(paths, "codex", "Personal", active=True)
+    make_codex_session(paths, used_5h=2.0, used_week=4.0)
+    assert [(w.label, w.used_percent) for w in
+            group_of(paths, "codex").accounts[0].usage] == \
+        [("session", 2), ("week", 4)]
+
+
+def test_a_parked_codex_profile_does_not_inherit_the_live_session(paths):
+    from helpers import make_codex_session
+
+    make_profile(paths, "codex", "Personal", active=True)
+    make_profile(paths, "codex", "Work")
+    make_codex_session(paths)
+    by_name = {a.name: a for a in group_of(paths, "codex").accounts}
+    assert by_name["Personal"].usage
+    assert by_name["Work"].usage == []
 
 
 # -- the wire contract --------------------------------------------------------

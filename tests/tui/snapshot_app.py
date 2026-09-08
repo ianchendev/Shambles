@@ -57,7 +57,13 @@ def _populated_snapshot() -> Snapshot:
             ],
         ),
         Group("codex", "Codex", surfaces=[Surface("terminal", "Terminal")],
-              accounts=[Account("Personal", display_name="Taylor")]),
+              accounts=[Account(
+                  "Personal", display_name="Taylor",
+                  usage=[
+                      Window("session", 2, resets_label="resets 4:00 PM"),
+                      Window("week", 4, resets_label="resets Mon"),
+                  ],
+              )]),
     ])
 
 
