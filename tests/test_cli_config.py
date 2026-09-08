@@ -141,6 +141,23 @@ def test_a_value_that_is_not_true_or_false_is_refused(home, capsys, value):
     assert not Paths.for_home(home).settings_path.exists()
 
 
+def test_a_home_that_cannot_be_written_is_a_sentence_not_a_traceback(
+        home, capsys, monkeypatch):
+    """Every other command in this file degrades quietly when the store is
+    unwritable -- a read-only home, a directory owned by root -- and a
+    preference toggle is the last thing that should be the exception."""
+    def refuse(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(settings, "set_update_check", refuse)
+    assert cli.main(["config", "set", "update.check", "true",
+                     "--home", str(home)]) == cli.EXIT_FAILED
+    reported = capsys.readouterr()
+    assert "Traceback" not in reported.err
+    assert reported.err.strip()
+    assert "update.check" in reported.err
+
+
 def test_config_on_its_own_says_what_the_two_commands_are(home, capsys):
     assert cli.main(["config", "--home", str(home)]) == cli.EXIT_USAGE
     reported = capsys.readouterr().err

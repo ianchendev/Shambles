@@ -178,6 +178,10 @@ def cmd_config_set(args) -> int:
 
     The value is checked before anything is written, so a refused command
     leaves the file exactly as it found it -- including not creating one.
+
+    A store that cannot be written is reported the way every other command
+    here reports one: a sentence and a non-zero exit. A preference is not
+    worth a traceback, and the reader needs to know the toggle did not take.
     """
     if args.key not in CONFIG_KEYS:
         return _unknown_key(args.key)
@@ -188,7 +192,11 @@ def cmd_config_set(args) -> int:
         return EXIT_USAGE
 
     enabled = CONFIG_BOOLEANS[args.value]
-    settings.set_update_check(_paths(args), enabled)
+    try:
+        settings.set_update_check(_paths(args), enabled)
+    except OSError as exc:
+        return _fail(args, "unwritable",
+                     f"Could not save {args.key}: {exc.strerror or exc}.")
     print(UPDATE_CHECK_ON if enabled else UPDATE_CHECK_OFF)
     return EXIT_OK
 

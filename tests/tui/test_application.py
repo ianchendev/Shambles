@@ -840,7 +840,7 @@ async def test_a_default_install_shows_no_notice_and_looks_nothing_up(
     service.paths = paths
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await app.workers.wait_for_complete()
+        app.wait_for_update_lookup()
         await pilot.pause()
         assert not app.query_one("#update-notice").display
         assert "is available" not in screen_text(app)
@@ -854,7 +854,7 @@ async def test_a_cached_newer_release_arrives_as_a_one_line_notice(
     service.paths = paths
     app = ShamblesTUI(service)
     async with app.run_test(size=(140, 32)) as pilot:
-        await app.workers.wait_for_complete()
+        app.wait_for_update_lookup()
         await pilot.pause()
         assert app.query_one("#update-notice").display
         assert app.query_one("#update-notice").size.height == 1
@@ -871,7 +871,7 @@ async def test_the_notice_can_be_dismissed(service, paths):
     service.paths = paths
     app = ShamblesTUI(service)
     async with app.run_test(size=(140, 32)) as pilot:
-        await app.workers.wait_for_complete()
+        app.wait_for_update_lookup()
         await pilot.pause()
         assert "99.0.0" in screen_text(app)
 
@@ -888,13 +888,13 @@ async def test_a_cached_tag_that_is_not_newer_says_nothing(service, paths):
     service.paths = paths
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await app.workers.wait_for_complete()
+        app.wait_for_update_lookup()
         await pilot.pause()
         assert not app.query_one("#update-notice").display
 
 
 async def test_startup_never_waits_for_the_lookup(service, paths, monkeypatch):
-    """The point of the worker.
+    """The point of the thread.
 
     A blocking lookup in front of the first frame would make a captive portal
     look like a hung program, so the interface has to be up and taking keys
@@ -921,7 +921,57 @@ async def test_startup_never_waits_for_the_lookup(service, paths, monkeypatch):
             assert app.is_running
         finally:
             release.set()
-        await app.workers.wait_for_complete()
+        app.wait_for_update_lookup()
+
+
+async def test_the_lookup_cannot_hold_the_shell_after_a_quit(
+        service, paths, monkeypatch):
+    """Quitting has to give the terminal back, lookup or no lookup.
+
+    Nothing can interrupt a thread parked in ``getaddrinfo`` -- ``TIMEOUT_S``
+    bounds a socket operation, not name resolution, so a black-holed DNS
+    server holds it for the resolver's own budget. The only way quitting stays
+    instant is for the interpreter to be free to exit while it is still
+    parked, which is what a daemon thread means and what a pooled worker
+    thread is not: ``asyncio.run`` waits on its default executor on the way
+    out.
+    """
+    settings.set_update_check(paths, True)
+    service.paths = paths
+    release, daemonic = threading.Event(), []
+
+    def slow_lookup(_paths, **_kwargs):
+        daemonic.append(threading.current_thread().daemon)
+        release.wait(5)
+        return update_check.UpdateStatus(True, "2.0.0", None, False, None)
+
+    monkeypatch.setattr(update_check, "check_for_update", slow_lookup)
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.pause()
+            assert daemonic == [True]
+        finally:
+            release.set()
+        app.wait_for_update_lookup()
+
+
+async def test_a_default_install_starts_no_lookup_at_all(service, paths,
+                                                         monkeypatch):
+    """Off means the check is not consulted, not that it is asked and says no.
+
+    The lookup declines on its own too, but a thread spawned on every launch
+    to be told "no" is a thread that can still be in flight at quit.
+    """
+    service.paths = paths
+    asked = []
+    monkeypatch.setattr(update_check, "check_for_update",
+                        lambda *args, **kwargs: asked.append(1))
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        app.wait_for_update_lookup()
+        await pilot.pause()
+        assert asked == []
 
 
 async def test_a_lookup_that_raises_does_not_take_the_interface_down(
@@ -937,7 +987,7 @@ async def test_a_lookup_that_raises_does_not_take_the_interface_down(
     monkeypatch.setattr(update_check, "check_for_update", boom)
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await app.workers.wait_for_complete()
+        app.wait_for_update_lookup()
         await pilot.pause()
         assert app.is_running
         assert not app.query_one("#update-notice").display
@@ -968,6 +1018,7 @@ async def test_the_lookup_does_not_block_a_switch_or_count_as_a_mutation(
             assert service.switch_calls == [("claude", "Work")]
         finally:
             release.set()
+        app.wait_for_update_lookup()
         await app.workers.wait_for_complete()
 
 

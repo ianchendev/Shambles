@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from enum import Enum
 from typing import Callable
@@ -18,7 +19,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
 
-from ... import __version__, update_check
+from ... import __version__, settings, update_check
 from ...errors import ShamblesError
 from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
                        ShamblesService)
@@ -310,6 +311,7 @@ class ShamblesTUI(App[str | None]):
         self._onboarding_seen = False
         self._mutation_pending = False
         self._login_handle: LoginHandle | None = None
+        self._update_lookup: threading.Thread | None = None
         self._choose_selection()
 
     @property
@@ -372,13 +374,28 @@ class ShamblesTUI(App[str | None]):
         A service without a home is a test double that only knows how to hand
         over a snapshot (``tests/tui/snapshot_app.py``'s ``FrozenService``),
         and there is nothing for the check to read; skipping keeps a renderer
-        from growing a worker it has no use for.
-        """
-        if getattr(self.service, "paths", None) is not None:
-            self.look_for_update()
+        from growing a thread it has no use for.
 
-    @work(thread=True, group="update-check")
-    def look_for_update(self) -> None:
+        The setting is read here as well as inside the lookup. The lookup
+        would decline on its own, but declining still costs a thread that can
+        be in flight when somebody quits, and the overwhelmingly common case
+        is a user who never turned this on.
+        """
+        paths = getattr(self.service, "paths", None)
+        if paths is None or not settings.update_check_enabled(paths):
+            return
+        self._update_lookup = threading.Thread(
+            target=self._look_for_update, name="shambles-update-check",
+            daemon=True)
+        self._update_lookup.start()
+
+    def wait_for_update_lookup(self, timeout: float = 5.0) -> None:
+        """Block until the lookup thread is done. For tests, which need a
+        deterministic point to assert from; nothing in the app waits."""
+        if self._update_lookup is not None:
+            self._update_lookup.join(timeout)
+
+    def _look_for_update(self) -> None:
         """Ask whether there is a newer release, off the interface's thread.
 
         In a thread because it can block: ``update_check.TIMEOUT_S`` bounds
@@ -388,8 +405,15 @@ class ShamblesTUI(App[str | None]):
         program. A notice that turns up a second late costs nothing -- the
         24-hour cache means it is usually already on disk.
 
-        With ``update.check`` unset this returns before a socket is opened,
-        which is the whole privacy claim; see :mod:`shambles.update_check`.
+        A plain daemon thread rather than ``@work(thread=True)``, which hands
+        the callable to asyncio's default executor: those threads are not
+        daemonic and ``asyncio.run`` waits on them on the way out, so quitting
+        mid-lookup would hold the terminal until a name resolution nobody is
+        waiting for finished. Cancelling cannot help -- no API interrupts a
+        thread parked in ``getaddrinfo``. Being daemonic is what makes quit
+        instant. ``post_message`` is thread-safe and answers ``False`` once
+        the app is closing, so a notice that arrives too late is dropped
+        rather than delivered to a dead widget.
 
         Nothing that happens in here is worth an interface. The catch-all is
         the same one the lookup itself uses, one level further out: a version
@@ -400,10 +424,10 @@ class ShamblesTUI(App[str | None]):
             status = update_check.check_for_update(
                 self.service.paths, current_version=__version__,
                 now_s=time.time())
+            if status.message:
+                self.post_message(UpdateNoticeReady(status.message))
         except Exception:
             return
-        if status.message:
-            self.post_message(UpdateNoticeReady(status.message))
 
     def on_update_notice_ready(self, event: UpdateNoticeReady) -> None:
         notice = self.query_one("#update-notice", Static)
