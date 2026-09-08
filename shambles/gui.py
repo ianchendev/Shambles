@@ -1108,9 +1108,9 @@ class ShamblesApp(tk.Tk):
     def _render_usage(self, parent, bg, profile):
         """Session and weekly figures as full-width rows beneath the identity.
 
-        Rendered only for providers that publish figures at all -- Codex
-        exposes nothing readable, and an explanatory line there would be
-        explaining an absence that is permanent rather than temporary.
+        Rendered only for providers that publish figures at all. Codex
+        reads its 5h and week windows from local session logs; a missing
+        log is a temporary empty state, not a permanent gap.
         """
         if not profile.publishes_usage:
             return

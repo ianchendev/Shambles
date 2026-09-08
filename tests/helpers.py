@@ -138,6 +138,37 @@ def make_live_codex_login(paths, **kwargs):
     return path
 
 
+def make_codex_session(paths, *, used_5h=2.0, used_week=4.0,
+                       timestamp="2026-09-08T12:00:00.000Z",
+                       extra_events=None):
+    """A ~/.codex/sessions jsonl with a ``token_count`` rate_limits event."""
+    sessions = paths.home / ".codex" / "sessions" / "2026" / "09" / "08"
+    sessions.mkdir(parents=True, exist_ok=True)
+    path = sessions / "rollout-test.jsonl"
+    event = {
+        "timestamp": timestamp,
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "primary": {
+                    "used_percent": used_5h,
+                    "window_minutes": 300,
+                    "resets_at": 1788880185,
+                },
+                "secondary": {
+                    "used_percent": used_week,
+                    "window_minutes": 10080,
+                    "resets_at": 1789445271,
+                },
+            },
+        },
+    }
+    lines = list(extra_events or [])
+    lines.append(json.dumps(event))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 # -- provider-agnostic --------------------------------------------------
 
 def make_profile(paths, provider_id, name, *, email=None, token=True,

@@ -67,7 +67,16 @@ def snapshot():
             "codex",
             "Codex",
             surfaces=[Surface("terminal", "Terminal")],
-            accounts=[Account("Personal", display_name="Taylor")],
+            accounts=[
+                Account(
+                    "Personal",
+                    display_name="Taylor",
+                    usage=[
+                        Window("session", 2, resets_label="resets 4:00 PM"),
+                        Window("week", 4, resets_label="resets Mon"),
+                    ],
+                ),
+            ],
         ),
     ])
 
@@ -147,6 +156,9 @@ def test_hero_details_use_meters_pills_and_context(snapshot):
     assert "Max 5x" in rendered
     assert "Claude" in rendered
     assert "USAGE" in rendered
+    assert "5h" in rendered
+    assert "week" in rendered
+    assert "unavailable" in rendered
     assert "22%" in rendered
     assert "█" in rendered
     assert "SWITCHES" in rendered
@@ -164,6 +176,9 @@ async def test_wide_hero_shows_identity_meter_and_surfaces(snapshot):
         assert "work@example.test" in screen
         assert "Max 5x" in screen
         assert "USAGE" in screen
+        assert "5h" in screen
+        assert "week" in screen
+        assert "unavailable" in screen
         assert "22%" in screen
         assert "SWITCHES" in screen
         assert "Terminal" in screen
@@ -233,8 +248,50 @@ async def test_compact_dashboard_keeps_usage_percentage_readable(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
-        assert "22%" in screen_text(app)
-        assert "session: 22% used" not in screen_text(app)
+        screen = screen_text(app)
+        assert "22%" in screen
+        assert "session: 22% used" not in screen
+        assert "week" not in screen
+
+
+def test_compact_inspector_shows_only_the_5h_meter(snapshot):
+    group, account = snapshot.groups[0], snapshot.groups[0].accounts[0]
+    rendered = table_text(render_account_details(
+        group, account, width=40, unicode=True, compact=True))
+    assert "USAGE" in rendered
+    assert "5h" in rendered
+    assert "22%" in rendered
+    assert "week" not in rendered
+    assert "SWITCHES" not in rendered
+
+
+async def test_wide_codex_hero_shows_5h_and_week(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(100, 32)) as pilot:
+        app.query_one(AccountList).highlighted = 2
+        await pilot.press("enter")
+        await pilot.pause()
+        screen = screen_text(app)
+        assert "Taylor" in screen
+        assert "5h" in screen
+        assert "22%" not in screen
+        assert "2%" in screen
+        assert "week" in screen
+        assert "4%" in screen
+
+
+async def test_provider_headers_are_spaced_from_accounts(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        headers = list(app.query(".group-header"))
+        assert len(headers) == 2
+        first, second = headers
+        assert first.styles.padding.top == 0
+        assert second.styles.padding.top > 0
+        screen = screen_text(app)
+        assert "Claude" in screen
+        assert "Codex" in screen
 
 
 async def test_wide_account_headers_keep_identity_separate_from_login_state(snapshot):

@@ -56,6 +56,11 @@ Dashboard {
 .group-header {
     color: #d9a441;
     text-style: bold;
+    padding-top: 1;
+}
+
+#account-list > AccountRow:first-child .group-header {
+    padding-top: 0;
 }
 
 #account-list > AccountRow.-highlight .account-row {

@@ -3,6 +3,9 @@
 Shapes here are taken from a live ~/.claude.json on client 2.1.222.
 """
 
+import json
+import os
+
 from helpers import NOW
 from shambles import usage
 
@@ -135,6 +138,86 @@ def test_a_resets_timestamp_of_the_wrong_type_does_not_raise():
         {"kind": "session", "percent": 1, "severity": "normal",
          "resets_at": 1788000000000}]}}
     assert usage.parse(blob).bars[0].resets_label() is None
+
+
+# ---- Codex session logs -------------------------------------------------
+
+CODEX_LIMITS = {
+    "primary": {"used_percent": 2.0, "window_minutes": 300,
+                "resets_at": 1788880185},
+    "secondary": {"used_percent": 4.0, "window_minutes": 10080,
+                  "resets_at": 1789445271},
+}
+
+
+def test_codex_rate_limits_map_to_session_and_week():
+    u = usage.parse_codex_rate_limits(CODEX_LIMITS, fetched_at_ms=NOW)
+    assert [(b.label, b.percent) for b in u.bars] == [("session", 2), ("week", 4)]
+    assert u.fetched_at_ms == NOW
+    assert u.bars[0].resets_label() is not None
+    assert u.bars[1].resets_label() is not None
+
+
+def test_codex_rate_limits_without_minutes_are_the_week():
+    u = usage.parse_codex_rate_limits({
+        "primary": {"used_percent": 10},
+    })
+    assert [b.label for b in u.bars] == ["week"]
+
+
+def test_codex_rate_limits_junk_is_empty():
+    for blob in (None, {}, [], "nope", {"primary": "nope"}):
+        assert not usage.parse_codex_rate_limits(blob), blob
+
+
+def test_read_codex_usage_takes_the_latest_rate_limits_in_the_newest_file(tmp_path):
+    older = tmp_path / "sessions" / "old.jsonl"
+    newer = tmp_path / "sessions" / "2026" / "new.jsonl"
+    newer.parent.mkdir(parents=True)
+    older.parent.mkdir(parents=True, exist_ok=True)
+    older.write_text(json.dumps({
+        "timestamp": "2026-09-01T00:00:00Z",
+        "payload": {"rate_limits": {"primary": {
+            "used_percent": 99, "window_minutes": 300}}},
+    }) + "\n", encoding="utf-8")
+    newer.write_text(
+        json.dumps({"payload": {"type": "message"}}) + "\n"
+        + json.dumps({
+            "timestamp": "2026-09-08T12:00:00Z",
+            "payload": {"rate_limits": CODEX_LIMITS},
+        }) + "\n",
+        encoding="utf-8",
+    )
+    older_mtime = older.stat().st_mtime
+    os.utime(newer, (older_mtime + 10, older_mtime + 10))
+
+    u = usage.read_codex_usage(tmp_path)
+    assert [(b.label, b.percent) for b in u.bars] == [("session", 2), ("week", 4)]
+    assert u.fetched_at_ms is not None
+
+
+def test_read_codex_usage_skips_a_rate_limits_event_with_no_windows(tmp_path):
+    path = tmp_path / "sessions" / "rollout.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({
+            "timestamp": "2026-09-08T11:00:00Z",
+            "payload": {"rate_limits": CODEX_LIMITS},
+        }) + "\n"
+        + json.dumps({
+            "timestamp": "2026-09-08T12:00:00Z",
+            "payload": {"rate_limits": {"credits": {"unlimited": True}}},
+        }) + "\n",
+        encoding="utf-8",
+    )
+    u = usage.read_codex_usage(tmp_path)
+    assert [(b.label, b.percent) for b in u.bars] == [("session", 2), ("week", 4)]
+
+
+def test_read_codex_usage_is_empty_without_a_session_log(tmp_path):
+    assert not usage.read_codex_usage(tmp_path)
+    (tmp_path / "sessions").mkdir()
+    assert not usage.read_codex_usage(tmp_path)
 
 
 # ---- bar colour: an explicit threshold, matching the extension ----------

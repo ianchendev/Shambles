@@ -1,9 +1,7 @@
-"""Reading the usage figures Claude Code caches in ``~/.claude.json``.
+"""Reading usage figures cached by Claude Code and Codex.
 
-Two numbers matter to someone deciding which account to switch to: how much of
-the current session window is gone, and how much of the week. Claude Code
-already computes both, along with a severity it derives itself, so this module
-reads rather than judges.
+Claude Code stores both windows in ``~/.claude.json``. Codex writes the
+same 5h / week pair onto ``token_count`` events in ``~/.codex/sessions``.
 
 **Display only.** These figures are never written back into ``~/.claude.json``
 -- see :data:`shambles.configjson.STALE_ON_SWITCH` for why restoring a cached
@@ -13,7 +11,9 @@ labelled with its age.
 """
 
 import datetime
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import configjson
 
@@ -179,6 +179,120 @@ def parse(blob) -> Usage:
     order = [lbl for lbl in ("session", "week") if lbl in found]
     return Usage(bars=tuple(found[lbl] for lbl in order),
                  fetched_at_ms=int(fetched) if fetched else None)
+
+
+#: Codex's 5-hour window is 300 minutes. Anything in this band is "session"
+#: (shown as 5h); longer windows are the week.
+_CODEX_SESSION_MAX_MINUTES = 12 * 60
+_CODEX_TAIL_BYTES = 256 * 1024
+
+
+def parse_codex_rate_limits(limits, *, fetched_at_ms: int | None = None) -> Usage:
+    """Turn a Codex ``rate_limits`` object into the same bars Claude uses.
+
+    Codex does not keep a companion usage cache. It does write the live 5h
+    and weekly windows onto ``token_count`` events in the session jsonl
+    under ``~/.codex/sessions``. Primary is the short window, secondary the
+    week. Labels stay ``session`` / ``week`` so the snapshot contract is
+    one shape for every provider.
+    """
+    if not isinstance(limits, dict):
+        return EMPTY
+    found = {}
+    for key in ("primary", "secondary"):
+        bucket = limits.get(key)
+        if not isinstance(bucket, dict):
+            continue
+        percent = bucket.get("used_percent")
+        minutes = bucket.get("window_minutes")
+        if not isinstance(percent, (int, float)):
+            continue
+        label = "session" if (
+            isinstance(minutes, (int, float)) and minutes <= _CODEX_SESSION_MAX_MINUTES
+        ) else "week"
+        found[label] = Bar(
+            label=label,
+            percent=int(percent),
+            severity="normal",
+            resets_at=_codex_resets_at(bucket.get("resets_at")),
+        )
+    order = [lbl for lbl in ("session", "week") if lbl in found]
+    return Usage(bars=tuple(found[lbl] for lbl in order), fetched_at_ms=fetched_at_ms)
+
+
+def read_codex_usage(config_dir: Path) -> Usage:
+    """Latest 5h / week figures from the newest Codex session log.
+
+    Local files only — the same discipline as Claude's
+    ``cachedUsageUtilization``. A session that never emitted ``rate_limits``
+    returns empty, which the UI already treats as a supported state.
+    """
+    path = _latest_codex_session(config_dir)
+    if path is None:
+        return EMPTY
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size > _CODEX_TAIL_BYTES:
+                handle.seek(size - _CODEX_TAIL_BYTES)
+            raw = handle.read()
+    except OSError:
+        return EMPTY
+    text = raw.decode("utf-8", errors="replace")
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line or "rate_limits" not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        payload = event.get("payload") if isinstance(event, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        limits = payload.get("rate_limits")
+        if not isinstance(limits, dict):
+            continue
+        parsed = parse_codex_rate_limits(
+            limits, fetched_at_ms=_ms_from_timestamp(event.get("timestamp")))
+        if parsed:
+            return parsed
+    return EMPTY
+
+
+def _latest_codex_session(config_dir: Path) -> Path | None:
+    sessions = Path(config_dir) / "sessions"
+    if not sessions.is_dir():
+        return None
+    newest = None
+    newest_mtime = -1.0
+    for path in sessions.rglob("*.jsonl"):
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime >= newest_mtime:
+            newest_mtime = mtime
+            newest = path
+    return newest
+
+
+def _codex_resets_at(value) -> str | None:
+    if isinstance(value, (int, float)):
+        return datetime.datetime.fromtimestamp(value, tz=datetime.timezone.utc).isoformat()
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _ms_from_timestamp(value) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        when = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return int(when.timestamp() * 1000)
 
 
 def capture_live(paths, provider_id, active_name, *, now_ms) -> bool:
