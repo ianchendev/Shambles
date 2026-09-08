@@ -395,8 +395,13 @@ def test_one_socket_operation_is_given_less_than_a_couple_of_seconds():
     """``TIMEOUT_S`` bounds each of DNS, connect and read separately, so the
     worst case a caller can be made to wait is a small multiple of it. Both
     callers are now off the critical path, but a worker still has to end, and
-    an endpoint that cannot answer inside this has spent the day's attempt."""
-    assert update_check.TIMEOUT_S <= 2.0
+    an endpoint that cannot answer inside this has spent the day's attempt.
+
+    Bounded below as well: a timeout small enough to beat a working
+    connection would turn the feature off without turning the setting off,
+    and every lookup would quietly spend its day's attempt on nothing.
+    """
+    assert 1.0 <= update_check.TIMEOUT_S <= 2.0
 
 
 def test_importing_the_module_does_not_import_urllib():
