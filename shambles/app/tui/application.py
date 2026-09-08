@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import os
-from enum import Enum
 from typing import Callable
 
-from rich.cells import cell_len
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -21,11 +18,15 @@ from ...errors import ShamblesError
 from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
                        ShamblesService)
 from ..snapshot import Snapshot
-from .brand import BrandVariant, brand_text, variant_for
+from .brand import header_text
 from .dashboard import Dashboard, MINIMUM_HEIGHT
 from .overlays import ConfirmAction, ResultScreen
 from .widgets import AccountList
 from .workflows import AccountMenu, LoginProgress, NameInputScreen
+
+WELCOME_COPY = "No saved accounts yet."
+WELCOME_FOOTER = "a add · x eject · r refresh · ? help · q quit"
+WELCOME_FOOTER_ASCII = "a add | x eject | r refresh | ? help | q quit"
 
 
 class SwitchFinished(Message):
@@ -57,132 +58,23 @@ class LoginFinished(Message):
         self.result = result
 
 
-class BoxPhase(Enum):
-    """One pass around the welcome frame; the wordmark never animates."""
-
-    CORNERS = "corners"
-    HORIZONTAL = "horizontal"
-    VERTICAL = "vertical"
-    SETTLED = "settled"
-
-
-class OnboardingFrame(Widget):
-    DEFAULT_CSS = """
-    OnboardingFrame { width: auto; height: auto; }
-    OnboardingFrame #frame-top, OnboardingFrame #frame-bottom {
-        height: 1; color: #d9a441;
-    }
-    OnboardingFrame #frame-middle { height: auto; }
-    OnboardingFrame #frame-left, OnboardingFrame #frame-right {
-        width: 2; height: 100%; color: #d9a441;
-    }
-    OnboardingFrame #onboarding-brand {
-        width: 1fr; height: auto; color: #e07a5f;
-    }
-    """
-
-    def __init__(self, variant: BrandVariant, *, motion: bool, unicode: bool):
-        super().__init__(id="onboarding-frame")
-        self.variant = variant
-        self.unicode = unicode
-        self.phase = (
-            BoxPhase.CORNERS
-            if motion and variant is BrandVariant.WIDE
-            else BoxPhase.SETTLED
-        )
-        self._timer: Timer | None = None
-
-    def compose(self) -> ComposeResult:
-        yield Static(id="frame-top", markup=False)
-        with Horizontal(id="frame-middle"):
-            yield Static(id="frame-left", markup=False)
-            yield Static(id="onboarding-brand", markup=False)
-            yield Static(id="frame-right", markup=False)
-        yield Static(id="frame-bottom", markup=False)
-
-    def on_mount(self) -> None:
-        self._draw()
-        if self.phase is not BoxPhase.SETTLED:
-            self._timer = self.set_interval(0.15, self.advance_phase)
-
-    def set_variant(self, variant: BrandVariant) -> None:
-        self.variant = variant
-        if variant is not BrandVariant.WIDE:
-            self.settle()
-        else:
-            self._draw()
-
-    def advance_phase(self) -> None:
-        phases = tuple(BoxPhase)
-        if self.phase is BoxPhase.SETTLED:
-            return
-        self.phase = phases[phases.index(self.phase) + 1]
-        if self.phase is BoxPhase.SETTLED:
-            self.settle()
-        else:
-            self._draw()
-
-    def settle(self) -> None:
-        self.phase = BoxPhase.SETTLED
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
-        self._draw()
-
-    def _draw(self) -> None:
-        wordmark = brand_text(self.variant, unicode=self.unicode)
-        rows = wordmark.splitlines()
-        width = max(map(cell_len, rows)) + 4
-        self.styles.width = width
-        self.styles.height = len(rows) + 2
-        self.query_one("#frame-middle").styles.height = len(rows)
-        self.query_one("#onboarding-brand", Static).update(wordmark)
-
-        top_left, top_right, bottom_left, bottom_right, horizontal, vertical = (
-            ("┌", "┐", "└", "┘", "─", "│")
-            if self.unicode else ("+", "+", "+", "+", "-", "|")
-        )
-        edge = horizontal if self.phase is not BoxPhase.CORNERS else " "
-        side = (
-            vertical
-            if self.phase in (BoxPhase.VERTICAL, BoxPhase.SETTLED)
-            else " "
-        )
-        self.query_one("#frame-top", Static).update(
-            top_left + edge * (width - 2) + top_right
-        )
-        self.query_one("#frame-bottom", Static).update(
-            bottom_left + edge * (width - 2) + bottom_right
-        )
-        self.query_one("#frame-left", Static).update(
-            "\n".join([side + " "] * len(rows))
-        )
-        self.query_one("#frame-right", Static).update(
-            "\n".join([" " + side] * len(rows))
-        )
-        self.set_class(self.phase is BoxPhase.SETTLED, "settled")
-        self.set_class(self.phase is not BoxPhase.SETTLED, "drawing")
-
-
 class Onboarding(Widget):
     DEFAULT_CSS = """
-    Onboarding { height: 1fr; }
+    Onboarding { width: 100%; height: 1fr; }
     Onboarding #welcome-body {
-        width: 100%; height: 100%; align: center middle; padding: 1 2;
-    }
-    Onboarding #welcome-title {
-        width: 100%; height: 2; text-style: bold; content-align: center middle;
+        width: 100%; height: 1fr; align: center middle; padding: 1 2;
     }
     Onboarding #welcome-copy {
         width: 100%; height: auto; content-align: center middle;
     }
-    Onboarding.too-short #welcome-body { display: none; }
+    Onboarding.too-short #welcome-body,
+    Onboarding.too-short #dashboard-header,
+    Onboarding.too-short #shortcut-footer { display: none; }
     Onboarding.too-short #terminal-too-small { display: block; }
     """
 
-    def __init__(self, *, motion: bool, unicode: bool):
+    def __init__(self, *, unicode: bool):
         super().__init__(id="onboarding")
-        self.motion = motion
         self.unicode = unicode
 
     def compose(self) -> ComposeResult:
@@ -190,27 +82,21 @@ class Onboarding(Widget):
             f"Terminal is too small. Use at least {MINIMUM_HEIGHT} rows.",
             id="terminal-too-small",
         )
+        yield Static(id="dashboard-header", markup=False)
         with Vertical(id="welcome-body"):
-            yield Static("Welcome to SHAMBLES", id="welcome-title")
-            yield OnboardingFrame(
-                variant_for(self.app.size.width),
-                motion=self.motion,
-                unicode=self.unicode,
-            )
-            yield Static(
-                "No saved accounts yet.\n"
-                "Manage Claude and Codex accounts locally.\n\n"
-                "r Refresh   ? Help   q Quit",
-                id="welcome-copy",
-            )
+            yield Static(WELCOME_COPY, id="welcome-copy")
+        yield Static(id="shortcut-footer", markup=False)
 
     def on_resize(self, event: events.Resize) -> None:
-        frame = self.query_one(OnboardingFrame)
-        frame.set_variant(variant_for(event.size.width))
-        too_short = event.size.height < MINIMUM_HEIGHT
-        self.set_class(too_short, "too-short")
-        if too_short:
-            frame.settle()
+        width, height = event.size.width, event.size.height
+        unicode = getattr(self.app, "unicode", self.unicode)
+        self.set_class(height < MINIMUM_HEIGHT, "too-short")
+        self.query_one("#dashboard-header", Static).update(
+            header_text(width, height, unicode=unicode)
+        )
+        self.query_one("#shortcut-footer", Static).update(
+            WELCOME_FOOTER if unicode else WELCOME_FOOTER_ASCII
+        )
 
 
 class HelpScreen(ModalScreen[None]):
@@ -272,7 +158,6 @@ class ShamblesTUI(App[str | None]):
         Binding("m", "open_menu", "Menu"),
         Binding("l", "login_selected", "Login"),
         Binding("x", "eject", "Eject"),
-        Binding("escape", "settle_onboarding", "Skip", show=False),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -291,7 +176,6 @@ class ShamblesTUI(App[str | None]):
         self.unicode = unicode
         self.selected_provider: str | None = None
         self.selected_account: str | None = None
-        self._onboarding_seen = False
         self._mutation_pending = False
         self._login_handle: LoginHandle | None = None
         self._choose_selection()
@@ -340,9 +224,7 @@ class ShamblesTUI(App[str | None]):
     def _view(self) -> Widget:
         if self._accounts():
             return Dashboard(self.snapshot)
-        motion = self.motion and not self._onboarding_seen
-        self._onboarding_seen = True
-        return Onboarding(motion=motion, unicode=self.unicode)
+        return Onboarding(unicode=self.unicode)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="app-body"):
@@ -417,7 +299,6 @@ class ShamblesTUI(App[str | None]):
     def action_switch_selected(self) -> None:
         if not self.check_action("switch_selected", ()):
             return
-        self.action_settle_onboarding()
         self._capture_selection()
         for group in self.snapshot.groups:
             if group.provider != self.selected_provider:
@@ -608,10 +489,6 @@ class ShamblesTUI(App[str | None]):
         if isinstance(self.screen, LoginProgress):
             self.pop_screen()
         await self.push_screen(ResultScreen(event.result))
-
-    def action_settle_onboarding(self) -> None:
-        for frame in self.query(OnboardingFrame):
-            frame.settle()
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
