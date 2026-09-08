@@ -1,11 +1,13 @@
 import inspect
 import json
+import os
 import pathlib
 import subprocess
 import sys
 
 import pytest
 
+from conftest import posix_modes_only
 from shambles import settings, update_check
 from shambles.update_check import check_for_update
 
@@ -107,6 +109,59 @@ def test_a_tag_that_is_not_a_release_number_stays_quiet(paths, tag):
                               fetch=answering(tag))
     assert status.newer is False
     assert status.message is None
+
+
+def test_a_tag_of_absurd_length_stays_quiet(paths):
+    """All digits is not the same as orderable.
+
+    CPython refuses to turn a string of more than 4300 digits into an int, so
+    a tag that passes the digits-and-dots test can still fail to become a
+    number. A hostile or broken endpoint gets the same answer as any other
+    unorderable tag: nothing.
+    """
+    settings.set_update_check(paths, True)
+    status = check_for_update(paths, current_version="2.0.0", now_s=1_000,
+                              fetch=answering("9" * 5_000))
+    assert status.newer is False
+    assert status.message is None
+
+
+def test_a_cache_holding_an_unorderable_tag_does_not_poison_the_check(paths):
+    """The cached tag is read back and compared on every later invocation, so
+    a tag that cannot be ordered must be survivable from disk too -- otherwise
+    one bad answer breaks the check until somebody deletes the file."""
+    settings.set_update_check(paths, True)
+    paths.ensure_store()
+    (paths.library_dir / "update-cache.json").write_text(
+        json.dumps({"checked_at": 1_000, "latest": "9" * 5_000}),
+        encoding="utf-8")
+    status = check_for_update(paths, current_version="2.0.0", now_s=1_000,
+                              fetch=answering("v2.1.0"))
+    assert status.newer is False
+    assert status.message is None
+
+
+def test_a_cache_stamped_true_is_not_a_timestamp(paths):
+    """``True`` is an ``int`` in Python, and a cache that says the last lookup
+    happened at "true" has not recorded a time at all -- it is stale."""
+    settings.set_update_check(paths, True)
+    paths.ensure_store()
+    (paths.library_dir / "update-cache.json").write_text(
+        json.dumps({"checked_at": True, "latest": "2.1.0"}), encoding="utf-8")
+    calls = []
+    check_for_update(paths, current_version="2.0.0", now_s=1.5,
+                     fetch=answering("v2.2.0", calls))
+    assert len(calls) == 1
+
+
+@posix_modes_only
+def test_the_cache_is_written_owner_only_like_the_rest_of_the_store(paths):
+    settings.set_update_check(paths, True)
+    check_for_update(paths, current_version="2.0.0", now_s=1_000,
+                     fetch=answering("v2.1.0"))
+    cache = paths.library_dir / "update-cache.json"
+    assert oct(os.stat(cache).st_mode)[-3:] == "600"
+    assert oct(os.stat(paths.library_dir).st_mode)[-3:] == "700"
 
 
 @pytest.mark.parametrize("payload", [

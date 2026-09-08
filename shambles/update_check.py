@@ -51,6 +51,10 @@ TIMEOUT_S = 5.0
 #: misdirected or hostile endpoint cannot answer with a stream.
 MAX_BYTES = 1 << 20
 
+#: CPython will not parse an int from more than 4300 digits, and a release
+#: segment is never more than a handful. Anything longer is not a version.
+MAX_SEGMENT_DIGITS = 9
+
 #: The notice, in full. Two routes because those are the two ways the install
 #: docs put Shambles on a machine; neither is something this module performs.
 NOTICE = ("Shambles {latest} is available (you have {current}). "
@@ -145,12 +149,15 @@ def _read_cache(paths) -> tuple[float | None, str | None]:
 
     Each field is validated on its own, so a cache that is missing, truncated,
     hand-edited or written by some later version still yields whatever part of
-    it makes sense instead of raising.
+    it makes sense instead of raising. ``True`` is not a timestamp, however
+    much of an ``int`` Python considers it.
     """
     cached = configjson.load(paths.library_dir / CACHE_NAME)
     checked_at = cached.get("checked_at")
     latest = cached.get("latest")
-    return (checked_at if isinstance(checked_at, (int, float)) else None,
+    stamped = (isinstance(checked_at, (int, float))
+               and not isinstance(checked_at, bool))
+    return (checked_at if stamped else None,
             latest if isinstance(latest, str) else None)
 
 
@@ -207,12 +214,18 @@ def _release_number(text: str) -> tuple[int, ...] | None:
     unacceptable answer is announcing an update that may not exist. Comparing
     those properly needs a version parser, and a version notice is not worth a
     dependency.
+
+    All-digits is not enough on its own: ``int()`` refuses strings past
+    :data:`MAX_SEGMENT_DIGITS`, so a very long run of digits is checked for
+    length here rather than raising out of a caller that has no reason to
+    expect it.
     """
     stripped = _tag_text(text)
     if stripped is None:
         return None
     parts = stripped.split(".")
-    if not all(part.isdecimal() for part in parts):
+    if not all(part.isdecimal() and len(part) <= MAX_SEGMENT_DIGITS
+               for part in parts):
         return None
     return tuple(int(part) for part in parts)
 
