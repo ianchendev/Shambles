@@ -1,7 +1,19 @@
 # Shambles — Multi-channel Install & Opt-in Update Notice
 
 **Date:** 2026-09-08
-**Status:** APPROVED — plan at [`../plans/2026-09-08-install-and-update-notice.md`](../plans/2026-09-08-install-and-update-notice.md)
+**Status:** IMPLEMENTED — plan at [`../plans/2026-09-08-install-and-update-notice.md`](../plans/2026-09-08-install-and-update-notice.md)
+
+Two things below were decided differently during implementation, because npm
+is still unpublished and shipping a command that fails is worse than shipping
+one fewer route:
+
+- **§3 / §3.1 — the README leads with the curl and irm scripts, not npm.** npm
+  is documented last, marked as not yet available, with the reason. It becomes
+  the primary route when the [npm plan](../plans/2026-09-06-npm-distribution.md)
+  actually publishes.
+- **§7 — the notice names only the install script.** The copy in §7 offered
+  `npm i -g shambles@latest` as the first route; a version notice that tells
+  the reader to run a command that does not work is worse than no notice.
 
 Give users Claude-like install paths on Linux, macOS, and Windows: **npm as
 primary**, **curl / irm scripts** when Node is absent, while keeping pipx and
@@ -182,9 +194,9 @@ in README and `--help`.
 - Compare to the running app version.
 - If newer: one-line dismissible notice in TUI/GUI; optionally mention on
   `shambles --version`.
-- Notice text tells the user how to update (`npm i -g shambles@latest`,
-  re-run install script, or pipx) — **never** downloads or replaces the
-  binary itself.
+- Notice text tells the user how to update — **never** downloads or replaces
+  the binary itself. *As implemented it names the install script only; see the
+  status note at the top of this document.*
 - Network errors, timeouts, and rate limits: fail silent (no modal spam).
 - Cache file under `~/.shambles/`: latest-seen tag + check timestamp only.
   No account names, emails, or tokens.

@@ -6,8 +6,8 @@ security claim the README makes and
 with an AST scan over every module. This file is the single exemption: when
 ``update.check`` is on it asks the public GitHub Releases API for one tag,
 compares it with the running version, and hands back a sentence to print. It
-never downloads anything and never replaces the binary -- telling somebody to
-run ``npm i -g shambles@latest`` is the whole of the feature.
+never downloads anything and never replaces the binary -- saying that a newer
+release exists is the whole of the feature.
 
 Three rules shape everything below:
 
@@ -60,11 +60,13 @@ MAX_BYTES = 1 << 20
 #: segment is never more than a handful. Anything longer is not a version.
 MAX_SEGMENT_DIGITS = 9
 
-#: The notice, in full. Two routes because those are the two ways the install
-#: docs put Shambles on a machine; neither is something this module performs.
+#: The notice, in full. It names the install script and nothing else: that is
+#: the route the README leads with, and it is the only one that works today.
+#: An npm package is designed but unpublished, so telling somebody to run
+#: ``npm i -g shambles`` would be handing them a command that fails -- and a
+#: version notice that lies about how to act on it is worse than none.
 NOTICE = ("Shambles {latest} is available (you have {current}). "
-          "Update with: npm i -g shambles@latest — or re-run the install "
-          "script.")
+          "Re-run the install script to update.")
 
 
 @dataclass(frozen=True)

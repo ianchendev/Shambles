@@ -859,7 +859,7 @@ async def test_a_cached_newer_release_arrives_as_a_one_line_notice(
         assert app.query_one("#update-notice").display
         assert app.query_one("#update-notice").size.height == 1
         assert "Shambles 99.0.0 is available" in screen_text(app)
-        assert "npm i -g shambles@latest" in screen_text(app)
+        assert "Re-run the install script" in screen_text(app)
         assert app.query_one(Dashboard).display
 
 
