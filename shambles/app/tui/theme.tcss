@@ -15,17 +15,18 @@ Dashboard {
     padding: 1 2;
 }
 
-#dashboard-title {
-    height: 3;
+#dashboard-header {
+    width: 100%;
+    height: auto;
     color: #e07a5f;
-    text-style: bold;
-    content-align: center middle;
+    content-align: left top;
 }
 
-#surface-pills {
-    height: 2;
+#shortcut-footer {
+    width: 100%;
+    height: 1;
     color: #d9a441;
-    content-align: center middle;
+    padding: 0 1;
 }
 
 #main-panes {
@@ -37,7 +38,7 @@ Dashboard {
     width: 1fr;
     height: 100%;
     background: #11182b;
-    border: ascii #d9a441;
+    border: tall #d9a441;
     scrollbar-size: 0 0;
 }
 
@@ -68,7 +69,7 @@ Dashboard {
 #account-details,
 #inline-details {
     background: #11182b;
-    border: ascii #e07a5f;
+    border: tall #e07a5f;
     padding: 1 2;
 }
 
@@ -112,12 +113,17 @@ Dashboard.compact #inline-details {
     display: block;
 }
 
-Dashboard.compact #surface-pills {
-    display: none;
-}
-
 Dashboard.compact #dashboard-body {
     padding: 0 1;
+}
+
+Dashboard.ascii #account-list {
+    border: ascii #d9a441;
+}
+
+Dashboard.ascii #account-details,
+Dashboard.ascii #inline-details {
+    border: ascii #e07a5f;
 }
 
 Dashboard.too-short #dashboard-body {

@@ -10,12 +10,26 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from ..snapshot import Account, Group, Snapshot
-from .brand import BrandVariant, LOCKUP_MIN_HEIGHT, variant_for
+from .brand import LOCKUP_MIN_HEIGHT, header_kind, header_text
 from .widgets import AccountDetails, AccountList
 
 
 MINIMUM_HEIGHT = 16
 BANNER_MIN_HEIGHT = LOCKUP_MIN_HEIGHT
+
+FULL_FOOTER = (
+    "j/k move · ⏎ switch · a add · x eject · m menu · "
+    "l login · r refresh · ? help · q quit"
+)
+COMPACT_FOOTER = "⏎ switch · a add · x eject · m menu · ? help · q quit"
+
+
+def _paint_footer(text: str) -> str:
+    painted = []
+    for part in text.split(" · "):
+        key, _, label = part.partition(" ")
+        painted.append(f"[#e07a5f]{key}[/] {label}")
+    return " [#d9a441]·[/] ".join(painted)
 
 
 class Dashboard(Widget):
@@ -40,19 +54,6 @@ class Dashboard(Widget):
                     return group, account
         return first
 
-    def _surfaces(self) -> str:
-        labels = []
-        for group in self.snapshot.groups:
-            for surface in group.surfaces:
-                label = surface.label
-                if label not in labels:
-                    labels.append(label)
-        return (
-            "Surfaces: " + " | ".join(labels)
-            if labels
-            else "Surfaces: Unavailable"
-        )
-
     def compose(self) -> ComposeResult:
         selected = self._initial_account()
         account_details = AccountDetails(id="account-details")
@@ -65,18 +66,27 @@ class Dashboard(Widget):
             id="terminal-too-small",
         )
         with Vertical(id="dashboard-body"):
-            yield Static("SHAMBLES", id="dashboard-title")
-            yield Static(self._surfaces(), id="surface-pills")
+            yield Static(id="dashboard-header", markup=False)
             with Horizontal(id="main-panes"):
                 yield AccountList(self.snapshot, id="account-list")
                 yield account_details
+            yield Static(id="shortcut-footer")
 
     def on_resize(self, event: events.Resize) -> None:
-        variant = variant_for(event.size.width)
-        self.set_class(variant is BrandVariant.WIDE, "wide")
-        self.set_class(variant is BrandVariant.MEDIUM, "medium")
-        self.set_class(variant is BrandVariant.COMPACT, "compact")
-        self.set_class(event.size.height < MINIMUM_HEIGHT, "too-short")
+        width, height = event.size.width, event.size.height
+        wide = header_kind(width, height) == "lockup"
+        unicode = getattr(self.app, "unicode", True)
+        self.set_class(wide, "wide")
+        self.set_class(width >= 48 and not wide, "medium")
+        self.set_class(width < 48, "compact")
+        self.set_class(height < MINIMUM_HEIGHT, "too-short")
+        self.set_class(not unicode, "ascii")
+        self.query_one("#dashboard-header", Static).update(
+            header_text(width, height, unicode=unicode)
+        )
+        self.query_one("#shortcut-footer", Static).update(
+            _paint_footer(FULL_FOOTER if wide else COMPACT_FOOTER)
+        )
 
     async def on_account_list_selected(self, event: AccountList.Selected) -> None:
         selected = self._find_account(event.provider, event.account)

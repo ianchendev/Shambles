@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 
 from shambles.app.snapshot import Account, Group, Snapshot, Surface, Window
 from shambles.app.tui.dashboard import Dashboard
@@ -73,14 +74,25 @@ def snapshot():
 
 class DashboardHarness(App[None]):
     CSS_PATH = Path(__file__).parents[2] / "shambles/app/tui/theme.tcss"
+    BINDINGS = [
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
+    ]
 
-    def __init__(self, snapshot: Snapshot):
+    def __init__(self, snapshot: Snapshot, *, unicode: bool = True):
         super().__init__()
         self.snapshot = snapshot
+        self.unicode = unicode
         self.selected_messages = []
 
     def compose(self) -> ComposeResult:
         yield Dashboard(self.snapshot)
+
+    def action_cursor_down(self) -> None:
+        self.query_one(AccountList).action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        self.query_one(AccountList).action_cursor_up()
 
     def on_dashboard_account_selected(
         self, message: Dashboard.AccountSelected
@@ -206,8 +218,11 @@ async def test_narrow_dashboard_hides_decoration(snapshot):
     async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
         assert app.query_one(Dashboard).has_class("compact")
-        assert not app.query_one("#surface-pills").display
+        assert list(app.query("#surface-pills")) == []
         assert not app.query_one("#account-details").display
+        assert app.query_one("#shortcut-footer").display
+        assert "a add" in screen_text(app)
+        assert "j/k move" not in screen_text(app)
         assert app.query_one("#account-list").region.width > 30
         assert app.query_one("#inline-details").region.width > 30
         assert "Work" in screen_text(app)
@@ -264,34 +279,21 @@ async def test_usage_percentage_and_stale_copy_remain_visible(snapshot, width):
 
 
 async def test_short_wide_details_are_accessible_by_keyboard(snapshot):
-    group = snapshot.groups[0]
-    account = group.accounts[0]
-    account = replace(account, usage=[
-        *account.usage,
-        Window("week", 88, resets_label="Sunday 9AM", age_label="1 hour ago", stale=True),
-    ])
-    snapshot = replace(snapshot, groups=[
-        replace(group, accounts=[account, *group.accounts[1:]]),
-    ])
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(78, 16)) as pilot:
         await pilot.pause()
-        assert "Work" in screen_text(app)
-        details = app.query_one("#account-details")
+        dash = app.query_one(Dashboard)
+        assert not dash.has_class("wide")
+        screen = screen_text(app)
+        assert "OFFLINE" not in screen
+        details = app.query_one("#inline-details")
+        assert details.display
         rendered = rendered_text(details)
         assert "22%" in rendered
-        assert "88%" in rendered
-        assert "week" in rendered
-        assert "stale" in rendered
-        assert "4:30 PM" in rendered
-        assert "VS Code" in rendered
-        assert "session: 22% used" not in rendered
-        await pilot.press("tab", "end")
+        accounts = app.query_one(AccountList)
+        await pilot.press("j")
         await pilot.pause()
-        assert app.focused is details
-        assert details.scroll_y > 0
-        await pilot.press("shift+tab", "down", "enter")
-        assert app.selected_messages == [("claude", "Personal")]
+        assert accounts.highlighted == 1
 
 
 @pytest.mark.parametrize("width", [78, 40])
@@ -332,6 +334,30 @@ async def test_minimum_height_still_leaves_an_account_row_visible(snapshot):
         assert not app.query_one("#terminal-too-small").display
         assert "Work" in screen_text(app)
         assert "Claude / Work" not in screen_text(app)
+
+
+async def test_wide_dashboard_shows_lockup_and_footer(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        screen = screen_text(app)
+        assert "OFFLINE" in screen
+        assert "a add" in screen
+        assert "x eject" in screen
+        assert "j/k move" in screen
+        assert app.query_one(Dashboard).has_class("wide")
+
+
+async def test_wide_but_short_drops_lockup_and_uses_inline_details(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(78, 16)) as pilot:
+        await pilot.pause()
+        dash = app.query_one(Dashboard)
+        assert not dash.has_class("wide")
+        assert "OFFLINE" not in screen_text(app)
+        assert ">_ ⇄ SHAMBLES" in screen_text(app) or ">_ <-> SHAMBLES" in screen_text(app)
+        assert not app.query_one("#account-details").display
+        assert app.query_one("#inline-details").display
 
 
 async def test_dashboard_uses_the_shared_brand_breakpoints(snapshot):
