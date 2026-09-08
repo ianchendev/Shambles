@@ -140,7 +140,7 @@ def test_usage_bar_fills_and_falls_back_to_ascii():
 
 def test_hero_details_use_meters_pills_and_context(snapshot):
     group, account = snapshot.groups[0], snapshot.groups[0].accounts[0]
-    rendered = table_text(render_account_details(group, account, width=60, unicode=True))
+    rendered = table_text(render_account_details(group, account, width=80, unicode=True))
     assert "Work" in rendered
     assert "Active" in rendered
     assert "work@example.test" in rendered
@@ -307,12 +307,56 @@ async def test_ascii_fallback_covers_long_values_and_scrolled_lists(snapshot, wi
     group = replace(group, accounts=[account] + [
         Account(f"Account {index}") for index in range(30)
     ])
-    app = DashboardHarness(replace(snapshot, groups=[group]))
+    app = DashboardHarness(replace(snapshot, groups=[group]), unicode=False)
     async with app.run_test(size=(width, 24)) as pilot:
         await pilot.pause()
+        screen = screen_text(app)
+        assert "⏎" not in screen
+        assert "·" not in screen
+        assert "▊" not in screen
+        assert screen.isascii()
         await pilot.press("pagedown")
         await pilot.pause()
         assert app.query_one(AccountList).scroll_y > 0
+        assert screen_text(app).isascii()
+
+
+async def test_ascii_dashboard_chrome_is_strict_ascii(snapshot):
+    app = DashboardHarness(snapshot, unicode=False)
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        screen = screen_text(app)
+        assert screen.isascii()
+        assert "⏎" not in screen
+        assert "·" not in screen
+        assert "▊" not in screen
+        assert "Enter switch" in screen
+        assert app.query_one(Dashboard).has_class("ascii")
+
+
+def test_hero_context_line_ellipsizes_like_other_long_lines(snapshot):
+    group = snapshot.groups[0]
+    account = replace(group.accounts[0], email="a@b.c", display_name="A")
+    rendered = table_text(render_account_details(group, account, width=18, unicode=True))
+    assert "Already active" in rendered
+    assert "running sessions keep their login" not in rendered
+    assert "..." in rendered
+
+
+async def test_needs_login_callout_is_reachable_at_78x28(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(78, 28)) as pilot:
+        app.query_one(AccountList).highlighted = 1
+        await pilot.press("enter")
+        await pilot.pause()
+        screen = screen_text(app)
+        details = app.query_one("#account-details")
+        if "Run claude login" not in screen and "l to log in" not in screen:
+            assert details.styles.scrollbar_size_vertical > 0
+            details.scroll_end(animate=False)
+            await pilot.pause()
+            screen = screen_text(app)
+        assert "Run claude login" in screen or "l to log in" in screen
 
 
 @pytest.mark.parametrize("size", [(80, 8), (48, 10)])

@@ -155,7 +155,7 @@ def render_account_details(
         add_line(Text(account.login_hint, style=TERRACOTTA))
 
     if not compact:
-        details.add_row(Text(_context_line(account, unicode=unicode), style=GOLD))
+        add_line(Text(_context_line(account, unicode=unicode), style=GOLD))
 
     return details
 
@@ -264,6 +264,15 @@ class AccountDetails(VerticalScroll):
             unicode=unicode,
             compact=compact,
         ))
+        if compact:
+            return
+        if account.needs_login:
+            self.call_after_refresh(self._reveal_login_callout)
+        else:
+            self.scroll_home(animate=False)
+
+    def _reveal_login_callout(self) -> None:
+        self.scroll_end(animate=False)
 
     def on_resize(self, event: events.Resize) -> None:
         if self._account is not None:
