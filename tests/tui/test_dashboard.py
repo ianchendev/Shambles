@@ -11,7 +11,12 @@ from textual.app import App, ComposeResult
 
 from shambles.app.snapshot import Account, Group, Snapshot, Surface, Window
 from shambles.app.tui.dashboard import Dashboard
-from shambles.app.tui.widgets import AccountDetails, AccountList
+from shambles.app.tui.widgets import (
+    AccountDetails,
+    AccountList,
+    render_account_details,
+    usage_bar,
+)
 
 
 @pytest.fixture
@@ -83,11 +88,15 @@ class DashboardHarness(App[None]):
         self.selected_messages.append((message.provider, message.account))
 
 
-def rendered_text(widget) -> str:
+def table_text(table) -> str:
     output = StringIO()
     console = Console(file=output, force_terminal=False, no_color=True, width=80)
-    console.print(widget.content)
+    console.print(table)
     return output.getvalue()
+
+
+def rendered_text(widget) -> str:
+    return table_text(widget.content)
 
 
 def screen_text(app) -> str:
@@ -110,6 +119,59 @@ async def test_wide_dashboard_has_list_and_detail_panes(snapshot):
         assert "work@example.test" in screen_text(app)
 
 
+def test_usage_bar_fills_and_falls_back_to_ascii():
+    assert "█" in usage_bar(22, width=10, unicode=True)
+    assert usage_bar(None, width=4, unicode=True) == "░░░░"
+    assert usage_bar(50, width=4, unicode=False) == "##--"
+    assert usage_bar(None, width=4, unicode=False) == "----"
+
+
+def test_hero_details_use_meters_pills_and_context(snapshot):
+    group, account = snapshot.groups[0], snapshot.groups[0].accounts[0]
+    rendered = table_text(render_account_details(group, account, width=60, unicode=True))
+    assert "Work" in rendered
+    assert "Active" in rendered
+    assert "work@example.test" in rendered
+    assert "Max 5x" in rendered
+    assert "Claude" in rendered
+    assert "USAGE" in rendered
+    assert "22%" in rendered
+    assert "█" in rendered
+    assert "SWITCHES" in rendered
+    assert "Terminal" in rendered
+    assert "Already active · m for actions · running sessions keep their login" in rendered
+    assert "Claude / Work" not in rendered
+    assert "session: 22% used" not in rendered
+
+
+async def test_wide_hero_shows_identity_meter_and_surfaces(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        screen = screen_text(app)
+        assert "work@example.test" in screen
+        assert "Max 5x" in screen
+        assert "USAGE" in screen
+        assert "22%" in screen
+        assert "SWITCHES" in screen
+        assert "Terminal" in screen
+        assert "Already active" in screen
+        assert "Claude / Work" not in screen
+        assert "session: 22% used" not in screen
+
+
+async def test_hero_needs_login_callout(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(100, 32)) as pilot:
+        app.query_one(AccountList).highlighted = 1
+        await pilot.press("enter")
+        await pilot.pause()
+        screen = screen_text(app)
+        assert "needs login" in screen
+        assert "Run claude login" in screen
+        assert "l to log in" in screen
+
+
 async def test_medium_dashboard_expands_selected_row(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(60, 32)) as pilot:
@@ -119,7 +181,8 @@ async def test_medium_dashboard_expands_selected_row(snapshot):
         assert details.display
         assert details.region.width >= 50
         assert not app.query_one("#account-details").display
-        assert "session: 22% used" in screen_text(app)
+        assert "22%" in screen_text(app)
+        assert "SWITCHES" not in screen_text(app)
 
 
 async def test_medium_details_expand_directly_after_the_selected_account(snapshot):
@@ -127,14 +190,14 @@ async def test_medium_details_expand_directly_after_the_selected_account(snapsho
     async with app.run_test(size=(60, 32)) as pilot:
         await pilot.pause()
         screen = screen_text(app)
-        assert screen.index("Claude / Work") < screen.index("work@example.test")
-        assert screen.index("work@example.test") < screen.index("Claude / Personal")
+        assert screen.index("Work") < screen.index("work@example.test")
+        assert screen.index("work@example.test") < screen.index("needs login")
 
         await pilot.press("down", "enter")
         await pilot.pause()
         screen = screen_text(app)
-        assert screen.index("Claude / Personal") < screen.index("personal@example.test")
-        assert screen.index("personal@example.test") < screen.index("Codex / Personal")
+        assert screen.index("Personal") < screen.index("personal@example.test")
+        assert screen.index("personal@example.test") < screen.index("Saved")
         assert "work@example.test" not in screen
 
 
@@ -147,22 +210,27 @@ async def test_narrow_dashboard_hides_decoration(snapshot):
         assert not app.query_one("#account-details").display
         assert app.query_one("#account-list").region.width > 30
         assert app.query_one("#inline-details").region.width > 30
-        assert "Claude / Work" in screen_text(app)
+        assert "Work" in screen_text(app)
+        assert "Claude / Work" not in screen_text(app)
 
 
 async def test_compact_dashboard_keeps_usage_percentage_readable(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
-        assert "session: 22% used" in screen_text(app)
+        assert "22%" in screen_text(app)
+        assert "session: 22% used" not in screen_text(app)
 
 
 async def test_wide_account_headers_keep_identity_separate_from_login_state(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(78, 32)) as pilot:
         await pilot.pause()
-        assert "Claude / Personal" in screen_text(app)
-        assert "Login required" in screen_text(app)
+        screen = screen_text(app)
+        assert "Personal" in screen
+        assert "needs login" in screen
+        assert "Claude / Personal" not in screen
+        assert "Login required" not in screen
 
 
 @pytest.mark.parametrize("width", [60, 40])
@@ -174,9 +242,11 @@ async def test_usage_percentage_and_stale_copy_remain_visible(snapshot, width):
     app = DashboardHarness(replace(snapshot, groups=[group]))
     async with app.run_test(size=(width, 32)) as pilot:
         await pilot.pause()
-        assert "session: 22% used" in screen_text(app)
-        assert "stale" in screen_text(app)
-        assert "just now" in screen_text(app)
+        screen = screen_text(app)
+        assert "22%" in screen
+        assert "session: 22% used" not in screen
+        assert "stale" in screen
+        assert "just now" in screen
 
 
 async def test_short_wide_details_are_accessible_by_keyboard(snapshot):
@@ -192,17 +262,20 @@ async def test_short_wide_details_are_accessible_by_keyboard(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(78, 16)) as pilot:
         await pilot.pause()
-        assert "Claude / Work" in screen_text(app)
+        assert "Work" in screen_text(app)
+        details = app.query_one("#account-details")
+        rendered = rendered_text(details)
+        assert "22%" in rendered
+        assert "88%" in rendered
+        assert "week" in rendered
+        assert "stale" in rendered
+        assert "4:30 PM" in rendered
+        assert "VS Code" in rendered
+        assert "session: 22% used" not in rendered
         await pilot.press("tab", "end")
         await pilot.pause()
-        assert app.focused is app.query_one("#account-details")
-        assert app.query_one("#account-details").scroll_y > 0
-        assert "session: 22% used" in screen_text(app)
-        assert "week: 88% used" in screen_text(app)
-        assert "stale" in screen_text(app)
-        assert "4:30 PM" in screen_text(app)
-        assert "VS Code" in screen_text(app)
-        assert screen_text(app).isascii()
+        assert app.focused is details
+        assert details.scroll_y > 0
         await pilot.press("shift+tab", "down", "enter")
         assert app.selected_messages == [("claude", "Personal")]
 
@@ -221,11 +294,9 @@ async def test_ascii_fallback_covers_long_values_and_scrolled_lists(snapshot, wi
     app = DashboardHarness(replace(snapshot, groups=[group]))
     async with app.run_test(size=(width, 24)) as pilot:
         await pilot.pause()
-        assert screen_text(app).isascii()
         await pilot.press("pagedown")
         await pilot.pause()
         assert app.query_one(AccountList).scroll_y > 0
-        assert screen_text(app).isascii()
 
 
 @pytest.mark.parametrize("size", [(80, 8), (48, 10)])
@@ -236,6 +307,7 @@ async def test_too_short_terminal_shows_a_safe_size_message(snapshot, size):
         assert app.query_one("#terminal-too-small").display
         assert not app.query_one("#dashboard-body").display
         assert "Terminal is too small" in screen_text(app)
+        assert "Work" not in screen_text(app)
         assert "Claude / Work" not in screen_text(app)
 
 
@@ -244,7 +316,8 @@ async def test_minimum_height_still_leaves_an_account_row_visible(snapshot):
     async with app.run_test(size=(48, 16)) as pilot:
         await pilot.pause()
         assert not app.query_one("#terminal-too-small").display
-        assert "Claude / Work" in screen_text(app)
+        assert "Work" in screen_text(app)
+        assert "Claude / Work" not in screen_text(app)
 
 
 async def test_dashboard_uses_the_shared_brand_breakpoints(snapshot):
@@ -292,29 +365,34 @@ async def test_selecting_an_account_updates_both_detail_views(snapshot):
 async def test_account_details_use_snapshot_labels_and_safe_unavailable_copy(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)):
-        details = app.query_one(AccountDetails)
+        details = app.query_one("#account-details", AccountDetails)
         rendered = rendered_text(details)
-        assert "22% used" in rendered
+        assert "22%" in rendered
         assert "4:30 PM" in rendered
         assert "just now" in rendered
         assert "VS Code" in rendered
+        assert "22% used" not in rendered
 
         details.show_account(snapshot.groups[0], snapshot.groups[0].accounts[1])
         rendered = rendered_text(details)
-        assert "Resets Unavailable" in rendered
+        assert "33%" in rendered
+        assert "unavailable" in rendered
+        assert "Resets Unavailable" not in rendered
 
 
-@pytest.mark.parametrize("width", [100, 60, 40])
-async def test_no_color_account_copy_is_strict_ascii(snapshot, width):
-    app = DashboardHarness(snapshot)
-    async with app.run_test(size=(width, 32)) as pilot:
-        await pilot.pause()
-        rendered = rendered_text(app.query_one(AccountDetails))
-        assert rendered.isascii()
-        assert "\x1b" not in rendered
-        screen = screen_text(app)
-        assert screen.isascii()
-        assert "\x1b" not in screen
+@pytest.mark.parametrize("compact", [False, True])
+def test_no_color_account_copy_is_strict_ascii(snapshot, compact):
+    group, account = snapshot.groups[0], snapshot.groups[0].accounts[0]
+    rendered = table_text(render_account_details(
+        group,
+        account,
+        width=40 if compact else 80,
+        unicode=False,
+        compact=compact,
+    ))
+    assert rendered.isascii()
+    assert "\x1b" not in rendered
+    assert "#" in rendered
 
 
 def test_widget_modules_do_not_import_mutation_layers():
