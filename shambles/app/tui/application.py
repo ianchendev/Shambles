@@ -22,7 +22,7 @@ from .brand import header_text
 from .dashboard import Dashboard, MINIMUM_HEIGHT
 from .overlays import ConfirmAction, ResultScreen
 from .widgets import AccountList
-from .workflows import AccountMenu, LoginProgress, NameInputScreen
+from .workflows import AccountMenu, AddAccountScreen, LoginProgress, NameInputScreen
 
 WELCOME_COPY = "No saved accounts yet."
 WELCOME_FOOTER = "a add · x eject · r refresh · ? help · q quit"
@@ -106,29 +106,27 @@ class HelpScreen(ModalScreen[None]):
     ]
     DEFAULT_CSS = """
     HelpScreen { align: center middle; }
-    HelpScreen VerticalScroll {
-        width: 64; max-width: 100%; height: auto; max-height: 100%;
-        padding: 1 2; border: ascii #d9a441; background: #11182b;
-    }
     """
 
     def __init__(self):
         super().__init__(id="help")
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        with VerticalScroll(classes="overlay-panel"):
+            yield Static("SHAMBLES help", classes="overlay-title", markup=False)
             yield Static(
-                "SHAMBLES help\n\n"
+                "\n"
                 "j / Down     Next account\n"
                 "k / Up       Previous account\n"
                 "Enter        Switch selected account\n"
+                "a            Add a new profile\n"
                 "m            Account actions (save, add, rename, remove)\n"
                 "l            Log in to selected account\n"
                 "x            Eject Shambles\n"
                 "r            Refresh local state\n"
                 "?            Help\n"
                 "q            Quit\n"
-                "Esc          Close help / skip welcome motion\n\n"
+                "Esc          Close help\n\n"
                 "Accounts and usage come from local state.\n"
                 "No telemetry or update checks.\n"
                 "Affected applications appear in account details.\n"
@@ -156,6 +154,7 @@ class ShamblesTUI(App[str | None]):
         Binding("question_mark", "help", "Help"),
         Binding("enter", "switch_selected", "Switch", priority=True),
         Binding("m", "open_menu", "Menu"),
+        Binding("a", "add_account", "Add"),
         Binding("l", "login_selected", "Login"),
         Binding("x", "eject", "Eject"),
         Binding("q", "quit", "Quit"),
@@ -189,7 +188,7 @@ class ShamblesTUI(App[str | None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         gated = {"switch_selected", "refresh_snapshot",
-                "open_menu", "login_selected", "eject"}
+                "open_menu", "add_account", "login_selected", "eject"}
         # Refresh only rereads/restashes already-active credentials; it does
         # not begin a new credential mutation, so (like before) it alone is
         # exempt from the undersized-terminal guard.
@@ -371,8 +370,8 @@ class ShamblesTUI(App[str | None]):
             )
         elif choice == "add":
             self.push_screen(
-                NameInputScreen(f"Add a new {provider} profile named:"),
-                lambda name: self._begin_add(provider, name),
+                AddAccountScreen(self.snapshot.groups, selected_provider=provider),
+                self._begin_add,
             )
         elif choice == "rename":
             self.push_screen(
@@ -396,9 +395,21 @@ class ShamblesTUI(App[str | None]):
             return
         self._begin_mutation(lambda: self.service.save_current(provider, name))
 
-    def _begin_add(self, provider: str, name: str | None) -> None:
-        if name is None:
+    def action_add_account(self) -> None:
+        if not self.check_action("add_account", ()):
             return
+        self._capture_selection()
+        self.push_screen(
+            AddAccountScreen(
+                self.snapshot.groups, selected_provider=self.selected_provider,
+            ),
+            self._begin_add,
+        )
+
+    def _begin_add(self, picked: tuple[str, str] | None) -> None:
+        if picked is None:
+            return
+        provider, name = picked
         self._begin_mutation(lambda: self.service.add(provider, name))
 
     def _begin_rename(

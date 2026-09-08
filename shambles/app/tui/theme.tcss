@@ -134,3 +134,26 @@ Dashboard.too-short #shortcut-footer {
 Dashboard.too-short #terminal-too-small {
     display: block;
 }
+
+.overlay-panel {
+    width: 64;
+    max-width: 100%;
+    height: auto;
+    max-height: 100%;
+    padding: 1 2;
+    border: tall #d9a441;
+    background: #11182b;
+}
+
+.overlay-panel.danger {
+    border: tall #e07a5f;
+}
+
+.overlay-panel Static {
+    height: auto;
+}
+
+.overlay-title {
+    color: #e07a5f;
+    text-style: bold;
+}
