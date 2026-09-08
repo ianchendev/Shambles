@@ -531,9 +531,8 @@ async def test_save_failure_shows_the_service_error(service):
 async def test_add_prompts_for_a_name_and_creates_an_empty_profile(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await pilot.press("m", "a")
-        assert app.screen.id == "name-input"
-        assert "Add a new claude profile" in screen_text(app)
+        await pilot.press("a")  # top-level
+        assert app.screen.id == "add-account"
         await pilot.press(*"fresh", "enter")
         await pilot.pause()
         assert service.add_calls == [("claude", "fresh")]
@@ -541,14 +540,29 @@ async def test_add_prompts_for_a_name_and_creates_an_empty_profile(service):
         assert "Added fresh." in screen_text(app)
 
 
-async def test_add_can_be_cancelled_without_calling_the_service(service):
+async def test_menu_a_uses_the_same_add_overlay(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("m", "a")
-        assert app.screen.id == "name-input"
+        assert app.screen.id == "add-account"
+
+
+async def test_empty_welcome_can_add(empty_service):
+    empty_service.add_calls = []
+    app = ShamblesTUI(empty_service)
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.press("a")
+        assert app.screen.id == "add-account"
+
+
+async def test_add_can_be_cancelled_without_calling_the_service(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        assert app.screen.id == "add-account"
         await pilot.press("escape")
         assert service.add_calls == []
-        assert app.screen.id != "name-input"
+        assert app.screen.id != "add-account"
 
 
 # --- Rename --------------------------------------------------------------
@@ -793,9 +807,12 @@ async def test_help_lists_lifecycle_shortcuts(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("?")
-        assert "Account actions" in screen_text(app)
-        assert "Log in to selected account" in screen_text(app)
-        assert "Eject Shambles" in screen_text(app)
+        help_text = screen_text(app)
+        assert "Account actions" in help_text
+        assert "Log in to selected account" in help_text
+        assert "Add" in help_text
+        assert "Eject" in help_text
+        assert "skip welcome motion" not in help_text
 
 
 @pytest.mark.parametrize("keys", [("j", "k"), ("down", "up")])
