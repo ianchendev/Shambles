@@ -21,6 +21,11 @@ from pathlib import Path
 LIBRARY_DIRNAME = ".shambles"
 BACKUP_DIRNAME = ".backups"
 
+#: Shambles' own preferences, as opposed to any provider's config. It sits in
+#: the library root rather than beside the profiles because it belongs to no
+#: provider -- see :mod:`shambles.settings`.
+SETTINGS_NAME = "settings.json"
+
 #: Per-profile files. Small: tokens and, for providers whose identity lives
 #: outside the credential, a stashed copy of it.
 CREDENTIALS_NAME = "credentials.json"
@@ -62,6 +67,10 @@ class Paths:
     @property
     def backup_dir(self) -> Path:
         return self.library_dir / BACKUP_DIRNAME
+
+    @property
+    def settings_path(self) -> Path:
+        return self.library_dir / SETTINGS_NAME
 
     def provider_dir(self, provider_id: str) -> Path:
         return self.library_dir / provider_id
