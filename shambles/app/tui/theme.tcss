@@ -53,10 +53,16 @@ Dashboard {
     height: auto;
 }
 
-#account-list > AccountRow.-highlight .account-row {
-    background: #e07a5f;
-    color: #0b1020;
+.group-header {
+    color: #d9a441;
     text-style: bold;
+}
+
+#account-list > AccountRow.-highlight .account-row {
+    background: #1a2238;
+    color: #f4f1de;
+    border-left: tall #e07a5f;
+    text-style: none;
 }
 
 #account-details,
