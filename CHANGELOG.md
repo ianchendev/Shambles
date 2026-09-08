@@ -8,22 +8,29 @@ Notable changes per release. Dates are the tag date.
 
 - **A terminal interface.** Running `shambles` on an interactive terminal now
   opens a keyboard-driven dashboard (`j`/`k` or the arrow keys to move,
-  `Enter` to switch, `m` for the account menu, `l` to log in, `x` to eject,
-  `?` for help) instead of requiring the Tk window. `shambles tui` opens it
-  explicitly; `shambles gui` still opens the window; `shambles list` and
-  `shambles switch` are unchanged and remain the scriptable, non-interactive
-  path. See the README's "Terminal interface" section for the full shortcut
-  list.
+  `Enter` to switch, `a` to add, `m` for the account menu, `l` to log in,
+  `x` to eject, `?` for help) instead of requiring the Tk window. `shambles
+  tui` opens it explicitly; `shambles gui` still opens the window; `shambles
+  list` and `shambles switch` are unchanged and remain the scriptable,
+  non-interactive path. See the README's "Terminal interface" section for the
+  full shortcut list.
 - **Same-terminal launch after switching.** From the terminal interface's
   result screen, choosing Launch hands the current terminal to the vendor CLI
   (`claude` or `codex`) in place — Textual exits and tears down first, then
   the vendor process replaces Shambles rather than running alongside it.
-- **`--no-motion` and `NO_COLOR`** disable the terminal interface's onboarding
-  box-draw animation; `NO_COLOR` is detected automatically, the same
-  convention respected by most other terminal tools, and also makes the whole
-  interface monochrome, not just the animation.
+- **`--no-motion` and `NO_COLOR`.** `NO_COLOR` is detected automatically, the
+  same convention respected by most other terminal tools, and makes the whole
+  terminal interface monochrome. `--no-motion` remains accepted (before or
+  after the subcommand) so existing flags do not break.
 - **`SHAMBLES_NO_MOTION=1`** does the same as `--no-motion`, for scripts and
   session managers that set environment variables more easily than flags.
+
+### Changed
+
+- **TUI visual refresh.** The terminal dashboard now uses the README lockup
+  as its wide header, a grouped account list with a terracotta selection
+  spine, a hero inspector (USAGE / SWITCHES), and a footer that exposes Add
+  (`a`) and Eject (`x`) as first-class keys.
 
 ### Known limitations
 

@@ -19,24 +19,27 @@ import pytest
 
 
 @pytest.mark.parametrize("terminal_size", [
-    (100, 32),  # wide: list and detail panes side by side
-    (78, 28),   # the wide/medium breakpoint (see brand.variant_for)
-    (60, 28),   # medium: the selected row expands its own inline detail
-    (48, 24),   # the medium/compact breakpoint
-    (40, 24),   # compact: decoration hidden, list stacked above detail
+    (100, 32),
+    (78, 28),
+    (78, 16),  # wide-but-short: compact header, inline details
+    (60, 28),
+    (48, 24),
+    (40, 24),
 ])
 def test_dashboard_layouts(snap_compare, terminal_size):
-    """The dashboard's five documented breakpoints all render real content."""
     assert snap_compare("snapshot_app.py", terminal_size=terminal_size)
 
 
+def test_empty_welcome_unicode_lockup(snap_compare):
+    """Empty unicode welcome shows the lockup and add/eject footer."""
+    assert snap_compare("snapshot_app.py:empty_app", terminal_size=(100, 32))
+
+
 def test_onboarding_ascii_fallback_is_readable(snap_compare):
-    """``unicode=False`` swaps the box-drawing frame and wordmark for ASCII."""
+    """``unicode=False`` empty welcome uses the ASCII lockup."""
     assert snap_compare("snapshot_app.py:ascii_app", terminal_size=(100, 32))
 
 
 def test_onboarding_under_no_color_settles_immediately(snap_compare):
-    """``NO_COLOR`` disables the onboarding draw-in animation outright, so
-    the frame is complete on its very first rendered frame rather than
-    showing a partially-drawn corner-only box."""
+    """``NO_COLOR`` empty welcome is monochrome with the same glyphs."""
     assert snap_compare("snapshot_app.py:no_color_app", terminal_size=(100, 32))
