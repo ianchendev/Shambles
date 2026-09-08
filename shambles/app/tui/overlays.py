@@ -9,6 +9,14 @@ from textual.widgets import Static
 from ..service import ActionPlan, ActionResult
 
 
+def overlay_panel_classes(node, *extra: str) -> str:
+    """Gold overlay chrome, with ASCII borders when the app is not unicode."""
+    classes = ["overlay-panel", *extra]
+    if not getattr(node.app, "unicode", True):
+        classes.append("ascii")
+    return " ".join(classes)
+
+
 class ConfirmAction(ModalScreen[bool]):
     """Show the service's prompt and warnings before accepting a plan."""
 
@@ -19,11 +27,6 @@ class ConfirmAction(ModalScreen[bool]):
     ]
     DEFAULT_CSS = """
     ConfirmAction { align: center middle; }
-    ConfirmAction VerticalScroll {
-        width: 64; max-width: 100%; height: auto; max-height: 100%;
-        padding: 1 2; border: ascii #d9a441; background: #11182b;
-    }
-    ConfirmAction Static { height: auto; }
     """
 
     def __init__(self, plan: ActionPlan):
@@ -31,8 +34,8 @@ class ConfirmAction(ModalScreen[bool]):
         self.plan = plan
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
-            yield Static(self.plan.prompt, markup=False)
+        with VerticalScroll(classes=overlay_panel_classes(self, "danger")):
+            yield Static(self.plan.prompt, classes="overlay-title", markup=False)
             for warning in self.plan.warnings:
                 yield Static(warning, markup=False)
             yield Static("\nEnter Confirm   Esc Cancel   q Quit", markup=False)
@@ -52,11 +55,6 @@ class ResultScreen(ModalScreen[str | None]):
     ]
     DEFAULT_CSS = """
     ResultScreen { align: center middle; }
-    ResultScreen VerticalScroll {
-        width: 64; max-width: 100%; height: auto; max-height: 100%;
-        padding: 1 2; border: ascii #d9a441; background: #11182b;
-    }
-    ResultScreen Static { height: auto; }
     """
 
     def __init__(self, result: ActionResult, *, provider: str | None = None):
@@ -75,11 +73,16 @@ class ResultScreen(ModalScreen[str | None]):
         return self.can_launch if action == "launch" else True
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        extra = ("danger",) if not self.result.ok else ()
+        with VerticalScroll(classes=overlay_panel_classes(self, *extra)):
             if self.result.summary:
-                yield Static(self.result.summary, markup=False)
+                yield Static(self.result.summary, classes="overlay-title", markup=False)
             if self.result.error is not None:
-                yield Static(self.result.error.message, markup=False)
+                yield Static(
+                    self.result.error.message,
+                    classes="overlay-title" if not self.result.summary else None,
+                    markup=False,
+                )
                 if self.result.error.recovery:
                     yield Static(self.result.error.recovery, markup=False)
             for warning in self.result.warnings:

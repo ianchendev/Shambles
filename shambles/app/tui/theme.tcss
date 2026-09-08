@@ -11,33 +11,33 @@ Dashboard {
 
 #dashboard-body {
     width: 100%;
-    height: 100%;
-    padding: 1 2;
+    height: 1fr;
 }
 
-#dashboard-title {
-    height: 3;
+#dashboard-header {
+    width: 100%;
+    height: auto;
     color: #e07a5f;
-    text-style: bold;
-    content-align: center middle;
+    content-align: left top;
 }
 
-#surface-pills {
-    height: 2;
+#shortcut-footer {
+    width: 100%;
+    height: 1;
     color: #d9a441;
-    content-align: center middle;
 }
 
 #main-panes {
     width: 100%;
     height: 1fr;
+    padding: 1 2;
 }
 
 #account-list {
     width: 1fr;
     height: 100%;
     background: #11182b;
-    border: ascii #d9a441;
+    border: tall #d9a441;
     scrollbar-size: 0 0;
 }
 
@@ -53,16 +53,26 @@ Dashboard {
     height: auto;
 }
 
-#account-list > AccountRow.-highlight .account-row {
-    background: #e07a5f;
-    color: #0b1020;
+.group-header {
+    color: #d9a441;
     text-style: bold;
+}
+
+#account-list > AccountRow.-highlight .account-row {
+    background: #1a2238;
+    color: #f4f1de;
+    border-left: tall #e07a5f;
+    text-style: none;
+}
+
+Dashboard.ascii #account-list > AccountRow.-highlight .account-row {
+    border-left: ascii #e07a5f;
 }
 
 #account-details,
 #inline-details {
     background: #11182b;
-    border: ascii #e07a5f;
+    border: tall #e07a5f;
     padding: 1 2;
 }
 
@@ -71,7 +81,6 @@ Dashboard {
     height: 100%;
     margin-left: 1;
     overflow-y: auto;
-    scrollbar-size: 0 0;
 }
 
 #inline-details {
@@ -106,18 +115,73 @@ Dashboard.compact #inline-details {
     display: block;
 }
 
-Dashboard.compact #surface-pills {
-    display: none;
-}
-
-Dashboard.compact #dashboard-body {
+Dashboard.compact #main-panes {
     padding: 0 1;
 }
 
-Dashboard.too-short #dashboard-body {
+Dashboard.ascii #account-list {
+    border: ascii #d9a441;
+}
+
+Dashboard.ascii #account-details,
+Dashboard.ascii #inline-details {
+    border: ascii #e07a5f;
+}
+
+Dashboard.too-short #dashboard-body,
+Dashboard.too-short #dashboard-header,
+Dashboard.too-short #shortcut-footer {
     display: none;
 }
 
 Dashboard.too-short #terminal-too-small {
     display: block;
+}
+
+Onboarding.too-short #welcome-body,
+Onboarding.too-short #dashboard-header,
+Onboarding.too-short #shortcut-footer {
+    display: none;
+}
+
+Onboarding.too-short #terminal-too-small {
+    display: block;
+}
+
+.overlay-panel {
+    width: 64;
+    max-width: 100%;
+    height: auto;
+    max-height: 100%;
+    padding: 1 2;
+    border: tall #d9a441;
+    background: #11182b;
+}
+
+.overlay-panel.danger {
+    border: tall #e07a5f;
+}
+
+.overlay-panel.ascii {
+    border: ascii #d9a441;
+}
+
+.overlay-panel.danger.ascii {
+    border: ascii #e07a5f;
+}
+
+#add-providers {
+    height: auto;
+    background: #11182b;
+    color: #f4f1de;
+    padding: 0;
+}
+
+.overlay-panel Static {
+    height: auto;
+}
+
+.overlay-title {
+    color: #e07a5f;
+    text-style: bold;
 }

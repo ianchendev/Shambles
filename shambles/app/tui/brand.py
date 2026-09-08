@@ -17,6 +17,8 @@ class BrandVariant(Enum):
     COMPACT = "compact"
 
 
+LOCKUP_MIN_HEIGHT = 24
+
 # This is the wordmark inside README.md's ANSI-art frame, unchanged.  The TUI
 # composes its frame separately so onboarding motion never alters the artwork.
 WIDE_UNICODE_ROWS: Tuple[str, ...] = (
@@ -26,6 +28,29 @@ WIDE_UNICODE_ROWS: Tuple[str, ...] = (
     "╚════██║██╔══██║██╔══██║██║╚██╔╝██║██╔══██╗██║     ██╔══╝  ╚════██║",
     "███████║██║  ██║██║  ██║██║ ╚═╝ ██║██████╔╝███████╗███████╗███████║",
     "╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═════╝ ╚══════╝╚══════╝╚══════╝",
+)
+
+LOCKUP_UNICODE_ROWS: Tuple[str, ...] = (
+    "╔═[ >_ ⇄ ]═════════════════════════════════════════════════════[ OFFLINE ]═╗",
+    "║                                                                          ║",
+    "║  ███████╗██╗  ██╗ █████╗ ███╗   ███╗██████╗ ██╗     ███████╗███████╗     ║",
+    "║  ██╔════╝██║  ██║██╔══██╗████╗ ████║██╔══██╗██║     ██╔════╝██╔════╝     ║",
+    "║  ███████╗███████║███████║██╔████╔██║██████╔╝██║     █████╗  ███████╗     ║",
+    "║  ╚════██║██╔══██║██╔══██║██║╚██╔╝██║██╔══██╗██║     ██╔══╝  ╚════██║     ║",
+    "║  ███████║██║  ██║██║  ██║██║ ╚═╝ ██║██████╔╝███████╗███████╗███████║     ║",
+    "║  ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═════╝ ╚══════╝╚══════╝╚══════╝     ║",
+    "║                                                                          ║",
+    "║              Switch Claude and Codex accounts safely.                    ║",
+    "╚══════════════════════════════════════════════════════════════════════════╝",
+)
+
+LOCKUP_ASCII_ROWS: Tuple[str, ...] = (
+    "+--[ >_ <-> ]---------------------------------------------------[ OFFLINE ]--+",
+    "|                                                                            |",
+    "|                                  SHAMBLES                                  |",
+    "|                      Claude + Codex account switcher                       |",
+    "|                                                                            |",
+    "+----------------------------------------------------------------------------+",
 )
 
 MEDIUM_UNICODE_ROWS: Tuple[str, ...] = (
@@ -72,3 +97,26 @@ def brand_text(variant: BrandVariant, *, unicode: bool = True) -> str:
     if variant is BrandVariant.COMPACT:
         return ">_ ⇄ SHAMBLES" if unicode else ">_ <-> SHAMBLES"
     return UNICODE_ART[variant] if unicode else ASCII_ART[variant]
+
+
+def lockup_text(*, unicode: bool = True) -> str:
+    """Render the framed README lockup without colour escape sequences."""
+
+    rows = LOCKUP_UNICODE_ROWS if unicode else LOCKUP_ASCII_ROWS
+    return "\n".join(rows)
+
+
+def header_kind(width: int, height: int) -> str:
+    """Return ``lockup`` when the framed banner fits, else ``compact``."""
+
+    if width >= 78 and height >= LOCKUP_MIN_HEIGHT:
+        return "lockup"
+    return "compact"
+
+
+def header_text(width: int, height: int, *, unicode: bool = True) -> str:
+    """Render the dashboard header for the available terminal geometry."""
+
+    if header_kind(width, height) == "lockup":
+        return lockup_text(unicode=unicode)
+    return brand_text(BrandVariant.COMPACT, unicode=unicode)

@@ -62,32 +62,31 @@ def _populated_snapshot() -> Snapshot:
 
 
 def _empty_snapshot() -> Snapshot:
-    """No accounts anywhere -- the state that shows the onboarding screen."""
+    """No accounts anywhere -- the state that shows the empty welcome."""
     return Snapshot(1, groups=[Group("claude", "Claude")])
 
 
-#: The main dashboard, at whichever terminal size a test asks for.
-app = ShamblesTUI(FrozenService(_populated_snapshot()), motion=False)
-
-#: Onboarding with ``unicode=False`` -- the plain-ASCII fallback wordmark and
-#: box-drawing a terminal without Unicode line-drawing glyphs gets instead.
-ascii_app = ShamblesTUI(
-    FrozenService(_empty_snapshot()), motion=False, unicode=False,
-)
-
-#: Onboarding as a real ``NO_COLOR`` terminal sees it. ``ShamblesTUI`` reads
-#: ``NO_COLOR`` from the environment at construction time and turns its
-#: onboarding box-draw animation off (see
-#: ``shambles/app/tui/application.py``'s ``ShamblesTUI.__init__``), so the
-#: frame renders fully drawn on its very first frame instead of animating in
-#: over three ~150ms steps -- exactly what
-#: ``tests/tui/test_application.py::test_motion_opt_out_starts_with_a_complete_frame``
-#: asserts about the ``NO_COLOR`` mode. The environment is restored
-#: immediately after construction so importing this module never leaves
-#: ``NO_COLOR`` set for anything else in the process.
+# Color fixtures must not inherit an ambient ``NO_COLOR`` (CI and some
+# sandboxes set it). ``no_color_app`` then opts in explicitly. The
+# environment is restored afterwards so importing this module never
+# leaks the override.
 _environ_before = dict(os.environ)
-os.environ["NO_COLOR"] = "1"
 try:
+    os.environ.pop("NO_COLOR", None)
+
+    #: The main dashboard, at whichever terminal size a test asks for.
+    app = ShamblesTUI(FrozenService(_populated_snapshot()), motion=False)
+
+    #: Empty welcome with the unicode lockup (width≥78, height≥24).
+    empty_app = ShamblesTUI(FrozenService(_empty_snapshot()), motion=False)
+
+    #: Empty welcome with ``unicode=False`` -- ASCII lockup and ``|`` footer.
+    ascii_app = ShamblesTUI(
+        FrozenService(_empty_snapshot()), motion=False, unicode=False,
+    )
+
+    os.environ["NO_COLOR"] = "1"
+    #: Empty welcome as a ``NO_COLOR`` terminal sees it (same glyphs, no palette).
     no_color_app = ShamblesTUI(FrozenService(_empty_snapshot()), motion=True)
 finally:
     os.environ.clear()

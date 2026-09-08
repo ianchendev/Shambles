@@ -8,14 +8,12 @@ import time
 from enum import Enum
 from typing import Callable
 
-from rich.cells import cell_len
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -24,11 +22,15 @@ from ...errors import ShamblesError
 from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
                        ShamblesService)
 from ..snapshot import Snapshot
-from .brand import BrandVariant, brand_text, variant_for
+from .brand import header_text
 from .dashboard import Dashboard, MINIMUM_HEIGHT
-from .overlays import ConfirmAction, ResultScreen
+from .overlays import ConfirmAction, ResultScreen, overlay_panel_classes
 from .widgets import AccountList
-from .workflows import AccountMenu, LoginProgress, NameInputScreen
+from .workflows import AccountMenu, AddAccountScreen, LoginProgress, NameInputScreen
+
+WELCOME_COPY = "No saved accounts yet."
+WELCOME_FOOTER = "a add · x eject · r refresh · ? help · q quit"
+WELCOME_FOOTER_ASCII = "a add | x eject | r refresh | ? help | q quit"
 
 
 class SwitchFinished(Message):
@@ -177,23 +179,17 @@ class OnboardingFrame(Widget):
 
 class Onboarding(Widget):
     DEFAULT_CSS = """
-    Onboarding { height: 1fr; }
+    Onboarding { width: 100%; height: 1fr; }
     Onboarding #welcome-body {
-        width: 100%; height: 100%; align: center middle; padding: 1 2;
-    }
-    Onboarding #welcome-title {
-        width: 100%; height: 2; text-style: bold; content-align: center middle;
+        width: 100%; height: 1fr; align: center middle; padding: 1 2;
     }
     Onboarding #welcome-copy {
         width: 100%; height: auto; content-align: center middle;
     }
-    Onboarding.too-short #welcome-body { display: none; }
-    Onboarding.too-short #terminal-too-small { display: block; }
     """
 
-    def __init__(self, *, motion: bool, unicode: bool):
+    def __init__(self, *, unicode: bool):
         super().__init__(id="onboarding")
-        self.motion = motion
         self.unicode = unicode
 
     def compose(self) -> ComposeResult:
@@ -201,27 +197,21 @@ class Onboarding(Widget):
             f"Terminal is too small. Use at least {MINIMUM_HEIGHT} rows.",
             id="terminal-too-small",
         )
+        yield Static(id="dashboard-header", markup=False)
         with Vertical(id="welcome-body"):
-            yield Static("Welcome to SHAMBLES", id="welcome-title")
-            yield OnboardingFrame(
-                variant_for(self.app.size.width),
-                motion=self.motion,
-                unicode=self.unicode,
-            )
-            yield Static(
-                "No saved accounts yet.\n"
-                "Manage Claude and Codex accounts locally.\n\n"
-                "r Refresh   ? Help   q Quit",
-                id="welcome-copy",
-            )
+            yield Static(WELCOME_COPY, id="welcome-copy")
+        yield Static(id="shortcut-footer", markup=False)
 
     def on_resize(self, event: events.Resize) -> None:
-        frame = self.query_one(OnboardingFrame)
-        frame.set_variant(variant_for(event.size.width))
-        too_short = event.size.height < MINIMUM_HEIGHT
-        self.set_class(too_short, "too-short")
-        if too_short:
-            frame.settle()
+        width, height = event.size.width, event.size.height
+        unicode = getattr(self.app, "unicode", self.unicode)
+        self.set_class(height < MINIMUM_HEIGHT, "too-short")
+        self.query_one("#dashboard-header", Static).update(
+            header_text(width, height, unicode=unicode)
+        )
+        self.query_one("#shortcut-footer", Static).update(
+            WELCOME_FOOTER if unicode else WELCOME_FOOTER_ASCII
+        )
 
 
 class HelpScreen(ModalScreen[None]):
@@ -231,22 +221,20 @@ class HelpScreen(ModalScreen[None]):
     ]
     DEFAULT_CSS = """
     HelpScreen { align: center middle; }
-    HelpScreen VerticalScroll {
-        width: 64; max-width: 100%; height: auto; max-height: 100%;
-        padding: 1 2; border: ascii #d9a441; background: #11182b;
-    }
     """
 
     def __init__(self):
         super().__init__(id="help")
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        with VerticalScroll(classes=overlay_panel_classes(self)):
+            yield Static("SHAMBLES help", classes="overlay-title", markup=False)
             yield Static(
-                "SHAMBLES help\n\n"
+                "\n"
                 "j / Down     Next account\n"
                 "k / Up       Previous account\n"
                 "Enter        Switch selected account\n"
+                "a            Add a new profile\n"
                 "m            Account actions (save, add, rename, remove)\n"
                 "l            Log in to selected account\n"
                 "x            Eject Shambles\n"
@@ -254,7 +242,7 @@ class HelpScreen(ModalScreen[None]):
                 "u            Hide the update notice\n"
                 "?            Help\n"
                 "q            Quit\n"
-                "Esc          Close help / skip welcome motion\n\n"
+                "Esc          Close help\n\n"
                 "Accounts and usage come from local state.\n"
                 "No telemetry. Update checks are off by default.\n"
                 "Affected applications appear in account details.\n"
@@ -286,6 +274,7 @@ class ShamblesTUI(App[str | None]):
         Binding("question_mark", "help", "Help"),
         Binding("enter", "switch_selected", "Switch", priority=True),
         Binding("m", "open_menu", "Menu"),
+        Binding("a", "add_account", "Add"),
         Binding("l", "login_selected", "Login"),
         Binding("x", "eject", "Eject"),
         Binding("u", "hide_update_notice", "Hide notice", show=False),
@@ -308,7 +297,6 @@ class ShamblesTUI(App[str | None]):
         self.unicode = unicode
         self.selected_provider: str | None = None
         self.selected_account: str | None = None
-        self._onboarding_seen = False
         self._mutation_pending = False
         self._login_handle: LoginHandle | None = None
         self._update_lookup: threading.Thread | None = None
@@ -323,7 +311,7 @@ class ShamblesTUI(App[str | None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         gated = {"switch_selected", "refresh_snapshot",
-                "open_menu", "login_selected", "eject"}
+                "open_menu", "add_account", "login_selected", "eject"}
         # Refresh only rereads/restashes already-active credentials; it does
         # not begin a new credential mutation, so (like before) it alone is
         # exempt from the undersized-terminal guard.
@@ -358,9 +346,7 @@ class ShamblesTUI(App[str | None]):
     def _view(self) -> Widget:
         if self._accounts():
             return Dashboard(self.snapshot)
-        motion = self.motion and not self._onboarding_seen
-        self._onboarding_seen = True
-        return Onboarding(motion=motion, unicode=self.unicode)
+        return Onboarding(unicode=self.unicode)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="app-body"):
@@ -507,7 +493,6 @@ class ShamblesTUI(App[str | None]):
     def action_switch_selected(self) -> None:
         if not self.check_action("switch_selected", ()):
             return
-        self.action_settle_onboarding()
         self._capture_selection()
         for group in self.snapshot.groups:
             if group.provider != self.selected_provider:
@@ -580,8 +565,8 @@ class ShamblesTUI(App[str | None]):
             )
         elif choice == "add":
             self.push_screen(
-                NameInputScreen(f"Add a new {provider} profile named:"),
-                lambda name: self._begin_add(provider, name),
+                AddAccountScreen(self.snapshot.groups, selected_provider=provider),
+                self._begin_add,
             )
         elif choice == "rename":
             self.push_screen(
@@ -605,9 +590,21 @@ class ShamblesTUI(App[str | None]):
             return
         self._begin_mutation(lambda: self.service.save_current(provider, name))
 
-    def _begin_add(self, provider: str, name: str | None) -> None:
-        if name is None:
+    def action_add_account(self) -> None:
+        if not self.check_action("add_account", ()):
             return
+        self._capture_selection()
+        self.push_screen(
+            AddAccountScreen(
+                self.snapshot.groups, selected_provider=self.selected_provider,
+            ),
+            self._begin_add,
+        )
+
+    def _begin_add(self, picked: tuple[str, str] | None) -> None:
+        if picked is None:
+            return
+        provider, name = picked
         self._begin_mutation(lambda: self.service.add(provider, name))
 
     def _begin_rename(
@@ -698,10 +695,6 @@ class ShamblesTUI(App[str | None]):
         if isinstance(self.screen, LoginProgress):
             self.pop_screen()
         await self.push_screen(ResultScreen(event.result))
-
-    def action_settle_onboarding(self) -> None:
-        for frame in self.query(OnboardingFrame):
-            frame.settle()
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())

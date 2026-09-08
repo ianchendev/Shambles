@@ -11,41 +11,96 @@ from textual.widgets import ListItem, ListView, Static
 
 from ..snapshot import Account, Group, Snapshot, Window
 
+GOLD = "#d9a441"
+TERRACOTTA = "#e07a5f"
+MUTED = "#8b90a0"
 
-def _state_copy(account: Account) -> str:
+
+def _chip(account: Account) -> str:
     if account.active:
         return "Active"
     if account.needs_login:
-        return "Login required"
-    return account.state.replace("_", " ").title() if account.state else "Saved"
+        return "needs login"
+    return "Saved"
+
+
+def _chip_style(account: Account) -> str:
+    if account.active:
+        return GOLD
+    if account.needs_login:
+        return TERRACOTTA
+    return MUTED
+
+
+def _join(parts: list[str], *, unicode: bool) -> str:
+    return (" · " if unicode else " | ").join(parts)
+
+
+def usage_bar(percent: int | None, width: int = 20, *, unicode: bool = True) -> str:
+    filled_ch = "█" if unicode else "#"
+    empty_ch = "░" if unicode else "-"
+    if percent is None:
+        return empty_ch * width
+    filled = round(max(0, min(100, percent)) * width / 100)
+    filled = max(0, min(width, filled))
+    return filled_ch * filled + empty_ch * (width - filled)
 
 
 def _account_row(group: Group, account: Account) -> Table:
     row = Table.grid(expand=True)
     row.add_column(ratio=1, overflow="crop", no_wrap=True)
-    label = Text()
-    label.append(group.display_name, style="bold")
-    label.append(" / ")
-    label.append(account.name)
-    row.add_row(label)
-    row.add_row(Text(_state_copy(account)))
+    row.add_column(justify="right", no_wrap=True, width=12)
+    row.add_row(Text(account.name), Text(_chip(account), style=_chip_style(account)))
     return row
 
 
-def _usage_row(window: Window) -> Tuple[Text, Text]:
-    percent = (
-        "Unavailable"
-        if window.used_percent is None
-        else f"{window.used_percent}% used"
-    )
-    reset = window.resets_label or "Unavailable"
-    return Text(f"{window.label}: {percent}"), Text(f"Resets {reset}")
+def _meter_lines(window: Window, *, width: int, unicode: bool) -> list[Text]:
+    if window.used_percent is None:
+        percent_copy = "unavailable"
+        percent_style = MUTED
+    else:
+        percent_copy = f"{window.used_percent}%"
+        percent_style = ""
+    heading = Text.assemble((window.label, "bold"), "  ", (percent_copy, percent_style))
+    bar_width = max(4, min(20, width))
+    bar = usage_bar(window.used_percent, width=bar_width, unicode=unicode)
+    bar_style = MUTED if window.used_percent is None else TERRACOTTA
+    lines = [heading, Text(bar, style=bar_style)]
+    meta: list[str] = []
+    if window.used_percent is not None:
+        meta.append(window.resets_label or "unavailable")
+    if window.stale:
+        meta.append("stale")
+    if window.age_label:
+        meta.append(window.age_label)
+    if meta:
+        lines.append(Text(_join(meta, unicode=unicode), style=MUTED))
+    return lines
+
+
+def _context_line(account: Account, *, unicode: bool) -> str:
+    if account.active:
+        parts = [
+            "Already active",
+            "m for actions",
+            "running sessions keep their login",
+        ]
+    elif account.needs_login:
+        parts = ["l to log in", "cannot switch until this account is signed in"]
+    else:
+        parts = ["Enter to switch", "m for actions"]
+    return _join(parts, unicode=unicode)
 
 
 def render_account_details(
-    group: Group, account: Account, *, width: int = 80
+    group: Group,
+    account: Account,
+    *,
+    width: int = 80,
+    unicode: bool = True,
+    compact: bool = False,
 ) -> Table:
-    """Build account details solely from presentation-ready snapshot fields."""
+    """Build the hero inspector solely from presentation-ready snapshot fields."""
 
     details = Table.grid(expand=True)
     details.add_column(ratio=1, overflow="crop", no_wrap=True)
@@ -57,41 +112,51 @@ def render_account_details(
             line.append("." * min(3, width))
         details.add_row(line)
 
-    def add_row(label: Text, value: Text) -> None:
-        # Fit the complete pair before sharing a line; metadata must not steal
-        # columns from an account identity or a percentage.
-        if label.cell_len + value.cell_len + 1 > width:
-            if label.plain:
-                add_line(label)
-            if value.plain:
-                add_line(value)
-        else:
-            add_line(Text.assemble(label, " " if label and value else "", value))
-
-    add_row(Text(account.name, style="bold"), Text(_state_copy(account)))
+    title = Table.grid(expand=True)
+    title.add_column(ratio=1, overflow="crop", no_wrap=True)
+    title.add_column(justify="right", no_wrap=True, width=12)
+    title.add_row(
+        Text(account.name, style="bold"),
+        Text(_chip(account), style=_chip_style(account)),
+    )
+    details.add_row(title)
 
     identity = account.display_name or account.email
     if identity:
-        add_row(Text(identity), Text(account.plan or ""))
-    elif account.plan:
-        add_row(Text(""), Text(account.plan))
+        add_line(Text(identity, style="bold"))
 
-    surfaces = " | ".join(surface.label for surface in group.surfaces)
-    add_row(Text("Surfaces"), Text(surfaces or "Unavailable"))
+    pills: list[str] = []
+    if account.plan:
+        pills.append(account.plan)
+    if not compact and group.display_name:
+        pills.append(group.display_name)
+    if pills:
+        add_line(Text(_join(pills, unicode=unicode), style=GOLD))
 
-    if account.usage:
-        for window in account.usage:
-            add_row(*_usage_row(window))
-            if window.stale or window.age_label:
-                add_row(
-                    Text("stale" if window.stale else "Updated"),
-                    Text(window.age_label or ""),
-                )
-    else:
-        add_row(Text("Usage"), Text("Unavailable"))
+    windows = list(account.usage or [])
+    if compact:
+        windows = windows[:1]
+    if windows:
+        add_line(Text("USAGE", style=GOLD))
+        for window in windows:
+            for line in _meter_lines(window, width=width, unicode=unicode):
+                add_line(line)
 
-    if account.needs_login:
-        add_row(Text("Login required"), Text(account.login_hint or ""))
+    if not compact and group.surfaces:
+        add_line(Text("SWITCHES", style=GOLD))
+        for surface in group.surfaces:
+            line = Text(surface.label, style=GOLD)
+            if surface.detail:
+                line.append("  ")
+                line.append(surface.detail, style=MUTED)
+            add_line(line)
+
+    if account.needs_login and account.login_hint:
+        add_line(Text(account.login_hint, style=TERRACOTTA))
+
+    if not compact:
+        add_line(Text(_context_line(account, unicode=unicode), style=GOLD))
+
     return details
 
 
@@ -101,9 +166,13 @@ class AccountRow(ListItem):
     def __init__(self, group: Group, account: Account, *children):
         self.group = group
         self.account = account
+        widgets = list(children)
+        headers = [widget for widget in widgets if "group-header" in widget.classes]
+        rest = [widget for widget in widgets if widget not in headers]
         super().__init__(
+            *headers,
             Static(_account_row(group, account), classes="account-row"),
-            *children,
+            *rest,
         )
 
 
@@ -129,15 +198,21 @@ class AccountList(ListView):
         rows = []
         self._selected_row: Optional[AccountRow] = None
         self._inline_details: Optional[AccountDetails] = None
+        previous_group = None
         for index, (group, account) in enumerate(accounts):
+            children = []
+            if group is not previous_group:
+                children.append(Static(group.display_name, classes="group-header"))
+                previous_group = group
+            details = None
             if index == initial_index:
                 details = AccountDetails(id="inline-details")
                 details.show_account(group, account)
-                row = AccountRow(group, account, details)
+                children.append(details)
+            row = AccountRow(group, account, *children)
+            if details is not None:
                 self._selected_row = row
                 self._inline_details = details
-            else:
-                row = AccountRow(group, account)
             rows.append(row)
         super().__init__(*rows, initial_index=initial_index, **kwargs)
 
@@ -180,11 +255,24 @@ class AccountDetails(VerticalScroll):
 
     def show_account(self, group: Group, account: Account) -> None:
         self._account = (group, account)
+        unicode = getattr(self.app, "unicode", True)
+        compact = self.id == "inline-details"
         self._body.update(render_account_details(
             group,
             account,
             width=self.content_size.width or 80,
+            unicode=unicode,
+            compact=compact,
         ))
+        if compact:
+            return
+        if account.needs_login:
+            self.call_after_refresh(self._reveal_login_callout)
+        else:
+            self.scroll_home(animate=False)
+
+    def _reveal_login_callout(self) -> None:
+        self.scroll_end(animate=False)
 
     def on_resize(self, event: events.Resize) -> None:
         if self._account is not None:

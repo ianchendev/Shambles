@@ -313,23 +313,30 @@ window.
 
 ### Keyboard shortcuts
 
+The dashboard footer lists the first-class keys. A full footer is shown when
+it fits; a compact set (`switch`, `add`, `eject`, `menu`, `help`, `quit`)
+otherwise.
+
 | Key | Action |
 |---|---|
 | `j` / `↓` | Next account |
 | `k` / `↑` | Previous account |
 | `Enter` | Switch to the selected account (asks first, if the account needs confirming) |
-| `m` | Account menu — save the current login, add, rename, remove |
+| `a` | Add — pick a provider and name in an overlay |
+| `m` | Account menu — save the current login, rename, remove |
 | `l` | Log in the selected account (runs the vendor's own login command) |
 | `x` | Eject — see [Leaving cleanly](#leaving-cleanly) |
 | `r` | Refresh |
 | `?` | Help |
 | `q` | Quit |
-| `Esc` | Skip the onboarding animation, or close whatever is open |
+| `Esc` | Close whatever is open |
 
-Inside the account menu: `s` save current, `a` add, `n` rename, `d` remove,
-`Esc` cancel. Every confirmation, result and login-progress screen takes
-`Enter` to confirm or continue and `Esc` to cancel; `q` quits from any of
-them. The same reference is one keystroke away inside the app: press `?`.
+Inside the account menu: `s` save current, `n` rename, `d` remove, `Esc`
+cancel. `a` add is also available from the dashboard (and from the empty
+welcome), not only the menu. Every confirmation, result and login-progress
+screen takes `Enter` to confirm or continue and `Esc` to cancel; `q` quits
+from any of them. The same reference is one keystroke away inside the app:
+press `?`.
 
 ### Launching straight back into the vendor CLI
 
@@ -344,13 +351,9 @@ just switched to.
 ### NO_COLOR
 
 `NO_COLOR` — the [convention](https://no-color.org), detected automatically,
-nothing Shambles-specific to set — makes the whole interface monochrome, not
-just one screen of it. It also settles the box-drawing animation shown while
-onboarding, before any account has been saved yet, straight to its finished
-frame instead of drawing it in over a few frames. `SHAMBLES_NO_MOTION=1` does
-that animation-skipping part on its own, as an alternative for scripts and
-session managers that set environment variables more easily than flags, and
-`--no-motion` does it as a flag, accepted before or after the subcommand.
+nothing Shambles-specific to set — makes the whole interface monochrome.
+`SHAMBLES_NO_MOTION=1` and `--no-motion` remain accepted (the flag before or
+after the subcommand) so existing scripts and flags do not break.
 
 ## Update checks
 
