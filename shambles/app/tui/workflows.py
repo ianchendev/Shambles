@@ -12,9 +12,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Input, Static
+from textual.widgets import Input, OptionList, Static
+from textual.widgets.option_list import Option
 
 from ..snapshot import Group
+from .overlays import overlay_panel_classes
 
 
 class NameInputScreen(ModalScreen[str | None]):
@@ -39,7 +41,7 @@ class NameInputScreen(ModalScreen[str | None]):
         self.initial = initial
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(classes="overlay-panel"):
+        with VerticalScroll(classes=overlay_panel_classes(self)):
             yield Static(self.prompt, classes="overlay-title", markup=False)
             yield Input(value=self.initial, id="name-value")
             yield Static("Enter Submit   Esc Cancel   q Quit", markup=False)
@@ -79,45 +81,37 @@ class AddAccountScreen(ModalScreen[tuple[str, str] | None]):
             self.provider_index = 0
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(classes="overlay-panel"):
+        options = [
+            Option(group.display_name, id=group.provider)
+            for group in self.groups
+        ]
+        with VerticalScroll(classes=overlay_panel_classes(self)):
             yield Static("Add account", classes="overlay-title", markup=False)
-            yield Static(self._provider_lines(), id="add-providers", markup=False)
+            yield OptionList(*options, id="add-providers", compact=True, markup=False)
             yield Input(id="name-value")
             yield Static(
-                "j/k Provider   Enter Submit   Esc Cancel   q Quit",
+                "j/k Provider   Tab Name   Enter Submit   Esc Cancel   q Quit",
                 markup=False,
             )
 
     def on_mount(self) -> None:
-        self.query_one(Input).focus()
-
-    def _provider_lines(self) -> str:
-        lines = []
-        for index, group in enumerate(self.groups):
-            mark = "*" if index == self.provider_index else " "
-            lines.append(f"({mark}) {group.display_name}")
-        return "\n".join(lines) if lines else "(no providers)"
-
-    def _refresh_providers(self) -> None:
-        self.query_one("#add-providers", Static).update(self._provider_lines())
+        providers = self.query_one("#add-providers", OptionList)
+        if self.groups:
+            providers.highlighted = self.provider_index
+        providers.focus()
 
     def action_next_provider(self) -> None:
-        if self.groups:
-            self.provider_index = min(
-                self.provider_index + 1, len(self.groups) - 1,
-            )
-            self._refresh_providers()
+        self.query_one("#add-providers", OptionList).action_cursor_down()
 
     def action_previous_provider(self) -> None:
-        if self.groups:
-            self.provider_index = max(self.provider_index - 1, 0)
-            self._refresh_providers()
+        self.query_one("#add-providers", OptionList).action_cursor_up()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if not self.groups:
+        option = self.query_one("#add-providers", OptionList).highlighted_option
+        if option is None or option.id is None:
             self.dismiss(None)
             return
-        self.dismiss((self.groups[self.provider_index].provider, event.value))
+        self.dismiss((option.id, event.value))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -144,7 +138,7 @@ class AccountMenu(ModalScreen[str | None]):
         self.account = account
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(classes="overlay-panel"):
+        with VerticalScroll(classes=overlay_panel_classes(self)):
             yield Static(
                 f"Actions for {self.account}", classes="overlay-title", markup=False,
             )
@@ -187,7 +181,7 @@ class LoginProgress(ModalScreen[None]):
         self.lines: list[str] = []
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(classes="overlay-panel"):
+        with VerticalScroll(classes=overlay_panel_classes(self)):
             yield Static(
                 f"Logging in to {self.account}...",
                 classes="overlay-title",
