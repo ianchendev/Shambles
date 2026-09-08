@@ -305,16 +305,16 @@ scrollbar appears only if it needs to.
 ```text
 ┌──────────────────────────────────────────────────────────────────┐
 │ CLAUDE CODE                                    [ Save … ]        │  ← group heading:
-│ Work                                                             │    provider, live
-│ work@example.com                                                 │    profile, status
+│ Work                                                             │       provider, live profile,
+│ work@example.com                                                 │       and what it found
 │                                                                  │
-│ ┃ Work                                                           │  ← active card:
-│ ┃ work@example.com                                               │    blue spine and
-│ ┃ session ▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░  22% ⓘ                       │    tint, no buttons
-│ ┃ week    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░  58% ⓘ                       │
+│ ┃ Work                                                           │  ← the live account: blue
+│ ┃ work@example.com                                               │       spine and tint, and
+│ ┃ session ▓▓▓▓▓▓░░░░░░░░░░░░░░░░░  22% ⓘ                         │       no buttons at all
+│ ┃ week    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░  58% ⓘ                         │
 │                                                                  │
-│ │ Personal                            [ Switch ]      ✕          │  ← every other card
-│ │ personal@example.com  (needs login)                            │
+│ │ Personal                    [ Switch ]   ✕                     │  ← every other card
+│ │ personal@example.com   needs login                             │
 │                                                                  │
 │ CODEX                                                            │
 │ Personal                                                         │
@@ -323,7 +323,7 @@ scrollbar appears only if it needs to.
 │ ┃ Personal                                                       │
 │                                                                  │
 ├──────────────────────────────────────────────────────────────────┤
-│ ⟳                                        [ Eject ]  [ ＋ Add Account ] │
+│ ⟳                            [ Eject ]   [ + Add Account ]       │  ← footer, always there
 └──────────────────────────────────────────────────────────────────┘
 ```
 
