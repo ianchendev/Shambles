@@ -21,41 +21,86 @@
 
 </details>
 
-Switch between Claude Code accounts — and Codex accounts — without waiting for
-a verification email.
+**Switch between Claude Code accounts — and Codex accounts — without waiting
+for a verification email.** Three ways to drive it: a desktop window, a
+terminal dashboard, and a plain CLI. All local, no account of yours is ever
+contacted.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash
+shambles
+```
+
+---
+
+## Contents
+
+**Getting started** · [Install](#install) · [Does it work on your setup?](#does-it-work-on-your-setup) · [Your first five minutes](#your-first-five-minutes)
+
+**Using it** · [Command reference](#command-reference) · [The window](#the-window) · [The terminal dashboard](#the-terminal-dashboard) · [Update checks](#update-checks)
+
+**Understanding it** · [What a switch actually does](#what-a-switch-actually-does) · [What it touches](#what-it-touches) · [Token health](#token-health) · [Is this safe?](#is-this-safe)
+
+**Getting out** · [Leaving cleanly](#leaving-cleanly) · [Troubleshooting](#troubleshooting)
+
+**Extras** · [Desktop shortcuts](#desktop-shortcuts-without-a-console-window) · [Development](#development) · [Platform notes](#platform-notes) · [Documentation](#documentation)
+
+---
+
+## The problem it solves
 
 Claude Code hardcodes its config path to `~/.claude` and the VS Code extension
 host ignores environment variables, so there is no supported way to run more
 than one account. Codex has the same problem: `~/.codex/auth.json` is a single
-file holding a single account. Shambles keeps each account's login in
-`~/.shambles/<provider>/<Name>/` and swaps just that one file into place.
+file holding a single account.
+
+Shambles keeps each account's login in its own folder and swaps exactly one
+file into place:
+
+```text
+   ~/.shambles/                                    what the vendor reads
+   │
+   ├── claude/
+   │   ├── Work/     credentials.json ─────┐
+   │   │             account.json          ├──► ~/.claude/.credentials.json
+   │   ├── Personal/ credentials.json ─────┘     ~/.claude.json  (identity key
+   │   │             account.json                                 only, spliced)
+   │   └── active  → "Work"
+   │
+   └── codex/
+       ├── Personal/ credentials.json ─────────► ~/.codex/auth.json
+       └── active  → "Personal"
+
+   Everything else in ~/.claude — projects/, plugins/, settings.json,
+   file-history/ — is never touched. Every account shares it, which is
+   how Claude Code behaves on its own.
+```
 
 Adding an account opens your browser to sign in. Shambles does not implement
-that — it runs the vendor's own `claude auth login` or `codex login`, which
-opens the browser and handles the OAuth itself. See [Is this safe?](#is-this-safe).
+that: it runs the vendor's own `claude auth login` or `codex login`, which
+opens the browser and handles the OAuth itself. See
+[Is this safe?](#is-this-safe).
 
-`~/.claude` itself is never moved or replaced. Your session history, plugins,
-settings and project trust stay exactly where they are and are shared by every
-account, which is how Claude Code behaves on its own.
-
-## Why this skips the login wait
+### Why this skips the login wait
 
 Email verification is the *initial* OAuth grant only. What keeps you signed in
-afterwards is the **refresh token** in `.credentials.json`, valid for a rolling
-window that is re-minted on every use. Preserve that file per account and every
-later switch is instant — an account only returns to the email flow if it sits
-entirely unused long enough for that window to lapse.
+afterwards is the **refresh token**, valid for a rolling window that is
+re-minted on every use. Preserve that per account and every later switch is
+instant — an account only returns to the email flow if it sits entirely unused
+long enough for that window to lapse.
 
 How wide is the window? **It varies, so Shambles reads it rather than assuming.**
 Measurements differ by an order of magnitude: ~28 days across three credential
 blobs on Linux/Team, ~4 days on a macOS/Max 5x sample
-([evidence](docs/token-storage.md)). The countdown chip shows whatever your own
-token says. What holds in every sample is the rolling behaviour — an account you
-use regularly never approaches its deadline.
+([evidence](docs/token-storage.md)). The state chip reflects whatever your own
+token says. What holds in every sample is the rolling behaviour — an account
+you use regularly never approaches its deadline.
 
 Rate limits are still enforced server-side per account. Switching gives you the
 target account's own bucket; it does not pool or extend any single account's
 allowance.
+
+---
 
 ## Install
 
@@ -70,7 +115,7 @@ curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/in
 curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.0.0
 ```
 
-Windows PowerShell, which installs into `%LOCALAPPDATA%\Shambles` and adds
+**Windows PowerShell**, which installs into `%LOCALAPPDATA%\Shambles` and adds
 that directory to your user PATH:
 
 ```powershell
@@ -81,13 +126,13 @@ Two things worth knowing before you paste either one. The binaries are
 **unsigned**, so Windows SmartScreen warns on first run — that is what an
 unsigned publisher looks like. And **a successful install is not a working
 switch**: the script fetches whatever binary matches your machine, which says
-nothing about whether Shambles can swap an account there. The table below is
-the part that says.
+nothing about whether Shambles can swap an account there. The
+[support table](#does-it-work-on-your-setup) is the part that says.
 
 `install.sh` also knows the macOS and arm64-Linux asset names, but those
-binaries are built for the first time by the *next* tagged release; against
-the current latest release it gets a 404 there. Use pipx on those platforms
-until then.
+binaries are built for the first time by the *next* tagged release; against the
+current latest release it gets a 404 there. Use pipx on those platforms until
+then.
 
 **Or pipx**, which involves no unsigned binary and works identically on Linux
 and inside WSL:
@@ -101,33 +146,40 @@ shambles
 **Or download a binary** from [Releases](https://github.com/ianchendev/Shambles/releases)
 yourself — a single file, nothing to install. Same unsigned caveat as above.
 
-**Or from a checkout:**
+**Or from a clone.** Textual is a real dependency, so a bare checkout is not
+runnable until you install it:
 
 ```bash
 git clone https://github.com/ianchendev/Shambles && cd Shambles
-python3 shambles.py          # or: python3 -m shambles
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/shambles
 ```
 
 `python3` here has to be **3.10 or newer**. On distributions where it is still
 3.8 — Ubuntu 20.04 among them — name the interpreter instead
-(`python3.12 shambles.py`); running it on an older one stops with a message
+(`python3.12 -m venv .venv`); running it on an older one stops with a message
 saying so rather than a syntax error from somewhere in the package.
+
+`python3 shambles.py` works too, but only once the dependency is on that
+interpreter's path. Without it you get a message telling you exactly that,
+not a traceback.
 
 **Not npm, yet.** Shambles is not published to npm, so `npm install -g
 shambles` fails today. A launcher package is designed and planned
-([plan](docs/superpowers/plans/2026-09-06-npm-distribution.md)) but it stays
+([plan](docs/superpowers/plans/2026-09-06-npm-distribution.md)) but stays
 unpublished until the macOS and Windows credential-store work below is
 resolved — shipping a one-line install to platforms where switching does not
 work is exactly the thing this README is trying not to do.
 
-### Before you install, check it applies to you
+### Does it work on your setup?
 
 | Where you run it | Claude Code | Codex |
 |---|---|---|
 | Linux desktop | **Supported** | **Unverified** — see below |
 | WSL (Ubuntu etc.) | **Supported** — the **Linux** build, run **inside WSL** | **Unverified** |
 | Windows natively | **Unverified, probably not working** — see below | **Unverified** |
-| macOS | **Not supported** — see Platform notes | **Unverified** |
+| macOS | **Not supported** — see [Platform notes](#platform-notes) | **Unverified** |
 
 **About Codex.** Codex support is built and tested, but only against fixtures:
 no Codex install was available on the development machine, and the research its
@@ -142,8 +194,7 @@ platform. On Linux it writes `~/.claude/.credentials.json`, which is the file
 Shambles swaps. On Windows it appears to use the Credential Manager instead, in
 which case that file never exists and switching would quietly do nothing. A
 Windows binary is built and tested, but that only proves the app runs — nobody
-has confirmed an account switch actually takes effect there. Treat Windows as
-untested until someone does. The evidence is in
+has confirmed an account switch actually takes effect there. The evidence is in
 [docs/token-storage.md](docs/token-storage.md).
 
 **WSL is the sharp edge.** A Windows `.exe` manages
@@ -153,25 +204,352 @@ inside WSL.
 
 **Windows needs Developer Mode** (Settings → System → For developers) only when
 migrating from a pre-1.0 layout, which used symlinks. Ordinary switching needs
-no special privileges — but see the Windows caveat above before relying on it.
+no special privileges.
 
-## CLI or VS Code extension — both
+### Try it without touching your real accounts
 
-Shambles works below either one. The `claude` CLI and the VS Code extension are
-the same product reading the same two paths, so swapping the login swaps it for
-both at once:
+Every command takes `--home`, which points the whole program at a different
+directory. Nothing outside it is read or written, which is also how the test
+suite runs:
 
+```bash
+shambles list --home /tmp/scratch      # an empty synthetic home
+shambles gui  --home /tmp/scratch      # the window, against nothing real
 ```
+
+---
+
+## Your first five minutes
+
+**1. Save the account you are already signed in as.** Open the window
+(`shambles gui`) or the dashboard (`shambles`). Your current login shows up
+under its provider with a **Save …** button — the button is labelled with the
+address it found, e.g. `Save work@example.com`. Click it, name the profile
+`Work`, and Shambles copies that login into `~/.shambles/claude/Work/`.
+Nothing moves, nothing is deleted.
+
+**2. Add your second account.** Click **＋ Add Account**, pick the provider,
+name it `Personal`. Shambles creates the empty profile, makes it active, then
+runs the vendor's login command and shows you its output while your browser
+opens. This is the one and only time you wait for that account's verification
+email.
+
+**3. Switch.** Every account that is not the live one has a **Switch** button.
+Click it, then **start a new session** — a Claude Code process already running
+keeps the token it loaded at startup. In VS Code, run *Developer: Reload
+Window*.
+
+That is the whole loop. From then on, switching is a single click or a single
+keystroke, and no email is involved again.
+
+---
+
+## Command reference
+
+`shambles` with no arguments opens the terminal dashboard when stdin *and*
+stdout are both a real terminal. Piped, redirected, or run from a script, it
+prints usage instead and changes nothing.
+
+| Command | What it does |
+|---|---|
+| `shambles` | The terminal dashboard, on an interactive terminal |
+| `shambles tui` | The terminal dashboard, explicitly |
+| `shambles gui` | The desktop window |
+| `shambles list` | Every account and its state, as text |
+| `shambles list --json` | The same thing, machine-readable |
+| `shambles switch <provider> <account>` | Switch without opening an interface |
+| `shambles switch … --json` | The same, with a machine-readable result |
+| `shambles config get update.check` | Prints `true` or `false` |
+| `shambles config set update.check true` | Turn release notices on |
+| `shambles config set update.check false` | Turn them off again |
+| `shambles --version` | The version, one line on stdout |
+| `shambles --help` | The usage message |
+
+Flags accepted anywhere, before or after the subcommand:
+
+| Flag | Effect |
+|---|---|
+| `--home <dir>` | Use `<dir>` instead of your home directory. Nothing outside it is read or written |
+| `--no-motion` | Disable nonessential terminal motion (`SHAMBLES_NO_MOTION=1` does the same) |
+
+Exit codes: **0** success, **1** the action was refused or failed (the reason
+goes to stderr, or into the JSON when `--json` was asked for), **2** the
+command line itself was wrong.
+
+```console
+$ shambles list
+Claude Code  (Terminal, VS Code)
+    Personal       personal@example.test  ·  claude_pro  ·  needs login
+  * Work           work@example.test  ·  claude_max  ·  session 22%  ·  week 58%
+
+Codex  (Terminal, VS Code, ChatGPT)
+  * Personal       alex@example.test  ·  plus
+
+$ shambles switch claude Personal
+Switched claude to Personal.
+  Run 'claude auth login' in a terminal.
+```
+
+The `*` marks the live account. `--json` prints the same snapshot the window
+and the dashboard render from, so a display bug and a logic bug can be told
+apart without a debugger.
+
+---
+
+## The window
+
+`shambles gui` opens a fixed-width 860 px window titled **Shambles**. It is not
+resizable; its height grows with your accounts up to 80% of the screen, and a
+scrollbar appears only if it needs to.
+
+```text
+┌──────────────────────────────────────────────────────────────────┐
+│ CLAUDE CODE                                    [ Save … ]        │  ← group heading:
+│ Work                                                             │    provider, live
+│ work@example.com                                                 │    profile, status
+│                                                                  │
+│ ┃ Work                                                           │  ← active card:
+│ ┃ work@example.com                                               │    blue spine and
+│ ┃ session ▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░  22% ⓘ                       │    tint, no buttons
+│ ┃ week    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░  58% ⓘ                       │
+│                                                                  │
+│ │ Personal                            [ Switch ]      ✕          │  ← every other card
+│ │ personal@example.com  (needs login)                            │
+│                                                                  │
+│ CODEX                                                            │
+│ Personal                                                         │
+│ alex@example.com                                                 │
+│                                                                  │
+│ ┃ Personal                                                       │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│ ⟳                                        [ Eject ]  [ ＋ Add Account ] │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+There is no menu bar, no toolbar and no right-click menu. Everything is on
+screen.
+
+### Every control
+
+| Control | Where | What it does |
+|---|---|---|
+| **Switch** | On each card that is not live | Makes that account the one every surface uses |
+| **✕** | On each card that is not live | Deletes that profile, after a confirmation naming it |
+| Double-click the name | Any card | Rename the profile |
+| **Save …** | Group heading, when a live login is unsaved | Files the current login as a new profile |
+| **Forget that profile** | Group heading, if the active marker points at a profile that is gone | Clears the stale marker |
+| **＋ Add Account** | Footer | Create a profile and sign into it |
+| **Eject** | Footer | Hand every account back as a stock install |
+| **⟳** | Footer, far left | Re-read what is on disk. Local files only, no network |
+| **Details** / **Hide** | On a banner | Expand or collapse the explanation |
+
+The active card deliberately has **no buttons at all** — the login you are
+currently using cannot be deleted by a misclick, and that rule is enforced in
+the code, not just in the layout.
+
+The glyphs above (`＋`, `⟳`, `✕`, `⚠`, `ⓘ`) are chosen at runtime from what
+your font can actually draw, falling back to `+`, `R`, `x`, `!` and `i`. Do not
+be surprised if yours look plainer.
+
+### What a card tells you
+
+A card carries the profile name, the email, and a state chip **only when
+something needs your attention**:
+
+| Chip | Meaning |
+|---|---|
+| *(nothing)* | Healthy, or an expiry that cannot be read. Nothing to do |
+| `soon` (amber) | The refresh window closes within a day (Claude) or two (Codex) |
+| `needs login` (red) | The window has closed, or this profile has no credential yet |
+| `signed out` (red) | The login was cleared — the profile and its details are intact, the token is empty |
+
+**Dates are deliberately off the card face.** A countdown on every row is noise
+on the days it is not urgent, so the state stays on the card and the numbers
+stay one hover away: point at the name for the exact expiry date, and at the
+chip for what to do about it. Hovering anything with something to say gives you
+a tooltip immediately — the name, the chip, the ✕, the ⓘ beside a usage bar,
+and both footer buttons.
+
+Usage bars are read from the figures the vendor caches for that account, not
+fetched. They turn red at 80%, and a figure older than an hour is dimmed and
+labelled `as of 20m ago` so a stale number is never mistaken for a live one.
+
+### Adding an account, in detail
+
+Your existing login **cannot** be lost by this. It is copied into its profile
+before anything is replaced, so the account you are leaving is always
+recoverable by switching back.
+
+1. **Close any running Claude Code sessions**, in VS Code and in terminals.
+2. **＋ Add Account** → pick the provider, type a name → **Create**. A provider
+   whose CLI is not on your PATH appears greyed out rather than hidden, because
+   a missing row reads as a bug while a greyed one reads as an instruction.
+3. Shambles creates the profile and **makes it active immediately** — empty,
+   with no token. It has to: the vendor writes to one fixed location, so that
+   slot must be free first.
+4. A sign-in window opens and runs `claude auth login` (or `codex login`),
+   streaming its output as it goes. Your browser should open on its own. If it
+   does not, **Open sign-in page** and **Copy link** light up as soon as the
+   URL appears — under WSL and over SSH the link is copied to your clipboard
+   regardless, because the openers there report success while doing nothing.
+5. On success you are told the account is signed in and active. **Start a new
+   session** to pick it up.
+
+If the sign-in does not complete, Shambles switches you back to the account you
+were on and says so — and it **keeps** the empty profile, so you can retry
+without renaming anything.
+
+### Banners
+
+Two warnings can appear, both collapsed to one line with a **Details** button:
+
+- **`codex not on PATH — can't add accounts`** — switching between accounts you
+  already saved still works; you just cannot create new ones until the vendor
+  CLI is installed.
+- **`⚠ CLAUDE_CONFIG_DIR is set — /some/path`** — red, and the more important
+  of the two. See [If CLAUDE_CONFIG_DIR is set](#if-claude_config_dir-is-set).
+
+### Two things the window does on its own
+
+Opening the window runs two migrations without asking, and tells you
+afterwards: it merges session history that a pre-1.0 version had split per
+account, and it moves a v1.0 `~/.claude-profiles/` store into
+`~/.shambles/<provider>/`. Both are additive — nothing is deleted, and the old
+copies stay on disk until you remove them.
+
+Refreshing is also not quite read-only: it re-stashes the live credential for
+providers that rotate tokens, and captures the active account's usage figures
+into its profile. Nothing leaves your disk.
+
+---
+
+## The terminal dashboard
+
+`shambles` opens a keyboard-driven dashboard instead of the window whenever
+it is run on an actual interactive terminal. No `DISPLAY`, no Tk, works the
+same over SSH.
+
+It is a second front end on the same core, not a separate tool. Switching here
+has the identical effect, and the identical restart requirement, as switching
+anywhere else.
+
+### Keys
+
+| Key | Action |
+|---|---|
+| `j` / `↓` | Next account |
+| `k` / `↑` | Previous account |
+| `Enter` | Switch to the selected account |
+| `a` | Add — pick a provider and name in an overlay |
+| `l` | Log in the selected account (runs the vendor's own login command) |
+| `m` | Account menu — save the current login, rename, remove |
+| `x` | Eject — see [Leaving cleanly](#leaving-cleanly) |
+| `r` | Refresh |
+| `u` | Dismiss the update notice, if one is showing |
+| `?` | Help |
+| `Esc` | Close whatever is open |
+| `q` | Quit |
+
+Inside the account menu: `s` save current, `n` rename, `d` remove, `Esc`
+cancel. Every confirmation, result and login-progress screen takes `Enter` to
+continue and `Esc` to cancel. The footer lists the first-class keys, and the
+same reference is one keystroke away in the app: press `?`.
+
+### Straight back into the vendor CLI
+
+After a successful switch, the result screen offers **Launch** next to Escape.
+Choosing it closes the dashboard — Textual restores the terminal first — and
+replaces the Shambles process in place with `claude` or `codex` (`execvp`, not
+a child process), inheriting the environment unchanged. There is no second
+window: the terminal `shambles` was running in becomes the vendor CLI's
+terminal, immediately signed in as the account you just switched to.
+
+### Colour and motion
+
+`NO_COLOR` — the [convention](https://no-color.org), detected automatically —
+makes the whole interface monochrome. `--no-motion` and `SHAMBLES_NO_MOTION=1`
+disable nonessential animation. For the window, `SHAMBLES_MOTION=0` does the
+same and `SHAMBLES_SCALE` (between 1.0 and 4.0) overrides display scaling.
+
+---
+
+## Update checks
+
+**Off by default**, and off means off: with the setting unset, no interface —
+terminal, window, or `shambles switch` — makes a network call of any kind.
+Nothing here reports usage or phones home under any setting.
+
+```bash
+shambles config set update.check true     # turn it on
+shambles config get update.check          # prints true or false
+shambles config set update.check false    # turn it off again
+```
+
+What that signs you up for, in full: at most one unauthenticated `GET` per day
+to the public GitHub Releases endpoint for this repository, from which Shambles
+reads one field — the tag of the latest release. No token, no account, no
+machine ID and no query string go with it, so nothing in the request says who
+you are. The only thing kept is `~/.shambles/update-cache.json`, holding that
+tag and the time of the lookup. A failed lookup still counts as the day's
+attempt, so an offline machine is not made to sit through a connection timeout
+on every start, and a lookup that fails for any reason produces silence rather
+than an error.
+
+**It never downloads or replaces anything.** The entire feature is one sentence
+saying a newer version exists; fetching it stays your decision.
+
+Where that sentence appears:
+
+- **In the terminal dashboard** — one line at the bottom, and `u` dismisses it
+  for the session. The lookup runs on a background thread after the first frame
+  is drawn, so a slow network cannot hold up the interface, and quitting does
+  not wait for it.
+- **On `shambles --version`** — printed to stderr, and only from the cache an
+  earlier run already filled. `--version` itself never makes a request, which
+  keeps its stdout exactly one line for the scripts that read it.
+
+The window shows no notice and performs no lookup, whatever the setting says.
+
+---
+
+## What a switch actually does
+
+```text
+   switching Claude from "Work" to "Personal"
+
+   1  copy the live login  ~/.claude/.credentials.json
+                             └──► ~/.shambles/claude/Work/credentials.json
+      (the outgoing account is saved BEFORE anything is replaced, so a
+       failed switch can never strand the account you were on)
+
+   2  back up ~/.claude.json  ──► ~/.shambles/.backups/   (last 10 kept)
+
+   3  install the incoming login
+      ~/.shambles/claude/Personal/credentials.json
+                             └──► ~/.claude/.credentials.json   (600, atomic)
+
+   4  splice identity into ~/.claude.json — oauthAccount only, every other
+      key and its original order preserved
+
+   5  record it:  ~/.shambles/claude/active  ←  "Personal"
+```
+
+A **running** session is unaffected: it holds the token it loaded at startup.
+Start a new `claude` session, or run *Developer: Reload Window* in VS Code.
+
+### CLI or VS Code extension — both
+
+The `claude` CLI and the VS Code extension are the same product reading the
+same two paths, so swapping the login swaps it for both at once:
+
+```text
 ~/.claude/.credentials.json      the login
 ~/.claude.json                   oauthAccount, projects, MCP servers
 ```
 
 Verified by running the standalone CLI and watching it read and write the same
 `~/.claude` the extension uses.
-
-A **running** session is unaffected either way — it holds the token it loaded at
-startup. After switching, start a new `claude` session, or run *Developer:
-Reload Window* in VS Code.
 
 ### Why not just use `CLAUDE_CONFIG_DIR`?
 
@@ -184,267 +562,22 @@ tool used to have and no longer does.
 It also does not help inside VS Code, where the extension host does not see
 shell environment variables.
 
-## Desktop shortcuts without a console window
+### If CLAUDE_CONFIG_DIR is set
 
-Tkinter apps launched through `python.exe` drag a blank terminal along behind
-the GUI. Each install route has a quiet path:
+Shambles swaps the login inside `~/.claude`, so a shell with that variable set
+reads a tree Shambles never touches and every switch appears to do nothing
+there. Shambles detects this on startup and shows a warning naming the
+directory. To use Shambles from the terminal, remove the variable from your
+shell profile. The VS Code extension is unaffected either way — the extension
+host does not inherit shell environment variables, which is the reason this
+tool exists.
 
-| Route | Quiet launcher |
-|---|---|
-| Release binary | Already quiet — built with `--windowed` on Windows |
-| pipx / pip | `shamblesw` (the `gui-scripts` entry, backed by `pythonw.exe`) |
-| From a checkout | `pythonw.exe` on Windows, `python3` on Linux |
-
-`shambles` (console) stays available everywhere so `--version` and `--help`
-still print. On Windows a `gui-scripts` binary has nowhere to write, which is
-exactly why both exist.
-
-**Windows shortcut, from a checkout.** Right-click → New → Shortcut:
-
-```
-Target:      C:\Path\To\python\pythonw.exe C:\Path\To\Shambles\shambles.py
-Start in:    C:\Path\To\Shambles
-Run:         Normal window
-```
-
-`pythonw.exe` sits next to `python.exe` in the same install. Confirm with
-`where pythonw`. Nothing else is required — no `cmd /c`, no `start`, both of
-which reintroduce the console.
-
-**Windows shortcut, pipx install:**
-
-```
-Target:      %USERPROFILE%\.local\bin\shamblesw.exe
-```
-
-**Building the binary yourself.** These are the exact commands the release
-workflow runs. PyInstaller writes a `shambles.spec` as it goes; that file is a
-generated artefact and is not tracked, so build from the flags rather than from
-a spec:
-
-```bash
-pip install pyinstaller
-
-# Windows — --windowed is what suppresses the console window
-pyinstaller --onefile --windowed --name shambles shambles/__main__.py
-
-# Linux — no --windowed, or it swallows --version and --help output
-pyinstaller --onefile --name shambles shambles/__main__.py
-```
-
-The binary lands in `dist/`. On Windows it launches with no console attached.
-
-**Linux desktop entry** — `~/.local/share/applications/shambles.desktop`:
-
-```ini
-[Desktop Entry]
-Type=Application
-Name=Shambles
-Comment=Switch Claude Code accounts
-Exec=/home/you/.local/bin/shambles
-Terminal=false
-Categories=Development;Utility;
-```
-
-`Terminal=false` is the equivalent setting. Run `update-desktop-database
-~/.local/share/applications` afterwards if it does not appear.
-
-## Using it
-
-### First run
-
-Click **Save Current Account** and name it (e.g. `Work`). Shambles copies the
-login out of `~/.claude` into `~/.shambles/claude/Work/` and records it as
-active. Nothing moves and nothing is deleted — `~/.claude` is left exactly as
-it was.
-
-### Adding an account
-
-Your existing login **cannot** be lost by this. It is copied into its profile
-before anything is replaced, so the account you are leaving is always
-recoverable by switching back.
-
-1. **Close any running Claude Code sessions**, in VS Code and in terminals.
-2. Click **Add Account** and name it. Settings and plugins are shared, so there
-   is nothing to copy across. The new
-   profile becomes active immediately — empty, with no token.
-3. In a **terminal**, run `claude`, then `/login`. The OAuth flow writes
-   `.credentials.json` into the new profile only. This is the one and only time
-   you wait for the verification email for that account.
-4. Reload the VS Code window (*Developer: Reload Window*).
-
-Use the terminal rather than VS Code for that `/login`. Not because VS Code
-would break anything, but because the extension may still hold a handle on the
-now-empty profile and leave you unsure whether the login landed.
-
-### Switching
-
-Click **Switch**, then start a **new** Claude Code session. If the extension
-does not pick it up, run *Developer: Reload Window*.
-
-An already-running session keeps the token it loaded at startup — the switch is
-a change on disk, not a change inside a live process.
-
-## Terminal interface
-
-`shambles` opens a keyboard-driven dashboard instead of the Tk window whenever
-it's run on an actual interactive terminal — stdin and stdout both need to be
-one. No `DISPLAY`, no Tk, works the same over SSH:
-
-```bash
-shambles      # terminal interface, if run on an interactive terminal
-shambles tui  # open it explicitly either way
-shambles gui  # open the Tk window instead
-```
-
-Piped input or output, a script, a cron job — anything where stdin or stdout
-isn't a real terminal — falls through to the usage message, exactly as it did
-before this existed. `shambles list` and `shambles switch ...` are unaffected
-either way; they're the same non-interactive path they always were.
-
-It is a second front end on the same core, not a separate tool: it reads and
-writes exactly what [What it touches](#what-it-touches) describes, through
-the same service the Tk window and `shambles switch` use. Switching an
-account here has the identical effect, and the identical restart requirement,
-as switching it anywhere else — a Claude Code session already running, in a
-terminal or in VS Code, keeps the login it loaded at startup no matter which
-interface performed the switch. Start a new session, or reload the VS Code
-window.
-
-### Keyboard shortcuts
-
-The dashboard footer lists the first-class keys. A full footer is shown when
-it fits; a compact set (`switch`, `add`, `eject`, `menu`, `help`, `quit`)
-otherwise.
-
-| Key | Action |
-|---|---|
-| `j` / `↓` | Next account |
-| `k` / `↑` | Previous account |
-| `Enter` | Switch to the selected account (asks first, if the account needs confirming) |
-| `a` | Add — pick a provider and name in an overlay |
-| `m` | Account menu — save the current login, rename, remove |
-| `l` | Log in the selected account (runs the vendor's own login command) |
-| `x` | Eject — see [Leaving cleanly](#leaving-cleanly) |
-| `r` | Refresh |
-| `?` | Help |
-| `q` | Quit |
-| `Esc` | Close whatever is open |
-
-Inside the account menu: `s` save current, `n` rename, `d` remove, `Esc`
-cancel. `a` add is also available from the dashboard (and from the empty
-welcome), not only the menu. Every confirmation, result and login-progress
-screen takes `Enter` to confirm or continue and `Esc` to cancel; `q` quits
-from any of them. The same reference is one keystroke away inside the app:
-press `?`.
-
-### Launching straight back into the vendor CLI
-
-After a successful switch, the result screen offers **Launch** next to
-Escape. Choosing it closes the terminal interface — Textual restores the
-terminal first — and replaces the Shambles process in place with `claude` or
-`codex` (`execvp`, not a child process), inheriting the environment
-unchanged. There's no second window: the terminal `shambles` was running in
-becomes the vendor CLI's terminal, immediately signed in as the account you
-just switched to.
-
-### NO_COLOR
-
-`NO_COLOR` — the [convention](https://no-color.org), detected automatically,
-nothing Shambles-specific to set — makes the whole interface monochrome.
-`SHAMBLES_NO_MOTION=1` and `--no-motion` remain accepted (the flag before or
-after the subcommand) so existing scripts and flags do not break.
-
-## Update checks
-
-**Off by default**, and off means off: with the setting unset, no interface —
-terminal, Tk window, or `shambles switch` — makes a network call of any kind.
-Nothing here reports usage or phones home under any setting. The `?` help
-screen says so in the app itself.
-
-If you would rather hear about new releases:
-
-```bash
-shambles config set update.check true     # turn it on
-shambles config get update.check          # prints true or false
-shambles config set update.check false    # turn it off again
-```
-
-What that signs you up for, in full: at most one unauthenticated `GET` per
-day to the public GitHub Releases endpoint for this repository, from which
-Shambles reads one field — the tag of the latest release. No token, no
-account, no machine ID and no query string go with it, so nothing in the
-request says who you are. The only thing kept is
-`~/.shambles/update-cache.json`, holding that tag and the time of the lookup;
-no account name, email or token goes near it. A failed lookup still counts as
-the day's attempt, so a machine that is offline is not made to sit through a
-connection timeout every time you start the app, and a lookup that fails for
-any reason at all — rate limit, captive portal, DNS, an unorderable tag —
-produces silence rather than an error.
-
-**It never downloads or replaces anything.** The entire feature is one
-sentence saying a newer version exists and how to get it; fetching it stays
-your decision.
-
-Where that sentence appears:
-
-- **In the terminal interface** — one line at the bottom of the dashboard,
-  and `u` dismisses it for the rest of the session. The lookup runs on a
-  background thread after the first frame is drawn, so a slow network cannot
-  hold up the interface, and quitting does not wait for it.
-- **On `shambles --version`** — printed to stderr, and only from the cache an
-  earlier run already filled. `--version` itself never makes a request, which
-  keeps it instant and keeps its stdout exactly one line for the scripts that
-  read it.
-
-The Tk window shows no notice and performs no lookup, whatever the setting
-says.
-
-## If CLAUDE_CONFIG_DIR is set
-
-Claude Code honours `CLAUDE_CONFIG_DIR`, and it relocates the **whole** config
-tree — config, credentials and `projects/` together. Shambles swaps the login
-inside `~/.claude`, so a shell with that variable set reads a tree Shambles
-never touches and every switch appears to do nothing there.
-
-Shambles detects this on startup and shows a warning naming the directory. The
-warning is CLI-only in effect: the VS Code extension host does not inherit
-shell environment variables, which is the reason this tool exists.
-
-To use Shambles from the terminal, remove the variable from your shell profile.
-
-## Leaving cleanly
-
-Do **not** uninstall by deleting `~/.shambles/`. That folder holds the
-refresh tokens for every account you saved, and each one is only recoverable
-through a fresh verification email.
-
-Click **Eject** instead. It leaves `~/.claude` exactly as a stock Claude Code
-install expects — still signed in as the current account, with history, plugins
-and settings untouched — and removes only Shambles' own bookkeeping (the
-`active` marker, and the legacy `.shambles.json` if present).
-
-Eject never deletes a credentials file. Profiles stay on disk and the dialog
-tells you where, so removing them is a decision you make deliberately rather
-than a side effect of uninstalling.
-
-### Removing an account
-
-Each inactive profile carries a **✕** beside its Switch button. The active
-profile has none — the login you are signed in as cannot be deleted by a
-misclick, and the same rule is enforced in the code rather than only in the UI.
-
-Confirming deletes that profile's directory and the refresh token in it. That
-account then needs a fresh `/login` and its verification email to come back.
-Nothing else is affected: session history, plugins and settings are shared and
-live elsewhere.
-
-To stop using Shambles entirely without deleting anything, use **Eject** below.
+---
 
 ## What it touches
 
 Only your **login** is account-scoped. Everything else in `~/.claude` is
-machine-scoped and stays shared, which is how Claude Code behaves on its own.
+machine-scoped and stays shared.
 
 | Path | Treatment |
 |---|---|
@@ -462,9 +595,9 @@ plugins, project trust, MCP servers and settings are all **shared across every
 account** — switching does not hide your transcripts or make you re-trust your
 directories. A profile is about half a kilobyte.
 
-## Where the tokens live
+### Where the tokens live
 
-```
+```text
 ~/.shambles/<provider>/<Name>/credentials.json       mode 600
   claudeAiOauth.accessToken             ~8 hour life, refreshed silently
   claudeAiOauth.refreshToken            the thing that saves you the email
@@ -478,31 +611,30 @@ The **email is not in that file**. It lives in `~/.claude.json` under
 one key on every switch. Without it you would swap the token but keep
 displaying the previous account's name.
 
-Directory permissions: `~/.shambles/` and each directory inside it are
-created `700`, and every credentials file is written `600`. On Windows `chmod`
-cannot express either, so there the files rely on the user profile's own ACLs —
-the same protection Claude Code's own `.credentials.json` gets.
+Directory permissions: `~/.shambles/` and each directory inside it are created
+`700`, and every credentials file is written `600`. On Windows `chmod` cannot
+express either, so there the files rely on the user profile's own ACLs — the
+same protection Claude Code's own `.credentials.json` gets.
 
-## Checking token health
+---
 
-A card shows a chip beside the email only when the account needs attention:
-
-| Chip | Meaning | Colour |
-|---|---|---|
-| *(none)* | healthy — nothing to do | — |
-| `soon` | the refresh window is closing | amber |
-| `needs login` | the window has closed, or this profile has no credential yet | red |
-
-**Durations are deliberately off the card face.** A number counting down on
-every row is noise on the days it is not urgent, so the face carries the state
-and the figures stay one hover away: point at a profile's name for the exact
-date and time, and at a chip for what to do about it.
+## Token health
 
 "Closing" means one day or fewer for Claude Code, two for Codex — not the week
 you might expect. The windows differ by an order of magnitude across platforms
 and plans (see [docs/token-storage.md](docs/token-storage.md)), and against a
 measured window of roughly four days a seven-day threshold would leave every
 profile permanently amber. Each provider sets its own figure in its spec.
+
+Two things worth understanding:
+
+- **Ignore the access token.** It expires within hours and is refreshed
+  automatically. Only `refreshTokenExpiresAt` decides whether you face the
+  email flow again.
+- **The clock resets on use, not on the calendar.** Every refresh mints a
+  replacement with a fresh window. Rotating between accounts normally keeps all
+  of them alive indefinitely; an account parked and untouched for 30+ days is
+  the only one that needs a new login.
 
 ### Why an expired token is left in place
 
@@ -514,16 +646,17 @@ deliberate:
   and an automatic delete would then cost you a real verification email — the
   exact thing this tool exists to avoid. A wrong label is recoverable; a
   deleted refresh token is not.
-- **It is diagnostic.** The lapsed file is what lets the UI distinguish
-  "this account expired twelve days ago" from "never logged in here".
+- **It is diagnostic.** The lapsed file is what lets the UI distinguish "this
+  account expired twelve days ago" from "never logged in here".
 - **It is never in the way.** Switching to a lapsed profile is not an error.
   Shambles does not validate tokens; it copies a file. Claude Code then fails
   its refresh and prompts `/login`, which overwrites it anyway.
 
-For a countdown without opening the app:
+<details>
+<summary>A countdown for every profile, without opening the app</summary>
 
 ```bash
-.venv/bin/python -c "
+python3 -c "
 import base64,json,datetime,pathlib
 
 def expiry(blob):
@@ -548,15 +681,9 @@ for provider in sorted(p for p in root.iterdir() if p.is_dir() and p.name[0]!='.
         print(f'{label:<22} {(t-datetime.datetime.now()).days:>3}d left')"
 ```
 
-Two things worth understanding:
+</details>
 
-- **Ignore the access token.** It expires within hours and is refreshed
-  automatically. Only `refreshTokenExpiresAt` decides whether you face the
-  email flow again — it is the one the UI counts down.
-- **The clock resets on use, not on the calendar.** Every refresh mints
-  a replacement with a fresh window. Rotating between accounts normally keeps
-  all of them alive indefinitely; an account parked and untouched for 30+ days
-  is the only one that needs a new `/login`.
+---
 
 ## Is this safe?
 
@@ -565,26 +692,25 @@ Two things worth understanding:
 **No network, with one exception you have to switch on yourself.** Shambles
 cannot reach Anthropic's or OpenAI's servers at all, so it cannot affect your
 login, billing, rate limits or organisation membership; it only moves bytes
-between directories on your own disk. The single module that may open a
-socket is `shambles/update_check.py`, which asks GitHub for the latest
-release tag and runs only once you have enabled
-[update checks](#update-checks) — see that section for exactly what the
-request contains. That division is not a promise: `tests/test_login.py` walks
-the AST of every module in the package, fails on any networking import, and
-permits `urllib` in that one file and nowhere else.
+between directories on your own disk. The single module that may open a socket
+is `shambles/update_check.py`, which asks GitHub for the latest release tag and
+runs only once you have enabled [update checks](#update-checks). That division
+is not a promise: `tests/test_login.py` walks the AST of every module in the
+package, fails on any networking import, and permits `urllib` in that one file
+and nowhere else.
 
 **It executes exactly one kind of external program:** the vendor's own login
-command — `claude auth login` or `codex login` — and only when you click Add
-Account. **Shambles implements no part of signing in.** That command opens
-your browser and runs its own callback server; Shambles waits for it to
-finish and then files the credential it wrote. No password, no token in
-flight, and nothing held that was not already on your disk.
+command — `claude auth login` or `codex login` — and only when you add an
+account. **Shambles implements no part of signing in.** That command opens your
+browser and runs its own callback server; Shambles waits for it to finish and
+then files the credential it wrote. No password, no token in flight, and
+nothing held that was not already on your disk.
 
 What protects your data:
 
-- Every write to `~/.claude.json` is preceded by a backup into
-  `.shambles-backups/` and performed atomically (temp file + `os.replace`),
-  preserving all other keys and their original order.
+- Every write to `~/.claude.json` is preceded by a backup and performed
+  atomically (temp file + `os.replace`), preserving all other keys and their
+  original order.
 - The outgoing login is copied into its profile **before** the incoming one is
   installed, so switching away can never strand an account.
 - Credentials are written to a temporary file, `chmod 600`, then renamed into
@@ -597,37 +723,8 @@ What protects your data:
   mislabelling it.
 - The only automatic deletions are pruning backups past ten and clearing the
   live credentials file when you switch to a profile that has never been logged
-  in. Removing a profile is possible but never automatic: the ✕ appears only on
-  inactive profiles and asks for confirmation naming the account first.
-- `~/.claude` is never moved, replaced or deleted. Session history, plugins and
-  settings are simply not part of what switching touches.
-
-### Closing the window
-
-The title-bar X, `Ctrl+C` in the launching terminal, and `kill <pid>` all shut
-Shambles down cleanly.
-
-`Ctrl+C` needs explaining, because Tk does not give it to you for free. Tk's
-`mainloop()` blocks inside C waiting on X events, while Python only dispatches
-signal handlers between bytecode instructions — so by default `Ctrl+C` is
-recorded and never delivered. The app looks frozen, and the natural next move
-is `Ctrl+Z`, which SIGSTOPs the process. A stopped process cannot answer the
-window manager's close request, leaving a window that nothing on the desktop
-can shut, surviving even after you kill the terminal.
-
-Shambles avoids this with a 150 ms no-op timer that hands control back to the
-interpreter often enough for signals to land. Covered by
-`tests/test_shutdown.py`.
-
-**If you ever do end up with a frozen window** (from an older build, or after
-pressing `Ctrl+Z`):
-
-```bash
-pkill -CONT -f shambles.py && pkill -f shambles.py
-```
-
-The `-CONT` matters — a stopped process cannot act on `SIGTERM` until it is
-resumed first.
+  in. Removing a profile is possible but never automatic.
+- `~/.claude` is never moved, replaced or deleted.
 
 ### Your session history is shared
 
@@ -639,29 +736,149 @@ every session, exactly as it does without Shambles installed.
 directory, so each account had its own `projects/` folder and switching
 appeared to erase weeks of history. If you used one of those, Shambles repairs
 it the next time you open the window — automatically, with nothing to click.
-There is no version of split history anyone wants, so it is not offered as a
-choice. The merge is additive: nothing is deleted, and the old profile folders
-stay on disk for you to remove once you are satisfied.
-
-Open Shambles with **no Claude Code sessions running**. The repair briefly
-replaces `~/.claude`, and a live session writes there continuously.
+The merge is additive: nothing is deleted, and the old profile folders stay on
+disk for you to remove once you are satisfied. Open Shambles with **no Claude
+Code sessions running** when that happens; the repair briefly replaces
+`~/.claude`, and a live session writes there continuously.
 
 Unrelated but worth knowing: Claude Code prunes sessions older than 30 days on
-its own. Raise `cleanupPeriodDays` in `~/.claude/settings.json` if you want to
-keep them longer.
+its own. Raise `cleanupPeriodDays` in `~/.claude/settings.json` to keep them
+longer.
 
 ### The one real caveat
 
 **Do not switch while a Claude Code session is running.** A live session holds
 its token in memory and rewrites `~/.claude.json` periodically. If it writes
 after Shambles does, last-writer-wins and the spliced identity is clobbered.
-The backups in `.shambles-backups/` cover you, but the clean habit is: finish
-or close your sessions, switch, then start fresh.
+The backups cover you, but the clean habit is: finish or close your sessions,
+switch, then start fresh.
 
 This is a race with another process, not a flaw the tool can fully close from
 the outside — Claude Code holds no lock Shambles could wait on.
 
-## Tests
+---
+
+## Leaving cleanly
+
+Do **not** uninstall by deleting `~/.shambles/`. That folder holds the refresh
+tokens for every account you saved, and each one is only recoverable through a
+fresh verification email.
+
+Use **Eject** instead — the footer button in the window, or `x` in the
+dashboard. It leaves `~/.claude` exactly as a stock install expects, still
+signed in as the current account, with history, plugins and settings untouched,
+and removes only Shambles' own bookkeeping. It tells you what it did and where
+your saved logins still are, so removing them stays a decision you make
+deliberately rather than a side effect of uninstalling.
+
+Eject never deletes a credentials file. Afterwards, remove the program itself:
+
+```bash
+# installed with the script
+rm ~/.local/bin/shambles
+
+# installed with pipx
+pipx uninstall shambles
+
+# and, once you are sure you want the saved logins gone for good
+rm -rf ~/.shambles
+```
+
+### Removing a single account
+
+Each inactive profile carries a **✕** beside its Switch button; the active one
+has none. Confirming deletes that profile's directory and the refresh token in
+it, so that account needs a fresh login and its verification email to come
+back. Nothing else is affected: session history, plugins and settings are
+shared and live elsewhere.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `No module named 'textual'` | A clone whose dependencies were never installed. `pip install -e .` in the checkout, or use pipx |
+| `Shambles needs Tkinter` | Only the window needs it. `sudo apt install python3-tk`, or use `shambles` / `shambles tui` instead |
+| `shambles: command not found` after the install script | `~/.local/bin` is not on your PATH. The script prints the line to add |
+| Switching seems to do nothing | A session that was already running keeps its old token. Start a new one, or *Developer: Reload Window* in VS Code |
+| Switching does nothing, in every new session too | `CLAUDE_CONFIG_DIR` is set, or you are on Windows/macOS — see [the support table](#does-it-work-on-your-setup) |
+| The window will not close | `Ctrl+C` in the launching terminal works, and so does `kill <pid>`. If it is stopped rather than frozen: `pkill -CONT -f shambles && pkill -f shambles` — a stopped process cannot act on `SIGTERM` until it is resumed |
+| A provider is greyed out in Add Account | Its CLI is not on your PATH. Shambles runs the vendor's own login command, so it needs `claude` or `codex` installed |
+| Windows SmartScreen warns | The binaries are unsigned. Use pipx if you would rather not click through it |
+
+The window's `Ctrl+C` handling is worth a note, because Tk does not give it to
+you for free: `mainloop()` blocks inside C, while Python only dispatches signal
+handlers between bytecode instructions, so by default `Ctrl+C` is recorded and
+never delivered. Shambles keeps a 150 ms no-op timer running purely so signals
+land. Covered by `tests/test_shutdown.py`.
+
+---
+
+## Desktop shortcuts without a console window
+
+Tkinter apps launched through `python.exe` drag a blank terminal along behind
+the GUI. Each install route has a quiet path:
+
+| Route | Quiet launcher |
+|---|---|
+| Release binary | Already quiet — built with `--windowed` on Windows |
+| pipx / pip | `shamblesw` (the `gui-scripts` entry, backed by `pythonw.exe`) |
+| From a checkout | `pythonw.exe` on Windows, `python3` on Linux |
+
+`shambles` (console) stays available everywhere so `--version` and `--help`
+still print. On Windows a `gui-scripts` binary has nowhere to write, which is
+exactly why both exist.
+
+**Windows shortcut, from a checkout.** Right-click → New → Shortcut:
+
+```text
+Target:      C:\Path\To\python\pythonw.exe C:\Path\To\Shambles\shambles.py
+Start in:    C:\Path\To\Shambles
+Run:         Normal window
+```
+
+`pythonw.exe` sits next to `python.exe` in the same install. Confirm with
+`where pythonw`. Nothing else is required — no `cmd /c`, no `start`, both of
+which reintroduce the console.
+
+**Windows shortcut, pipx install:** target `%USERPROFILE%\.local\bin\shamblesw.exe`.
+
+**Linux desktop entry** — `~/.local/share/applications/shambles.desktop`:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Shambles
+Comment=Switch Claude Code accounts
+Exec=/home/you/.local/bin/shambles
+Terminal=false
+Categories=Development;Utility;
+```
+
+Run `update-desktop-database ~/.local/share/applications` afterwards if it does
+not appear.
+
+**Building the binary yourself.** These are the exact commands the release
+workflow runs. PyInstaller writes a `shambles.spec` as it goes; that file is a
+generated artefact and is not tracked, so build from the flags rather than from
+a spec:
+
+```bash
+pip install pyinstaller
+
+# Windows — --windowed is what suppresses the console window
+pyinstaller --onefile --windowed --name shambles shambles/__main__.py
+
+# Linux — no --windowed, or it swallows --version and --help output
+pyinstaller --onefile --name shambles shambles/__main__.py
+```
+
+The binary lands in `dist/`.
+
+---
+
+## Development
 
 ```bash
 python3 -m venv --system-site-packages .venv
@@ -669,15 +886,15 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pytest
 ```
 
-800+ tests. Every one runs against a synthetic home in `tmp_path`. None reads or
-writes your real `~/.claude`.
+970+ tests. Every one runs against a synthetic home in `tmp_path`. None reads
+or writes your real `~/.claude`.
 
 CI runs the suite on Linux and Windows across Python 3.10 and 3.12, under
 `xvfb` so the GUI render and shutdown tests actually execute rather than skip.
-Tagging `v*` builds unsigned single-file binaries for Linux (x86_64 and
-arm64), macOS (Intel and Apple Silicon) and Windows x64, and attaches them to
-a GitHub Release — but each binary is built only after the suite passes on
-that platform, and none is published unless all five build.
+Tagging `v*` builds unsigned single-file binaries for Linux (x86_64 and arm64),
+macOS (Intel and Apple Silicon) and Windows x64, and attaches them to a GitHub
+Release — but each binary is built only after the suite passes on that
+platform, and none is published unless all five build.
 
 The load-bearing test is
 `tests/test_switch.py::test_credentials_survive_a_round_trip_unmodified` — it
@@ -689,14 +906,15 @@ tool stops solving the problem it exists for.
 Nothing here runs a real `claude` or `codex`. The login tests drive a `/bin/sh`
 stand-in placed on `PATH`, so no browser opens and nothing authenticates.
 
+---
+
 ## Platform notes
 
-Developed and verified on WSL2 Ubuntu with WSLg, Python 3.12, Tk 8.6. The
-window is 860px wide with a 560px floor, and a `Switch` click was confirmed
-to swap the token and the displayed email together. The Windows code paths
-(`target_is_directory=True`, the WinError 1314 Developer Mode message) are
-written to spec but **have not been exercised** — there was no Windows-side
-Claude Code install to test against.
+Developed and verified on WSL2 Ubuntu with WSLg, Python 3.12, Tk 8.6. A
+`Switch` click was confirmed to swap the token and the displayed email
+together. The Windows code paths (`target_is_directory=True`, the WinError 1314
+Developer Mode message) are written to spec but **have not been exercised** —
+there was no Windows-side Claude Code install to test against.
 
 **macOS is not supported.** Claude Code stores credentials in the system
 Keychain there rather than in `.credentials.json`, so there is no file for
@@ -706,6 +924,8 @@ Run Shambles inside whichever environment you actually use Claude Code in. A
 Windows build manages `C:\Users\<you>\.claude`, which is a different
 installation from the one in a WSL home directory.
 
+---
+
 ## Documentation
 
 | Document | What it is |
@@ -714,10 +934,11 @@ installation from the one in a WSL home directory.
 | [TECH_SPEC.md](TECH_SPEC.md) | Architecture reference. Its §-numbered mechanism is authoritative; its single-provider paths describe v1.0 and are superseded — the banner says which |
 | [docs/token-storage.md](docs/token-storage.md) | Field research into how Claude and Codex store credentials across macOS, Windows and Linux. Covers platforms this tool does not yet support |
 | [docs/design-decisions.md](docs/design-decisions.md) | Recorded decisions and rationale. DD-4 is implemented; DD-2 is amended — the tool now starts the vendor's login rather than printing it |
+| [SECURITY.md](SECURITY.md) | The security posture, and the one opt-in network call |
 
-Where two documents disagree about what the tool does today, the
-multi-provider design wins on anything provider-shaped — paths, layering,
-login, the store layout — and TECH_SPEC wins on mechanism: switch ordering,
-atomic writes, permissions, the state machine, concurrency.
+Where two documents disagree about what the tool does today, the multi-provider
+design wins on anything provider-shaped — paths, layering, login, the store
+layout — and TECH_SPEC wins on mechanism: switch ordering, atomic writes,
+permissions, the state machine, concurrency.
 
 The tests win over both.
