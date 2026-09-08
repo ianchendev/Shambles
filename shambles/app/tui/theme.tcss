@@ -65,6 +65,10 @@ Dashboard {
     text-style: none;
 }
 
+Dashboard.ascii #account-list > AccountRow.-highlight .account-row {
+    border-left: ascii #e07a5f;
+}
+
 #account-details,
 #inline-details {
     background: #11182b;
@@ -77,7 +81,6 @@ Dashboard {
     height: 100%;
     margin-left: 1;
     overflow-y: auto;
-    scrollbar-size: 0 0;
 }
 
 #inline-details {
@@ -132,6 +135,16 @@ Dashboard.too-short #shortcut-footer {
 }
 
 Dashboard.too-short #terminal-too-small {
+    display: block;
+}
+
+Onboarding.too-short #welcome-body,
+Onboarding.too-short #dashboard-header,
+Onboarding.too-short #shortcut-footer {
+    display: none;
+}
+
+Onboarding.too-short #terminal-too-small {
     display: block;
 }
 

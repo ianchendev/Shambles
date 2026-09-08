@@ -67,10 +67,6 @@ class Onboarding(Widget):
     Onboarding #welcome-copy {
         width: 100%; height: auto; content-align: center middle;
     }
-    Onboarding.too-short #welcome-body,
-    Onboarding.too-short #dashboard-header,
-    Onboarding.too-short #shortcut-footer { display: none; }
-    Onboarding.too-short #terminal-too-small { display: block; }
     """
 
     def __init__(self, *, unicode: bool):

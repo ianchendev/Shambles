@@ -1063,3 +1063,12 @@ async def test_ascii_onboarding_fallback_is_readable(empty_service):
         assert screen_text(app).isascii()
         assert "SHAMBLES" in screen_text(app)
         assert "OFFLINE" in screen_text(app)
+
+
+async def test_empty_welcome_too_short_shows_size_message(empty_service):
+    app = ShamblesTUI(empty_service)
+    async with app.run_test(size=(80, 8)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#terminal-too-small").display
+        assert "Terminal is too small" in screen_text(app)
+        assert "No saved accounts yet." not in screen_text(app)

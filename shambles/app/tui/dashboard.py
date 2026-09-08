@@ -23,20 +23,29 @@ FULL_FOOTER = (
     "l login · r refresh · ? help · q quit"
 )
 COMPACT_FOOTER = "⏎ switch · a add · x eject · m menu · ? help · q quit"
+FULL_FOOTER_ASCII = (
+    "j/k move | Enter switch | a add | x eject | m menu | "
+    "l login | r refresh | ? help | q quit"
+)
+COMPACT_FOOTER_ASCII = "Enter switch | a add | x eject | m menu | ? help | q quit"
 
 
 def _paint_footer(text: str) -> str:
+    sep = " | " if " | " in text else " · "
+    gold = "|" if sep == " | " else "·"
     painted = []
-    for part in text.split(" · "):
+    for part in text.split(sep):
         key, _, label = part.partition(" ")
         painted.append(f"[#e07a5f]{key}[/] {label}")
-    return " [#d9a441]·[/] ".join(painted)
+    return f" [#d9a441]{gold}[/] ".join(painted)
 
 
-def _footer_for_width(width: int, *, wide: bool) -> str:
-    if wide and cell_len(FULL_FOOTER) <= width:
-        return FULL_FOOTER
-    return COMPACT_FOOTER
+def _footer_for_width(width: int, *, wide: bool, unicode: bool = True) -> str:
+    full = FULL_FOOTER if unicode else FULL_FOOTER_ASCII
+    compact = COMPACT_FOOTER if unicode else COMPACT_FOOTER_ASCII
+    if wide and cell_len(full) <= width:
+        return full
+    return compact
 
 
 class Dashboard(Widget):
@@ -92,7 +101,7 @@ class Dashboard(Widget):
             header_text(width, height, unicode=unicode)
         )
         self.query_one("#shortcut-footer", Static).update(
-            _paint_footer(_footer_for_width(width, wide=wide))
+            _paint_footer(_footer_for_width(width, wide=wide, unicode=unicode))
         )
 
     async def on_account_list_selected(self, event: AccountList.Selected) -> None:
