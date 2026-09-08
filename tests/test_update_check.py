@@ -52,8 +52,8 @@ def test_an_enabled_check_says_what_is_new_and_how_to_get_it(paths):
     assert status.latest == "2.1.0"
     assert status.newer is True
     assert status.message == (
-        "Shambles 2.1.0 is available (you have 2.0.0). Update with: "
-        "npm i -g shambles@latest — or re-run the install script.")
+        "Shambles 2.1.0 is available (you have 2.0.0). "
+        "Re-run the install script to update.")
 
 
 def test_the_notice_never_offers_to_do_the_update_itself(paths):
@@ -62,8 +62,17 @@ def test_the_notice_never_offers_to_do_the_update_itself(paths):
     settings.set_update_check(paths, True)
     status = check_for_update(paths, current_version="2.0.0", now_s=1_000,
                               fetch=answering("v2.1.0"))
-    assert "npm i -g shambles@latest" in status.message
-    assert "re-run the install script" in status.message
+    assert "Re-run the install script" in status.message
+
+
+def test_the_notice_only_names_a_route_that_exists(paths):
+    """The README leads with the install script because npm is unpublished.
+    A notice that told somebody to run ``npm i -g shambles`` would hand them
+    a command that fails, which is worse than saying nothing at all."""
+    settings.set_update_check(paths, True)
+    status = check_for_update(paths, current_version="2.0.0", now_s=1_000,
+                              fetch=answering("v2.1.0"))
+    assert "npm" not in status.message
 
 
 @pytest.mark.parametrize("tag", ["v2.0.0", "2.0.0", "v1.9.9", "v1.0"])
@@ -317,8 +326,8 @@ def test_a_cache_only_read_repeats_what_the_last_lookup_found(paths):
     notice = update_check.notice_from_cache(paths, current_version="2.0.0")
 
     assert notice == (
-        "Shambles 2.1.0 is available (you have 2.0.0). Update with: "
-        "npm i -g shambles@latest — or re-run the install script.")
+        "Shambles 2.1.0 is available (you have 2.0.0). "
+        "Re-run the install script to update.")
 
 
 def test_a_cache_only_read_is_silent_when_checks_are_off(paths):

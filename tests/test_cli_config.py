@@ -228,7 +228,7 @@ def test_a_cached_newer_release_is_repeated_under_the_version(home, capsys):
     assert code == 0
     assert f"Shambles 99.0.0 is available (you have {shambles.__version__})" \
         in reported.err
-    assert "npm i -g shambles@latest" in reported.err
+    assert "Re-run the install script" in reported.err
 
 
 def test_the_notice_stays_off_stdout_so_scripts_can_scrape_the_version(
