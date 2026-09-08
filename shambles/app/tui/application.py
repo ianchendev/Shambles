@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from enum import Enum
 from typing import Callable
 
@@ -17,6 +18,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
 
+from ... import __version__, update_check
 from ...errors import ShamblesError
 from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
                        ShamblesService)
@@ -55,6 +57,14 @@ class LoginFinished(Message):
     def __init__(self, result: ActionResult):
         super().__init__()
         self.result = result
+
+
+class UpdateNoticeReady(Message):
+    """A background update check came back with something worth saying."""
+
+    def __init__(self, notice: str):
+        super().__init__()
+        self.notice = notice
 
 
 class BoxPhase(Enum):
@@ -240,11 +250,12 @@ class HelpScreen(ModalScreen[None]):
                 "l            Log in to selected account\n"
                 "x            Eject Shambles\n"
                 "r            Refresh local state\n"
+                "u            Hide the update notice\n"
                 "?            Help\n"
                 "q            Quit\n"
                 "Esc          Close help / skip welcome motion\n\n"
                 "Accounts and usage come from local state.\n"
-                "No telemetry or update checks.\n"
+                "No telemetry. Update checks are off by default.\n"
                 "Affected applications appear in account details.\n"
                 "Existing sessions keep their loaded login; restart them\n"
                 "after switching accounts.",
@@ -262,6 +273,10 @@ class ShamblesTUI(App[str | None]):
         display: none; height: auto; padding: 0 1; color: #d9a441;
     }
     #refresh-status.visible { display: block; }
+    #update-notice {
+        display: none; height: auto; padding: 0 1; color: #d9a441;
+    }
+    #update-notice.visible { display: block; }
     """
     BINDINGS = [
         Binding("j,down", "next_account", "Next", show=False, priority=True),
@@ -272,6 +287,7 @@ class ShamblesTUI(App[str | None]):
         Binding("m", "open_menu", "Menu"),
         Binding("l", "login_selected", "Login"),
         Binding("x", "eject", "Eject"),
+        Binding("u", "hide_update_notice", "Hide notice", show=False),
         Binding("escape", "settle_onboarding", "Skip", show=False),
         Binding("q", "quit", "Quit"),
     ]
@@ -348,6 +364,56 @@ class ShamblesTUI(App[str | None]):
         with Vertical(id="app-body"):
             yield self._view()
         yield Static(id="refresh-status", markup=False)
+        yield Static(id="update-notice", markup=False)
+
+    def on_mount(self) -> None:
+        """Start the update check, after the first frame and never before it.
+
+        A service without a home is a test double that only knows how to hand
+        over a snapshot (``tests/tui/snapshot_app.py``'s ``FrozenService``),
+        and there is nothing for the check to read; skipping keeps a renderer
+        from growing a worker it has no use for.
+        """
+        if getattr(self.service, "paths", None) is not None:
+            self.look_for_update()
+
+    @work(thread=True, group="update-check")
+    def look_for_update(self) -> None:
+        """Ask whether there is a newer release, off the interface's thread.
+
+        In a thread because it can block: ``update_check.TIMEOUT_S`` bounds
+        one socket operation rather than the whole lookup, so DNS plus connect
+        plus read can outlast any single timeout, and a captive portal in
+        front of the first frame would be indistinguishable from a hung
+        program. A notice that turns up a second late costs nothing -- the
+        24-hour cache means it is usually already on disk.
+
+        With ``update.check`` unset this returns before a socket is opened,
+        which is the whole privacy claim; see :mod:`shambles.update_check`.
+
+        Nothing that happens in here is worth an interface. The catch-all is
+        the same one the lookup itself uses, one level further out: a version
+        check must not be able to take down somebody's session, whatever a
+        future opener decides to raise.
+        """
+        try:
+            status = update_check.check_for_update(
+                self.service.paths, current_version=__version__,
+                now_s=time.time())
+        except Exception:
+            return
+        if status.message:
+            self.post_message(UpdateNoticeReady(status.message))
+
+    def on_update_notice_ready(self, event: UpdateNoticeReady) -> None:
+        notice = self.query_one("#update-notice", Static)
+        notice.update(event.notice)
+        notice.add_class("visible")
+
+    def action_hide_update_notice(self) -> None:
+        """One line of news, not a decision. Whoever has read it gets the row
+        back, and nothing brings it up again this session."""
+        self.query_one("#update-notice", Static).remove_class("visible")
 
     def on_list_view_highlighted(self, event: AccountList.Highlighted) -> None:
         if isinstance(event.list_view, AccountList) and event.list_view.is_attached:

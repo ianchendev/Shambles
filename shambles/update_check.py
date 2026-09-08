@@ -43,9 +43,14 @@ CACHE_NAME = "update-cache.json"
 #: One lookup per day, per the design's privacy budget.
 TTL_S = 86_400
 
-#: Short enough that a hung endpoint cannot become a hung program. The CLI and
-#: the TUI both call this on the way to something the user actually asked for.
-TIMEOUT_S = 5.0
+#: Per socket operation, not per lookup: ``urlopen`` applies it separately to
+#: the name resolution, the connect and each read, so the wall-clock worst
+#: case is a small multiple of this. Nothing waits on a lookup any more --
+#: ``--version`` reads the cache and the TUI checks in a worker -- but a
+#: background thread still has to end, and an endpoint that cannot answer a
+#: two-second read has already spent the day's attempt as far as anybody
+#: looking at the screen is concerned.
+TIMEOUT_S = 2.0
 
 #: A release description is a few kilobytes. Reading a bounded amount means a
 #: misdirected or hostile endpoint cannot answer with a stream.
@@ -123,6 +128,30 @@ def check_for_update(paths, *, current_version: str, now_s: float,
                if newer else None)
     return UpdateStatus(enabled=True, current=current_version, latest=latest,
                         newer=newer, message=message)
+
+
+def notice_from_cache(paths, *, current_version: str) -> str | None:
+    """The notice an earlier lookup already earned, without doing another.
+
+    ``--version`` is what a script runs to ask whether the install worked, and
+    :data:`TIMEOUT_S` bounds one socket operation rather than the whole
+    lookup, so putting :func:`check_for_update` in front of it would let a
+    captive portal hold up an install check for as long as DNS, connect and
+    read take to each give up in turn. This path therefore only reads: no
+    fetch, no restamping, not even a ``mkdir``. There is no ``fetch``
+    parameter because there is nothing here that could use one.
+
+    Staleness is deliberately not consulted. Age decides when it is time to
+    look again, which this never does; a tag from last week is still the
+    newest release anybody here knows about, and going quiet on it would make
+    the notice blink in and out depending on which command ran last.
+    """
+    if not settings.update_check_enabled(paths):
+        return None
+    _, latest = _read_cache(paths)
+    if not latest or not _is_newer(latest, current_version):
+        return None
+    return NOTICE.format(latest=latest, current=current_version)
 
 
 def _lookup(fetch) -> str | None:

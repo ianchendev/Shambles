@@ -2,12 +2,15 @@
 
 from copy import deepcopy
 from dataclasses import replace
+import json
 import threading
+import time
 
 import pytest
 from textual.events import Key
 from textual.widgets import Input
 
+from shambles import settings, update_check
 from shambles.app.service import ActionError, ActionPlan, ActionResult
 from shambles.app.snapshot import Account, Group, Snapshot, Surface
 from shambles.app.tui.application import BoxPhase, OnboardingFrame, ShamblesTUI
@@ -34,6 +37,11 @@ class SnapshotService:
     """Keep UI tests at the service boundary without reading real stores."""
 
     def __init__(self, snapshot):
+        # The real service carries the home it reads from. Left unset here so
+        # that the update-check worker -- the one thing in the app that goes
+        # looking at a home rather than at a snapshot -- stays out of every
+        # test that is not about it. The tests that are about it assign one.
+        self.paths = None
         self.current = snapshot
         self.refreshed = snapshot
         self.refresh_result = None
@@ -800,6 +808,179 @@ async def test_login_failure_shows_result_without_a_launch_option(service):
         assert app.screen.id == "result"
         assert "The vendor login command failed." in screen_text(app)
         assert "Launch" not in screen_text(app)
+
+
+# --- The opt-in update notice ----------------------------------------------
+#
+# The lookup runs in a thread because it can block: TIMEOUT_S bounds one
+# socket operation, not DNS plus connect plus read, so nothing that waits on
+# it may sit in front of the first frame. A notice that turns up a second late
+# is fine -- the 24-hour cache means it is usually already on disk.
+
+
+def seed_update_cache(paths, *, latest):
+    """Leave a tag on disk as though an earlier run had looked one up.
+
+    Stamped now, so the check reads it as today's answer and has no reason to
+    fetch: these tests exercise the wiring, never a socket.
+    """
+    paths.ensure_store()
+    (paths.library_dir / update_check.CACHE_NAME).write_text(
+        json.dumps({"checked_at": time.time(), "latest": latest}),
+        encoding="utf-8")
+
+
+async def test_a_default_install_shows_no_notice_and_looks_nothing_up(
+        service, paths):
+    """Off by default, all the way through to the screen.
+
+    The cache is written by a lookup and only by a lookup, so its absence is
+    the assertion that no lookup happened.
+    """
+    service.paths = paths
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not app.query_one("#update-notice").display
+        assert "is available" not in screen_text(app)
+        assert not (paths.library_dir / update_check.CACHE_NAME).exists()
+
+
+async def test_a_cached_newer_release_arrives_as_a_one_line_notice(
+        service, paths):
+    settings.set_update_check(paths, True)
+    seed_update_cache(paths, latest="99.0.0")
+    service.paths = paths
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(140, 32)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.query_one("#update-notice").display
+        assert app.query_one("#update-notice").size.height == 1
+        assert "Shambles 99.0.0 is available" in screen_text(app)
+        assert "npm i -g shambles@latest" in screen_text(app)
+        assert app.query_one(Dashboard).display
+
+
+async def test_the_notice_can_be_dismissed(service, paths):
+    """It is one line of news, not a decision to make. Whoever has read it
+    gets their row back."""
+    settings.set_update_check(paths, True)
+    seed_update_cache(paths, latest="99.0.0")
+    service.paths = paths
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(140, 32)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "99.0.0" in screen_text(app)
+
+        await pilot.press("u")
+
+        assert not app.query_one("#update-notice").display
+        assert "99.0.0" not in screen_text(app)
+        assert app.selected_account == "Personal"
+
+
+async def test_a_cached_tag_that_is_not_newer_says_nothing(service, paths):
+    settings.set_update_check(paths, True)
+    seed_update_cache(paths, latest="0.0.1")
+    service.paths = paths
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not app.query_one("#update-notice").display
+
+
+async def test_startup_never_waits_for_the_lookup(service, paths, monkeypatch):
+    """The point of the worker.
+
+    A blocking lookup in front of the first frame would make a captive portal
+    look like a hung program, so the interface has to be up and taking keys
+    while the check is still out.
+    """
+    settings.set_update_check(paths, True)
+    service.paths = paths
+    started, release, ran_on = threading.Event(), threading.Event(), []
+
+    def slow_lookup(_paths, **_kwargs):
+        ran_on.append(threading.get_ident())
+        started.set()
+        release.wait(5)
+        return update_check.UpdateStatus(True, "2.0.0", None, False, None)
+
+    monkeypatch.setattr(update_check, "check_for_update", slow_lookup)
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        try:
+            assert started.wait(5)
+            assert ran_on[0] != threading.get_ident()
+            await pilot.press("j")
+            assert app.selected_account == "Work"
+            assert app.is_running
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+
+
+async def test_a_lookup_that_raises_does_not_take_the_interface_down(
+        service, paths, monkeypatch):
+    """A version check is worth nobody's session. Whatever comes back out of
+    that thread, the app stays up and says nothing about it."""
+    settings.set_update_check(paths, True)
+    service.paths = paths
+
+    def boom(_paths, **_kwargs):
+        raise RuntimeError("sensitive upstream exception")
+
+    monkeypatch.setattr(update_check, "check_for_update", boom)
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.is_running
+        assert not app.query_one("#update-notice").display
+        assert "sensitive upstream" not in screen_text(app)
+        await pilot.press("j")
+        assert app.selected_account == "Work"
+
+
+async def test_the_lookup_does_not_block_a_switch_or_count_as_a_mutation(
+        service, paths, monkeypatch):
+    """It touches nothing but a cache file, so it must not reserve the slot
+    that stops two credential writes overlapping."""
+    settings.set_update_check(paths, True)
+    service.paths = paths
+    release = threading.Event()
+
+    def slow_lookup(_paths, **_kwargs):
+        release.wait(5)
+        return update_check.UpdateStatus(True, "2.0.0", None, False, None)
+
+    monkeypatch.setattr(update_check, "check_for_update", slow_lookup)
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        try:
+            assert not app.mutation_running
+            await pilot.press("j", "enter")
+            await pilot.pause()
+            assert service.switch_calls == [("claude", "Work")]
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+
+
+async def test_help_says_how_to_hide_the_notice_and_what_the_check_does(
+        service):
+    """The only place a key is ever advertised in this app, and the only
+    place the interface gets to correct itself about the network."""
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("?")
+        assert "Hide the update notice" in screen_text(app)
+        assert "No telemetry" in screen_text(app)
+        assert "No telemetry or update checks." not in screen_text(app)
 
 
 async def test_help_lists_lifecycle_shortcuts(service):
