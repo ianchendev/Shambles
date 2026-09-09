@@ -7,6 +7,7 @@ import pytest
 from rich.cells import cell_len
 
 from shambles.app.tui.dashboard import Dashboard
+from shambles.app.tui.widgets import AccountDetails
 from test_dashboard import DashboardHarness, screen_text
 from test_dashboard import snapshot as _snapshot_fixture
 
@@ -27,6 +28,12 @@ async def test_diagnostic_dump(width):
         dash = app.query_one(Dashboard)
         classes = sorted(dash.classes)
         size = app.size
+        panes = []
+        for node in app.query(AccountDetails):
+            panes.append(
+                f"id={node.id} display={node.display} size={node.size} "
+                f"content_size={node.content_size} "
+                f"outer={node.outer_size} resizes={getattr(node, '_diag_resizes', 0)}")
 
     print(f"\n@@@ WIDTH={width} platform={sys.platform} "
           f"encoding={sys.stdout.encoding} @@@")
@@ -36,6 +43,8 @@ async def test_diagnostic_dump(width):
           f"cell_len('·')={cell_len(chr(0xb7))} @@@")
     print(f"@@@ lines={len(screen.splitlines())} has22={'22%' in screen} "
           f"hasStale={'stale' in screen} @@@")
+    for pane in panes:
+        print(f"@@@ PANE {pane} @@@")
     for i, line in enumerate(screen.splitlines()):
         print(f"@@@{i:02d}|{line.rstrip()!r}")
     assert False, "diagnostic dump"

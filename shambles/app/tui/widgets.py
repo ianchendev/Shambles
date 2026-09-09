@@ -294,5 +294,6 @@ class AccountDetails(VerticalScroll):
         self.scroll_end(animate=False)
 
     def on_resize(self, event: events.Resize) -> None:
+        self._diag_resizes = getattr(self, "_diag_resizes", 0) + 1
         if self._account is not None:
             self.show_account(*self._account)
