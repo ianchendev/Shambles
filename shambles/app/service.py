@@ -83,12 +83,19 @@ class LoginHandle:
         return self._process is not None and self._process.running
 
 
+#: What every non-URL vendor line becomes. Named rather than inlined because
+#: a frontend has to recognise it to render it as progress instead of as
+#: content: three of these in a row is the normal shape of a working login,
+#: and repeating the literal text at the user reads as a malfunction.
+HIDDEN_LINE = "[vendor output hidden]"
+
+
 def _safe_login_line(line):
     # Vendor stdout has no stable schema and can contain credentials under
     # spellings Shambles cannot enumerate safely. The one documented value a
     # caller needs is a supported sign-in URL, checked by the login layer;
     # everything else becomes a fixed progress message.
-    return login.authorization_url(line) or "[vendor output hidden]"
+    return login.authorization_url(line) or HIDDEN_LINE
 
 
 class ShamblesService:
@@ -153,6 +160,29 @@ class ShamblesService:
             switcher.restash_active(
                 self.paths, provider, platform=self.platform)
         return self._result(True, "refresh")
+
+    def sign_in_url(self, line):
+        """The sign-in address in one progress line, or None.
+
+        Here rather than in the frontend because ``shambles/app/tui`` may not
+        import :mod:`shambles.login` at all -- every mutation and every vendor
+        process reaches the terminal UI through this object, and a screen that
+        reached around it for "just a URL" is how that rule starts to rot.
+
+        The line has already been through :func:`_safe_login_line`, so it is
+        either a validated sign-in URL or :data:`HIDDEN_LINE`; this only has
+        to find the address in what survived.
+        """
+        return login.find_url(line)
+
+    def open_sign_in_url(self, url):
+        """Hand the address to a browser. Returns whether one accepted it.
+
+        The return value is worth less than it looks under WSL, where the
+        openers report success while doing nothing -- callers are expected to
+        put the link on the clipboard regardless rather than trust this.
+        """
+        return login.open_url(url)
 
     def start_login(self, provider_id, account, on_line, on_done):
         provider = self._provider(provider_id)

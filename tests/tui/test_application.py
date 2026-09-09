@@ -10,8 +10,10 @@ import pytest
 from textual.events import Key
 from textual.widgets import Input
 
-from shambles import settings, update_check
-from shambles.app.service import ActionError, ActionPlan, ActionResult
+from shambles import login, settings, update_check
+from shambles.app.service import (
+    HIDDEN_LINE, ActionError, ActionPlan, ActionResult,
+)
 from shambles.app.snapshot import Account, Group, Snapshot, Surface
 from shambles.app.tui.application import ShamblesTUI
 from shambles.app.tui.brand import BrandVariant, brand_text
@@ -84,6 +86,8 @@ class SnapshotService:
 
         self.login_calls = []
         self.login_result = None
+        self.opened = []
+        self.open_result = True
         self.login_handle = None
         self._login_on_line = None
         self._login_on_done = None
@@ -172,6 +176,14 @@ class SnapshotService:
         self.login_handle = handle
         return handle
 
+    def sign_in_url(self, line):
+        # The real pure function, so detection stays honestly tested.
+        return login.find_url(line)
+
+    def open_sign_in_url(self, url):
+        self.opened.append(url)
+        return self.open_result
+
     def send_login_line(self, line):
         self._login_on_line(line)
 
@@ -198,6 +210,21 @@ def empty_service():
 
 def screen_text(app):
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+def flattened(app):
+    """The screen with wrapping and panel chrome removed.
+
+    A long URL wraps inside the overlay, and every rendered line carries the
+    panel's border glyphs, so neither the raw text nor a whitespace-stripped
+    copy of it contains the address in one piece. Dropping the box-drawing
+    range as well is what lets a test ask "is the whole link on screen?"
+    without pinning the width it happens to wrap at.
+    """
+    return "".join(
+        ch for ch in screen_text(app)
+        if not ch.isspace() and not ("\u2500" <= ch <= "\u259f")
+    )
 
 
 async def test_enter_switches_selected_account_and_shows_fresh_result(service):
@@ -754,13 +781,13 @@ async def test_login_starts_immediately_and_shows_progress(service):
         assert "Logging in to Work" in screen_text(app)
 
 
-async def test_login_progress_shows_incoming_lines(service):
+async def test_login_progress_surfaces_a_printed_address_to_the_user(service):
     app = ShamblesTUI(service)
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(100, 30)) as pilot:
         await pilot.press("l")
         service.send_login_line("Open https://example.test/authorize")
         await pilot.pause()
-        assert "Open https://example.test/authorize" in screen_text(app)
+        assert "https://example.test/authorize" in flattened(app)
 
 
 async def test_login_can_be_cancelled(service):
@@ -1304,3 +1331,131 @@ async def test_empty_welcome_too_short_shows_size_message(empty_service):
         assert app.query_one("#terminal-too-small").display
         assert "Terminal is too small" in screen_text(app)
         assert "No saved accounts yet." not in screen_text(app)
+
+
+# --- Login sign-in link ------------------------------------------------
+
+AUTH_URL = ("https://claude.ai/oauth/authorize?response_type=code"
+            "&client_id=9d1c&state=abc")
+
+
+async def test_login_offers_the_signin_link_when_the_vendor_prints_one(service):
+    """The link is the whole point of the screen under WSL and over SSH.
+
+    The vendor prints an address precisely when it could not open a browser
+    itself, so a URL sitting unread in a transcript is the failure mode this
+    panel exists to prevent.
+    """
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        service.send_login_line(AUTH_URL)
+        await pilot.pause()
+        rendered = screen_text(app)
+        assert "finish signing in" in rendered
+        assert "o Open" in rendered
+        assert "c Copy" in rendered
+
+
+async def test_login_link_is_shown_in_full_so_it_can_be_retyped(service):
+    """Truncating the address would make the fallback path unusable."""
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("l")
+        service.send_login_line(AUTH_URL)
+        await pilot.pause()
+        assert AUTH_URL in flattened(app)
+
+
+async def test_login_hides_the_placeholder_noise(service):
+    """Repeated "[vendor output hidden]" reads as a malfunction, not progress."""
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        for _ in range(3):
+            service.send_login_line(HIDDEN_LINE)
+        await pilot.pause()
+        rendered = screen_text(app)
+        assert HIDDEN_LINE not in rendered
+        assert "Waiting for" in rendered
+
+
+async def test_login_still_shows_real_vendor_lines(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        service.send_login_line("Paste this code: WXYZ")
+        await pilot.pause()
+        assert "Paste this code: WXYZ" in screen_text(app)
+
+
+async def test_login_link_can_be_copied_to_the_clipboard(service):
+    """OSC 52, so it reaches the operator's own machine over SSH."""
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        service.send_login_line(AUTH_URL)
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert app.clipboard == AUTH_URL
+
+
+async def test_login_link_opens_through_the_browser_openers(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        service.send_login_line(AUTH_URL)
+        await pilot.pause()
+        await pilot.press("o")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.opened == [AUTH_URL]
+
+
+async def test_opening_the_link_also_copies_it(service):
+    """The WSL openers report success while doing nothing, so never rely on one."""
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        service.send_login_line(AUTH_URL)
+        await pilot.pause()
+        await pilot.press("o")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.clipboard == AUTH_URL
+
+
+async def test_a_failed_open_says_so_and_keeps_the_link(service):
+    service.open_result = False
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("l")
+        service.send_login_line(AUTH_URL)
+        await pilot.pause()
+        await pilot.press("o")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = screen_text(app)
+        assert "clipboard" in rendered
+        assert AUTH_URL in flattened(app)
+
+
+async def test_the_link_panel_is_not_shown_before_a_url_arrives(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("l")
+        await pilot.pause()
+        assert "finish signing in" not in screen_text(app)
+
+
+async def test_the_empty_welcome_says_which_key_adds_an_account(empty_service):
+    """"No saved accounts yet." is a state, not an instruction.
+
+    It is the whole of a new user's onboarding, and the footer's bare "a add"
+    does not connect itself to the sentence above it.
+    """
+    app = ShamblesTUI(empty_service)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert "Press a to add" in screen_text(app)

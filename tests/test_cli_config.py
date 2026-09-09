@@ -22,6 +22,8 @@ import sys
 
 import pytest
 
+from helpers import make_profile
+
 import shambles
 from shambles import settings, update_check
 from shambles.app import cli
@@ -343,3 +345,31 @@ def test_the_usage_message_says_how_to_reach_the_setting(capsys):
 
     assert "shambles config get update.check" in printed
     assert "shambles config set update.check" in printed
+
+
+# -- the empty listing -------------------------------------------------------
+
+def test_an_empty_listing_says_how_to_add_the_first_account(home, capsys):
+    """A first run should not end at a dead end.
+
+    "no accounts yet" under every provider is accurate and useless: it is the
+    state a brand-new install is always in, and nothing on screen says what
+    to do about it.
+    """
+    assert cli.main(["list", "--home", str(home)]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "no accounts yet" in printed
+    assert "shambles" in printed.rsplit("\n\n", 1)[-1]
+
+
+def test_the_hint_is_absent_once_an_account_exists(home, capsys):
+    make_profile(Paths.for_home(home), "claude", "Work")
+    assert cli.main(["list", "--home", str(home)]) == cli.EXIT_OK
+    assert "add one" not in capsys.readouterr().out
+
+
+def test_the_json_contract_carries_no_prose_hint(home, capsys):
+    """``--json`` is what the macOS panel parses; it must not grow copy."""
+    assert cli.main(["list", "--json", "--home", str(home)]) == cli.EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {"version", "groups"}
