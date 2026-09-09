@@ -28,7 +28,10 @@ from .overlays import ConfirmAction, ResultScreen, overlay_panel_classes
 from .widgets import AccountList
 from .workflows import AccountMenu, AddAccountScreen, LoginProgress, NameInputScreen
 
-WELCOME_COPY = "No saved accounts yet."
+#: A state and the key that changes it. The footer already lists "a add",
+#: but a first run is the one moment nobody knows that footer is a menu,
+#: so the instruction is said next to the sentence it answers.
+WELCOME_COPY = "No saved accounts yet.\n\nPress a to add your first account."
 WELCOME_FOOTER = "a add · x eject · r refresh · ? help · q quit"
 WELCOME_FOOTER_ASCII = "a add | x eject | r refresh | ? help | q quit"
 

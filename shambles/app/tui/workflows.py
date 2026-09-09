@@ -8,6 +8,7 @@ login the same way Task 5 already uses them for switch.
 
 from __future__ import annotations
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -15,6 +16,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from ..service import HIDDEN_LINE
 from ..snapshot import Group
 from .overlays import overlay_panel_classes
 
@@ -164,21 +166,57 @@ class LoginProgress(ModalScreen[None]):
     The vendor login runs as a subprocess already managed off the UI thread
     by the service; this screen only reflects progress lines and lets the
     user cancel. It never starts or joins that thread itself.
+
+    The address the vendor prints gets a panel of its own rather than a place
+    in the transcript. Both vendors print one exactly when they could not open
+    a browser themselves -- the normal case under WSL and over SSH -- so it is
+    the one line on this screen the user has to act on, and leaving it to
+    scroll past as text is the failure this screen exists to prevent. The Tk
+    window has offered it as a button since the beginning; this is the same
+    affordance for the frontend that is now the default.
     """
 
     BINDINGS = [
+        Binding("o", "open_link", "Open in browser"),
+        Binding("c", "copy_link", "Copy link"),
         Binding("escape", "cancel", "Cancel"),
         Binding("q", "app.quit", "Quit"),
     ]
     DEFAULT_CSS = """
     LoginProgress { align: center middle; }
+    LoginProgress #login-link { text-style: bold; }
+    /* Set the link apart from the progress line above it: it is the one
+       thing on this screen the reader has to act on. */
+    LoginProgress #login-link-prompt { margin-top: 1; }
+    LoginProgress #login-status { margin-top: 1; }
     """
+
+    LINK_PROMPT = "Open this link to finish signing in:"
+
+    #: One steady line instead of a stack of identical ones. Three
+    #: :data:`~shambles.app.service.HIDDEN_LINE` placeholders in a row is what
+    #: a healthy login looks like, and echoing that text at somebody waiting
+    #: on a browser reads as concealment or breakage rather than progress.
+    WAITING = "Waiting for the vendor CLI..."
+
+    COPIED = "Link copied to the clipboard."
+
+    #: Said when no opener worked. Not an error: it is the expected outcome
+    #: over SSH, and the clipboard is the answer either way.
+    OPEN_FAILED = ("No browser could be opened from here, which is usual under "
+                   "WSL and over SSH. The link is on your clipboard.")
+
+    OPENED = "Opened in your browser. The link is also on your clipboard."
+
+    KEYS = "Esc Cancel   q Quit"
+    LINK_KEYS = "o Open in browser   c Copy link   Esc Cancel   q Quit"
 
     def __init__(self, provider: str, account: str):
         super().__init__(id="login-progress")
         self.provider = provider
         self.account = account
         self.lines: list[str] = []
+        self.url: str | None = None
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes=overlay_panel_classes(self)):
@@ -188,11 +226,76 @@ class LoginProgress(ModalScreen[None]):
                 markup=False,
             )
             yield Static("", id="login-lines", markup=False)
-            yield Static("Esc Cancel   q Quit", markup=False)
+            yield self._hidden(Static(self.WAITING, id="login-waiting",
+                                      markup=False))
+            yield self._hidden(Static(self.LINK_PROMPT, id="login-link-prompt",
+                                      markup=False))
+            yield self._hidden(Static("", id="login-link", markup=False))
+            yield self._hidden(Static("", id="login-status", markup=False))
+            yield Static(self.KEYS, id="login-keys", markup=False)
+
+    @staticmethod
+    def _hidden(widget: Static) -> Static:
+        """Compose it now, show it when there is something to say."""
+        widget.display = False
+        return widget
 
     def add_line(self, line: str) -> None:
+        """Route one sanitized line to the part of the screen that wants it."""
+        if line == HIDDEN_LINE:
+            self.query_one("#login-waiting", Static).display = True
+            return
+        found = self.app.service.sign_in_url(line)
+        if found is not None:
+            # Only the first. A vendor that reprints its address should not
+            # move the link out from under a user reaching for it.
+            if self.url is None:
+                self._offer(found)
+            return
         self.lines.append(line)
         self.query_one("#login-lines", Static).update("\n".join(self.lines))
+
+    def _offer(self, url: str) -> None:
+        self.url = url
+        self.query_one("#login-link-prompt", Static).display = True
+        link = self.query_one("#login-link", Static)
+        link.update(url)
+        link.display = True
+        self.query_one("#login-keys", Static).update(self.LINK_KEYS)
+
+    def _say(self, message: str) -> None:
+        status = self.query_one("#login-status", Static)
+        status.update(message)
+        status.display = True
+
+    def action_copy_link(self) -> None:
+        if self.url is None:
+            return
+        self.app.copy_to_clipboard(self.url)
+        self._say(self.COPIED)
+
+    def action_open_link(self) -> None:
+        """Hand the link to a browser, and copy it either way.
+
+        Copying first is the point rather than a courtesy: under WSL the
+        openers report success while doing nothing, so no return value here is
+        worth trusting. The clipboard means the answer to "did it open?" never
+        has to be.
+        """
+        if self.url is None:
+            return
+        self.app.copy_to_clipboard(self.url)
+        self._open(self.url)
+
+    @work(thread=True)
+    def _open(self, url: str) -> None:
+        """Off the UI thread: the openers allow ten seconds each, which would
+        otherwise freeze the screen in the middle of a login."""
+        opened = self.app.service.open_sign_in_url(url)
+        self.app.call_from_thread(self._opened, opened)
+
+    def _opened(self, opened: bool) -> None:
+        self._say(self.OPENED if opened else self.OPEN_FAILED)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

@@ -6,10 +6,10 @@ from conftest import posix_only
 from helpers import (NOW, healthy_ms, make_claude_json,
                      make_live_claude_login, make_live_codex_login,
                      make_profile)
-from shambles import providers, state
+from shambles import login, providers, state
 from shambles.errors import ConfigUnreadableError
-from shambles.app.service import (ActionError, ActionPlan, ActionResult,
-                                  ShamblesService)
+from shambles.app.service import (HIDDEN_LINE, ActionError, ActionPlan,
+                                  ActionResult, ShamblesService)
 
 
 def service(paths):
@@ -819,3 +819,35 @@ def test_login_stash_failure_preserves_the_live_login_and_completes(
     assert "stash-private-sentinel" not in str(done[0].to_dict())
     assert live.read_bytes() == original
     assert not paths.credentials("codex", "Personal").exists()
+
+
+# --- Sign-in link, offered through the service boundary ------------------
+
+def test_sign_in_url_extracts_the_address_from_a_sanitized_line(paths):
+    """The TUI may not import ``login``, so the service does the reading.
+
+    ``_safe_login_line`` has already reduced every line to either a validated
+    sign-in URL or :data:`HIDDEN_LINE`, so this only has to find the address
+    in what survived, not re-read the vendor's raw output.
+    """
+    assert service(paths).sign_in_url(
+        "https://claude.ai/oauth/authorize?state=abc"
+    ) == "https://claude.ai/oauth/authorize?state=abc"
+
+
+def test_sign_in_url_is_none_for_the_hidden_placeholder(paths):
+    assert service(paths).sign_in_url(HIDDEN_LINE) is None
+
+
+def test_open_sign_in_url_reports_what_the_openers_managed(paths, monkeypatch):
+    seen = []
+    monkeypatch.setattr(login, "open_url",
+                        lambda url: seen.append(url) or True)
+    assert service(paths).open_sign_in_url("https://example.test/x") is True
+    assert seen == ["https://example.test/x"]
+
+
+def test_open_sign_in_url_does_not_claim_success_when_no_opener_worked(
+        paths, monkeypatch):
+    monkeypatch.setattr(login, "open_url", lambda url: False)
+    assert service(paths).open_sign_in_url("https://example.test/x") is False

@@ -48,6 +48,12 @@ shambles config get update.check   print whether update checks are on
 shambles config set update.check true|false
 """
 
+#: Printed after a listing that found nothing anywhere. A fresh install is
+#: always in this state, so ending there with "no accounts yet" and no next
+#: step is the most likely first thing anybody sees.
+NO_ACCOUNTS_HINT = ("No accounts yet. Run 'shambles' to add one, "
+                    "or 'shambles --help' for the full list of commands.")
+
 #: Said once, at the moment somebody turns the network on. Naming who is
 #: asked, how often and what is sent is the whole difference between an opt-in
 #: and a surprise.
@@ -148,6 +154,11 @@ def cmd_list(args) -> int:
                             + (f"{percent}%" if percent is not None else "—"))
             print(f"  {mark} {account['name']:<14} {'  ·  '.join(bits)}")
         print()
+
+    # Only when there is nothing at all. A provider with no accounts beside one
+    # that has them is a normal arrangement, not a person who needs onboarding.
+    if not any(group["accounts"] for group in payload["groups"]):
+        print(NO_ACCOUNTS_HINT)
     return EXIT_OK
 
 
