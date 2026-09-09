@@ -260,52 +260,67 @@ class AccountList(ListView):
                 return
 
 
+class _DetailsBody(Static):
+    """The rendered account, derived from this widget's own current width.
+
+    ``render_account_details`` truncates to fit, so its output is correct for
+    exactly one width. Pushing that output in with ``update()`` freezes it at
+    whatever the pane measured at the time -- and a pane can reach its final
+    width without a Resize of its own, which is how the details came to read
+    "wo..." and "5h..." in a 32-column pane on Windows while Linux, which
+    happened to get a second Resize, looked fine.
+
+    Rendering here instead removes the dependency on events entirely.
+    :meth:`textual.widget.Widget._size_updated` marks a widget dirty whenever
+    its size changes, whether or not it also sends a Resize, and a dirty
+    widget is re-rendered through :meth:`render`. So this is asked for the
+    content again at every width the pane actually takes.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._source: Optional[Tuple[Group, Account, bool, bool]] = None
+
+    def show(self, group: Group, account: Account, *,
+             unicode: bool, compact: bool) -> None:
+        self._source = (group, account, unicode, compact)
+        self.refresh(layout=True)
+
+    def render(self):
+        if self._source is None:
+            return ""
+        group, account, unicode, compact = self._source
+        # or 80: before the first layout a widget has no width, and a
+        # zero-width render would truncate every line to nothing.
+        width = self.content_size.width or self.size.width or 80
+        return render_account_details(
+            group, account, width=width, unicode=unicode, compact=compact)
+
+
 class AccountDetails(VerticalScroll):
     """Details for one account; it never reads stores or computes dates."""
 
     def __init__(self, **kwargs):
-        self._body = Static()
+        self._body = _DetailsBody()
         super().__init__(self._body, **kwargs)
         self._account: Optional[Tuple[Group, Account]] = None
-        #: The width the body was last painted at. The body holds a Rich
-        #: renderable that has already been truncated to fit, so it is only
-        #: correct for one width and has to be repainted when that changes.
-        self._painted_width: Optional[int] = None
 
     @property
     def content(self) -> Table:
-        return self._body.content
+        """The table as it renders at the pane's current width.
+
+        Computed rather than stored, for the same reason :class:`_DetailsBody`
+        renders rather than caches: a stored copy is only right for the width
+        it was made at.
+        """
+        return self._body.render()
 
     def show_account(self, group: Group, account: Account) -> None:
         self._account = (group, account)
-        self._paint()
-        # Painting once is not enough. A pane can reach its final width
-        # without a Resize of its own -- Textual is free to settle a layout
-        # without sending one per step, and Windows runners routinely deliver
-        # one where Linux delivers two. Because the body is baked to a width
-        # at paint time, a pane that grew after its last Resize keeps content
-        # truncated to a width it no longer has: at 40 columns the details
-        # read "wo..." and "5h..." instead of the address and the percentage.
-        # Checking again once the refresh has settled makes the content follow
-        # the pane's real width instead of the last event it happened to get.
-        self.call_after_refresh(self._repaint_if_stale)
-
-    def _paint(self) -> None:
-        """Render the held account at whatever width the pane has right now."""
-        if self._account is None:
-            return
-        group, account = self._account
-        width = self.content_size.width or 80
-        self._painted_width = width
-        unicode = getattr(self.app, "unicode", True)
         compact = self.id == "inline-details"
-        self._body.update(render_account_details(
-            group,
-            account,
-            width=width,
-            unicode=unicode,
-            compact=compact,
-        ))
+        self._body.show(group, account,
+                        unicode=getattr(self.app, "unicode", True),
+                        compact=compact)
         if compact:
             return
         if account.needs_login:
@@ -313,22 +328,12 @@ class AccountDetails(VerticalScroll):
         else:
             self.scroll_home(animate=False)
 
-    def _repaint_if_stale(self) -> None:
-        """Repaint if the pane is no longer the width the body was made for.
-
-        Terminates because it only repaints when the width actually changed,
-        and a layout settles on one width; once the paint matches the pane,
-        nothing more is scheduled.
-        """
-        if self._account is None or self._painted_width is None:
-            return
-        if (self.content_size.width or 80) != self._painted_width:
-            self._paint()
-            self.call_after_refresh(self._repaint_if_stale)
-
     def _reveal_login_callout(self) -> None:
         self.scroll_end(animate=False)
 
     def on_resize(self, event: events.Resize) -> None:
+        # render() already follows the pane's width on its own. This stays so
+        # a size change still re-reads the app's unicode flag and re-runs the
+        # login-callout scrolling below show_account.
         if self._account is not None:
             self.show_account(*self._account)

@@ -575,20 +575,19 @@ def test_widget_modules_do_not_import_mutation_layers():
 
 
 @pytest.mark.parametrize("width", [40, 60, 100])
-async def test_details_are_painted_at_the_width_the_pane_really_has(
+async def test_details_are_not_truncated_to_a_width_the_pane_no_longer_has(
         snapshot, width):
-    """The body must follow the pane, not the last Resize it happened to get.
+    """Content follows the pane, not the last Resize it happened to receive.
 
-    ``render_account_details`` truncates to fit, so the body is only correct
-    for one width. A pane can reach its final width without a Resize of its
-    own -- Windows runners deliver one where Linux delivers two -- and a paint
-    left over from a narrow mid-layout pass then shows "wo..." and "5h..."
-    where the address and the percentage fit perfectly well.
+    ``render_account_details`` truncates to fit, so its output is right for
+    exactly one width. A pane can reach its final width without a Resize of
+    its own, and content frozen at a narrow mid-layout pass then reads "wo..."
+    and "5h..." in a pane with room for both -- which is how six of these
+    tests failed on Windows while Linux, which got a second Resize, passed.
     """
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(width, 32)) as pilot:
         await pilot.pause()
-        panes = [p for p in app.query(AccountDetails) if p.display]
-        assert panes, "expected a visible details pane"
-        for pane in panes:
-            assert pane._painted_width == (pane.content_size.width or 80)
+        screen = screen_text(app)
+    assert "work@example.test" in screen
+    assert "22%" in screen
