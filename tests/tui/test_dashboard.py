@@ -126,6 +126,26 @@ def screen_text(app) -> str:
     )
 
 
+async def screen_showing(pilot, app, text: str, *, settles: int = 10) -> str:
+    """The screen once ``text`` is on it, or after ``settles`` pumps.
+
+    ``pilot.pause()`` drains the queue once, which is enough on Linux and not
+    always on Windows: leaving the too-short state re-shows the body, and the
+    layout that follows can need another frame. Waiting on the condition
+    rather than on a fixed number of pumps keeps the assertion about what the
+    user ends up seeing instead of about how many frames a platform takes to
+    get there. Returns either way, so the caller's assertion still reports the
+    real screen on failure.
+    """
+    screen = screen_text(app)
+    for _ in range(settles):
+        if text in screen:
+            break
+        await pilot.pause()
+        screen = screen_text(app)
+    return screen
+
+
 async def test_wide_dashboard_has_list_and_detail_panes(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
@@ -501,11 +521,13 @@ async def test_resizing_preserves_selection_and_recovers_from_too_short(snapshot
             await pilot.pause()
             assert app.query_one(AccountList).highlighted == 2
             assert app.selected_messages == [("codex", "Personal")]
-            screen = screen_text(app)
             if size == (80, 8):
+                # An absence needs no settling; one pump is the right wait.
+                screen = screen_text(app)
                 assert "Terminal is too small" in screen
                 assert "Taylor" not in screen
             else:
+                screen = await screen_showing(pilot, app, "Taylor")
                 assert "Taylor" in screen
                 assert "Terminal is too small" not in screen
 
