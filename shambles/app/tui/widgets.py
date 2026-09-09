@@ -267,6 +267,10 @@ class AccountDetails(VerticalScroll):
         self._body = Static()
         super().__init__(self._body, **kwargs)
         self._account: Optional[Tuple[Group, Account]] = None
+        #: The width the body was last painted at. The body holds a Rich
+        #: renderable that has already been truncated to fit, so it is only
+        #: correct for one width and has to be repainted when that changes.
+        self._painted_width: Optional[int] = None
 
     @property
     def content(self) -> Table:
@@ -274,12 +278,31 @@ class AccountDetails(VerticalScroll):
 
     def show_account(self, group: Group, account: Account) -> None:
         self._account = (group, account)
+        self._paint()
+        # Painting once is not enough. A pane can reach its final width
+        # without a Resize of its own -- Textual is free to settle a layout
+        # without sending one per step, and Windows runners routinely deliver
+        # one where Linux delivers two. Because the body is baked to a width
+        # at paint time, a pane that grew after its last Resize keeps content
+        # truncated to a width it no longer has: at 40 columns the details
+        # read "wo..." and "5h..." instead of the address and the percentage.
+        # Checking again once the refresh has settled makes the content follow
+        # the pane's real width instead of the last event it happened to get.
+        self.call_after_refresh(self._repaint_if_stale)
+
+    def _paint(self) -> None:
+        """Render the held account at whatever width the pane has right now."""
+        if self._account is None:
+            return
+        group, account = self._account
+        width = self.content_size.width or 80
+        self._painted_width = width
         unicode = getattr(self.app, "unicode", True)
         compact = self.id == "inline-details"
         self._body.update(render_account_details(
             group,
             account,
-            width=self.content_size.width or 80,
+            width=width,
             unicode=unicode,
             compact=compact,
         ))
@@ -290,10 +313,22 @@ class AccountDetails(VerticalScroll):
         else:
             self.scroll_home(animate=False)
 
+    def _repaint_if_stale(self) -> None:
+        """Repaint if the pane is no longer the width the body was made for.
+
+        Terminates because it only repaints when the width actually changed,
+        and a layout settles on one width; once the paint matches the pane,
+        nothing more is scheduled.
+        """
+        if self._account is None or self._painted_width is None:
+            return
+        if (self.content_size.width or 80) != self._painted_width:
+            self._paint()
+            self.call_after_refresh(self._repaint_if_stale)
+
     def _reveal_login_callout(self) -> None:
         self.scroll_end(animate=False)
 
     def on_resize(self, event: events.Resize) -> None:
-        self._diag_resizes = getattr(self, "_diag_resizes", 0) + 1
         if self._account is not None:
             self.show_account(*self._account)

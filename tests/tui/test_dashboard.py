@@ -480,8 +480,14 @@ async def test_dashboard_uses_the_shared_brand_breakpoints(snapshot):
         dashboard = app.query_one(Dashboard)
         assert dashboard.has_class("wide")
         await pilot.resize_terminal(77, 24)
+        # The class is set by the Resize handler, so it cannot be read until
+        # that event has actually been processed. Without this the assertion
+        # races the event loop -- Linux happened to win the race and Windows
+        # lost it, which is how this passed locally and failed in CI.
+        await pilot.pause()
         assert dashboard.has_class("medium")
         await pilot.resize_terminal(47, 24)
+        await pilot.pause()
         assert dashboard.has_class("compact")
 
 
@@ -566,3 +572,23 @@ def test_widget_modules_do_not_import_mutation_layers():
 
     forbidden = {"switcher", "login", "eject"}
     assert not {name.rsplit(".", 1)[-1] for name in imports}.intersection(forbidden)
+
+
+@pytest.mark.parametrize("width", [40, 60, 100])
+async def test_details_are_painted_at_the_width_the_pane_really_has(
+        snapshot, width):
+    """The body must follow the pane, not the last Resize it happened to get.
+
+    ``render_account_details`` truncates to fit, so the body is only correct
+    for one width. A pane can reach its final width without a Resize of its
+    own -- Windows runners deliver one where Linux delivers two -- and a paint
+    left over from a narrow mid-layout pass then shows "wo..." and "5h..."
+    where the address and the percentage fit perfectly well.
+    """
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(width, 32)) as pilot:
+        await pilot.pause()
+        panes = [p for p in app.query(AccountDetails) if p.display]
+        assert panes, "expected a visible details pane"
+        for pane in panes:
+            assert pane._painted_width == (pane.content_size.width or 80)
