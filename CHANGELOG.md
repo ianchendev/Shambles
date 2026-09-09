@@ -2,7 +2,7 @@
 
 Notable changes per release. Dates are the tag date.
 
-## Unreleased
+## 2.1.0 - 2026-09-09
 
 ### Added
 
@@ -24,9 +24,30 @@ Notable changes per release. Dates are the tag date.
   after the subcommand) so existing flags do not break.
 - **`SHAMBLES_NO_MOTION=1`** does the same as `--no-motion`, for scripts and
   session managers that set environment variables more easily than flags.
+- **The sign-in link is now offered by the terminal interface.** Both vendors
+  print a URL to open when they cannot launch a browser themselves — the
+  normal case under WSL and over SSH — and the terminal login screen now
+  gives that address a panel of its own with `o` to open it and `c` to copy
+  it. Copying uses OSC 52, so the link reaches the clipboard of the machine
+  you are sitting at even across SSH, and it is copied whenever you press `o`
+  as well: the WSL browser openers report success while doing nothing, so the
+  clipboard is what makes "did it open?" a question nobody has to answer. The
+  Tk window has had these buttons since 1.x; this brings the frontend that is
+  now the default up to the same standard.
 
 ### Changed
 
+- **A first run says what to press.** The empty terminal welcome now reads
+  "No saved accounts yet. Press a to add your first account." rather than
+  only naming the state, and `shambles list` with nothing configured ends
+  with a line pointing at `shambles` and `shambles --help`. The hint appears
+  only when no provider has any account, and `shambles list --json` is
+  unchanged — it is the contract the macOS panel parses.
+- **Quieter login progress.** The terminal login screen no longer repeats
+  `[vendor output hidden]` for every suppressed line; it shows one steady
+  "Waiting for the vendor CLI..." instead. Three of those placeholders in a
+  row is the normal shape of a working login, and echoing the text back read
+  as concealment rather than progress. What is suppressed has not changed.
 - **TUI visual refresh.** The terminal dashboard now uses the README lockup
   as its wide header, a grouped account list with a terracotta selection
   spine, a hero inspector (USAGE / SWITCHES), and a footer that exposes Add

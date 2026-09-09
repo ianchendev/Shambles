@@ -49,6 +49,26 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]" pyinstaller
 
+      # A tag that disagrees with the packaged version ships a binary that
+      # announces an update to itself: update_check compares the release tag
+      # against __version__, so with checks on every user would be told 2.1.0
+      # is available while running a binary that reports 2.0.0 -- and
+      # re-running the installer would hand them the same binary, forever.
+      # tests/test_packaging.py already pins __version__ against pyproject;
+      # only CI can see the tag, so the third side of that triangle lives here.
+      - name: Tag matches the packaged version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          code="$(python -c 'import shambles; print(shambles.__version__)')"
+          if [ "$tag" != "$code" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match shambles.__version__ ($code)." >&2
+            echo "Bump shambles/__init__.py and pyproject.toml, or retag." >&2
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches version $code."
+
       # Never ship a build that has not passed its own suite.
       - name: Test (Linux)
         if: runner.os == 'Linux'
