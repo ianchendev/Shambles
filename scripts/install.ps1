@@ -1,8 +1,8 @@
 # Install Shambles from GitHub Releases into %LOCALAPPDATA%\Shambles (no admin).
 # Usage:
 #   irm …/scripts/install.ps1 | iex
-#   irm …/scripts/install.ps1 | iex; install.ps1 -Version v2.0.0   # or save and run:
-#   .\install.ps1 -Version v2.0.0
+#   irm …/scripts/install.ps1 | iex; install.ps1 -Version v2.1.0   # or save and run:
+#   .\install.ps1 -Version v2.1.0
 param(
     [string]$Version
 )

@@ -4,8 +4,7 @@
 > follows. **DD-4 is now built** — `shambles/providers/` and `shambles/stores/`
 > are the two layers it specifies, and Codex is a peer provider. DD-2 has been
 > **amended**: the vendor's login flow is now started by Shambles rather than
-> printed for the user to run. See
-> [the multi-provider design](superpowers/specs/2026-08-07-multi-provider-design.md).
+> printed for the user to run.
 >
 > For shipped architecture see [TECH_SPEC.md](../TECH_SPEC.md); for the
 > credential-store research behind DD-4 see

@@ -2,7 +2,7 @@
 # Install Shambles from GitHub Releases into ~/.local/bin (no sudo).
 # Usage:
 #   curl -fsSL …/scripts/install.sh | bash
-#   curl -fsSL …/scripts/install.sh | bash -s v2.0.0
+#   curl -fsSL …/scripts/install.sh | bash -s v2.1.0
 set -euo pipefail
 
 BASE="${SHAMBLES_RELEASE_BASE:-https://github.com/ianchendev/Shambles/releases}"

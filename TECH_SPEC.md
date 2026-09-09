@@ -5,9 +5,8 @@ Architectural reference for the account switcher.
 > **Partially superseded by multi-provider support (2026-08-07).** Sections
 > describing a single hardcoded Claude path, the `~/.claude-profiles/` store,
 > or `~/.claude` as the only credential location now describe v1.0 rather than
-> the current code. What changed, and why, is in
-> [docs/superpowers/specs/2026-08-07-multi-provider-design.md](docs/superpowers/specs/2026-08-07-multi-provider-design.md);
-> the layering it implements is DD-4. The §-numbered mechanism below —
+> the current code. The layering that replaced them is DD-4, recorded in
+> [docs/design-decisions.md](docs/design-decisions.md). The §-numbered mechanism below —
 > the switch ordering, the atomic-write discipline, the state machine, the
 > concurrency caveat — is unchanged and still authoritative.
 

@@ -179,6 +179,12 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # One file listing the SHA-256 of every binary, so a download can be
+      # checked against something GitHub did not serve alongside it. The
+      # binaries are unsigned, so this is the only integrity check on offer.
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
@@ -213,6 +219,16 @@ jobs:
             first run — that is expected for an unsigned publisher. If you
             would rather not run an unsigned binary that manages credential
             files, use the pipx install above and read the source first.
+
+            To check a download against `SHA256SUMS` below:
+
+            ```bash
+            sha256sum -c SHA256SUMS --ignore-missing
+            ```
+
+            ```powershell
+            Get-FileHash .\shambles-windows-x64.exe -Algorithm SHA256
+            ```
 
             **Windows account switching is unverified.** Claude Code appears
             to keep credentials in the Credential Manager there rather than in

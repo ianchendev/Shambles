@@ -112,7 +112,7 @@ puts it in `~/.local/bin` — no sudo, nothing to build:
 curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash
 
 # or pin a release
-curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.0.0
+curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.1.0
 ```
 
 **Windows PowerShell**, which installs into `%LOCALAPPDATA%\Shambles` and adds
@@ -166,8 +166,7 @@ interpreter's path. Without it you get a message telling you exactly that,
 not a traceback.
 
 **Not npm, yet.** Shambles is not published to npm, so `npm install -g
-shambles` fails today. A launcher package is designed and planned
-([plan](docs/superpowers/plans/2026-09-06-npm-distribution.md)) but stays
+shambles` fails today. A launcher package is designed and planned but stays
 unpublished until the macOS and Windows credential-store work below is
 resolved — shipping a one-line install to platforms where switching does not
 work is exactly the thing this README is trying not to do.
@@ -933,7 +932,6 @@ installation from the one in a WSL home directory.
 
 | Document | What it is |
 |---|---|
-| [docs/superpowers/specs/2026-08-07-multi-provider-design.md](docs/superpowers/specs/2026-08-07-multi-provider-design.md) | **Current** design: the provider/store layering, Codex as a peer, and the browser login handoff |
 | [TECH_SPEC.md](TECH_SPEC.md) | Architecture reference. Its §-numbered mechanism is authoritative; its single-provider paths describe v1.0 and are superseded — the banner says which |
 | [docs/token-storage.md](docs/token-storage.md) | Field research into how Claude and Codex store credentials across macOS, Windows and Linux. Covers platforms this tool does not yet support |
 | [docs/design-decisions.md](docs/design-decisions.md) | Recorded decisions and rationale. DD-4 is implemented; DD-2 is amended — the tool now starts the vendor's login rather than printing it |

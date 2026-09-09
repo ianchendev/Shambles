@@ -20,3 +20,6 @@ macos/Resources/AppIcon.icns
 
 .superpowers/*
 .worktrees/
+
+# Internal planning and design notes. Kept locally, never published.
+docs/superpowers/
