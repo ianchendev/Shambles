@@ -80,9 +80,21 @@ jobs:
         if: runner.os == 'macOS'
         run: python -m pytest
 
+      # Windows retries; Linux does not. The TUI suite asserts on rendered
+      # output after a fixed number of event-loop pumps, but Textual settles a
+      # layout over an indeterminate number of frames, and the Windows runners
+      # are slow enough that a random handful loses that race every run --
+      # re-running the same commit produced a different failing set each time.
+      # Five consecutive failures is therefore the signal worth gating on: a
+      # real regression still fails all five, while a frame-timing loss does
+      # not. Two was not enough -- one test lost three flips in a row in one
+      # run and passed in the next on the same commit. This masks a suite that
+      # is racy by construction; replacing its fixed pauses with condition
+      # waits is the actual fix, and is follow-up work rather than a release
+      # blocker.
       - name: Test (Windows)
         if: runner.os == 'Windows'
-        run: python -m pytest
+        run: python -m pytest --reruns 4 --reruns-delay 1
 
       # --windowed only on Windows: it suppresses the console window for a GUI
       # app there. On Linux it would swallow the --version and --help output,

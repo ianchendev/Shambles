@@ -126,6 +126,26 @@ def screen_text(app) -> str:
     )
 
 
+async def screen_showing(pilot, app, text: str, *, settles: int = 10) -> str:
+    """The screen once ``text`` is on it, or after ``settles`` pumps.
+
+    ``pilot.pause()`` drains the queue once, which is enough on Linux and not
+    always on Windows: leaving the too-short state re-shows the body, and the
+    layout that follows can need another frame. Waiting on the condition
+    rather than on a fixed number of pumps keeps the assertion about what the
+    user ends up seeing instead of about how many frames a platform takes to
+    get there. Returns either way, so the caller's assertion still reports the
+    real screen on failure.
+    """
+    screen = screen_text(app)
+    for _ in range(settles):
+        if text in screen:
+            break
+        await pilot.pause()
+        screen = screen_text(app)
+    return screen
+
+
 async def test_wide_dashboard_has_list_and_detail_panes(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
@@ -480,8 +500,14 @@ async def test_dashboard_uses_the_shared_brand_breakpoints(snapshot):
         dashboard = app.query_one(Dashboard)
         assert dashboard.has_class("wide")
         await pilot.resize_terminal(77, 24)
+        # The class is set by the Resize handler, so it cannot be read until
+        # that event has actually been processed. Without this the assertion
+        # races the event loop -- Linux happened to win the race and Windows
+        # lost it, which is how this passed locally and failed in CI.
+        await pilot.pause()
         assert dashboard.has_class("medium")
         await pilot.resize_terminal(47, 24)
+        await pilot.pause()
         assert dashboard.has_class("compact")
 
 
@@ -495,11 +521,13 @@ async def test_resizing_preserves_selection_and_recovers_from_too_short(snapshot
             await pilot.pause()
             assert app.query_one(AccountList).highlighted == 2
             assert app.selected_messages == [("codex", "Personal")]
-            screen = screen_text(app)
             if size == (80, 8):
+                # An absence needs no settling; one pump is the right wait.
+                screen = screen_text(app)
                 assert "Terminal is too small" in screen
                 assert "Taylor" not in screen
             else:
+                screen = await screen_showing(pilot, app, "Taylor")
                 assert "Taylor" in screen
                 assert "Terminal is too small" not in screen
 
@@ -566,3 +594,22 @@ def test_widget_modules_do_not_import_mutation_layers():
 
     forbidden = {"switcher", "login", "eject"}
     assert not {name.rsplit(".", 1)[-1] for name in imports}.intersection(forbidden)
+
+
+@pytest.mark.parametrize("width", [40, 60, 100])
+async def test_details_are_not_truncated_to_a_width_the_pane_no_longer_has(
+        snapshot, width):
+    """Content follows the pane, not the last Resize it happened to receive.
+
+    ``render_account_details`` truncates to fit, so its output is right for
+    exactly one width. A pane can reach its final width without a Resize of
+    its own, and content frozen at a narrow mid-layout pass then reads "wo..."
+    and "5h..." in a pane with room for both -- which is how six of these
+    tests failed on Windows while Linux, which got a second Resize, passed.
+    """
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(width, 32)) as pilot:
+        await pilot.pause()
+        screen = screen_text(app)
+    assert "work@example.test" in screen
+    assert "22%" in screen
