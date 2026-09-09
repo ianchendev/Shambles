@@ -12,6 +12,7 @@ from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widget import Widget
@@ -454,10 +455,38 @@ class ShamblesTUI(App[str | None]):
         await body.remove_children()
         await body.mount(self._view())
         if selected[0] is not None:
+            self._point_list_at(selected)
+
+    def _point_list_at(self, selected, *, attempts: int = 3) -> None:
+        """Move the cursor to ``selected``, once the list is really there.
+
+        ``await body.mount(view)`` waits for the view, not for the widgets
+        that view composes: the AccountList is mounted while the Dashboard is
+        still processing its own mount. A switch or refresh that finished in
+        that gap used to take the whole app down with NoMatches -- rarely on
+        Linux, often enough on Windows to keep two tests red.
+
+        Retrying after the refresh keeps the selection rather than dropping it
+        the way a bare ``query()`` loop would, and the attempt count stops a
+        view that legitimately has no list -- onboarding -- from rescheduling
+        forever.
+        """
+        try:
             accounts = self.query_one(AccountList)
-            accounts.highlighted = self._accounts().index(selected)
-            accounts.action_select_cursor()
-            accounts.focus()
+        except NoMatches:
+            if attempts > 1 and self._accounts():
+                self.call_after_refresh(
+                    self._point_list_at, selected, attempts=attempts - 1)
+            return
+        try:
+            index = self._accounts().index(selected)
+        except ValueError:
+            # The snapshot moved on while the tree settled; the fresh view's
+            # own default selection is the right answer, not a stale one.
+            return
+        accounts.highlighted = index
+        accounts.action_select_cursor()
+        accounts.focus()
 
     async def action_refresh_snapshot(self) -> None:
         if self.mutation_running or self.screen.is_modal:
