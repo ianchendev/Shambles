@@ -27,6 +27,8 @@ from helpers import make_profile
 import shambles
 from shambles import settings, update_check
 from shambles.app import cli
+import shambles.__main__
+from shambles.__main__ import main as entrypoint
 from shambles.paths import Paths
 
 REPO = str(pathlib.Path(shambles.__file__).resolve().parent.parent)
@@ -373,3 +375,33 @@ def test_the_json_contract_carries_no_prose_hint(home, capsys):
     assert cli.main(["list", "--json", "--home", str(home)]) == cli.EXIT_OK
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {"version", "groups"}
+
+
+# -- No console at all (Windows --windowed build) ----------------------------
+
+def test_version_survives_a_build_with_no_console(home, monkeypatch):
+    """PyInstaller's ``--windowed`` Windows build allocates no console.
+
+    Python then sets ``sys.stdout`` and ``sys.stderr`` to ``None``. ``print``
+    tolerates that and returns without writing; ``sys.stderr.write`` does not.
+    Shipped 2.1.0 died here with "'NoneType' object has no attribute 'write'"
+    before printing a thing, so ``shambles --version`` raised a crash dialog
+    on every Windows machine.
+    """
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    assert entrypoint(["--version", "--home", str(home)]) == 0
+
+
+def test_help_survives_a_build_with_no_console(home, monkeypatch):
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    assert entrypoint(["--help", "--home", str(home)]) == 0
+
+
+def test_an_old_interpreter_message_survives_no_console(monkeypatch):
+    """The too-old-Python path writes to stderr before anything else runs."""
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(shambles.__main__, "version_error", lambda: "too old\n")
+    assert entrypoint(["--version"]) == 1

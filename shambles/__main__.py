@@ -95,6 +95,30 @@ or install it, which picks a supported interpreter for you:
 """
 
 
+def write_stream(stream, text):
+    """Write ``text`` to ``stream``, tolerating a stream that is not there.
+
+    A PyInstaller ``--windowed`` build on Windows allocates no console, so
+    Python sets ``sys.stdout`` and ``sys.stderr`` to ``None``. The ``print``
+    builtin checks for that and returns without writing; ``stream.write``
+    does not, and 2.1.0 turned ``shambles --version`` into a crash dialog on
+    every Windows machine as a result.
+
+    Nothing printed here is worth failing over. If there is nowhere to write,
+    there is nobody reading, so a missing, closed or detached handle is
+    swallowed rather than raised.
+
+    No annotations and no modern syntax: this file has to stay parseable on
+    the old interpreters :data:`MIN_PYTHON` describes.
+    """
+    if stream is None or not text:
+        return
+    try:
+        stream.write(text)
+    except (OSError, ValueError):
+        pass
+
+
 def version_error(version_info=None):
     """The message to print when this interpreter is too old, else None.
 
@@ -194,7 +218,7 @@ def main(argv=None) -> int:
     # worst possible answer to "is this installed?".
     outdated = version_error()
     if outdated:
-        sys.stderr.write(outdated)
+        write_stream(sys.stderr, outdated)
         return 1
 
     if "--version" in argv or "-V" in argv:
@@ -203,7 +227,7 @@ def main(argv=None) -> int:
         # read this command's stdout, often whole -- a second line there
         # would break every one of them, while a person at a terminal sees
         # both streams either way.
-        sys.stderr.write(_update_notice(argv))
+        write_stream(sys.stderr, _update_notice(argv))
         return 0
     if "--help" in argv or "-h" in argv:
         print(USAGE, end="")
