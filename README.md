@@ -37,17 +37,15 @@ shambles
 
 ---
 
-## Why "Shambles"?
+## Why is it called "Shambles"?
 
-The name comes from One Piece. Trafalgar Law eats the Ope Ope no Mi, the
-Op-Op Fruit, which lets him mark out a sphere of space he calls a **Room**.
-Inside that Room he says **"Shambles"** (シャンブルズ, *shanburuzu*), and any
-two things trade places at once. No travel, no gap. They are just somewhere
-else.
+The name comes from One Piece. **Shambles** (シャンブルズ, *shanburuzu*) is one
+of Trafalgar Law's abilities. He marks out an area, picks two things inside
+it, and makes them trade places at once. Neither one travels the distance
+between them. Each just ends up where the other was.
 
-This tool does the same trick with your logins. Your `~/.shambles` folder is
-the Room. Say the word, and Work and Personal swap instantly, with no sign-in
-in between.
+This tool does that with your logins. Work and Personal trade places in an
+instant, and neither account has to sign in again.
 
 ---
 
