@@ -50,3 +50,16 @@ def test_install_ps1_installs_both_windows_binaries():
     text = Path("scripts/install.ps1").read_text(encoding="utf-8")
     assert "shambles-windows-x64.exe" in text
     assert WINDOWED_WINDOWS in text
+
+
+def test_install_ps1_puts_shambles_on_path_for_the_current_terminal():
+    """A persisted PATH only reaches processes started after it.
+
+    The window that ran the installer was opened before it, so `shambles`
+    was not found in the very terminal that had just installed it. Worse,
+    the "open a new terminal" hint only printed when the entry was newly
+    added, so anyone reinstalling got no explanation at all.
+    """
+    text = Path("scripts/install.ps1").read_text(encoding="utf-8")
+    assert "$env:Path" in text, "must update PATH for the running session"
+    assert "new terminal" in text.lower()

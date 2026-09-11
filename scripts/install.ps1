@@ -51,13 +51,18 @@ Get-Binary $Asset $Dest
 # that predates it simply has no such asset, and the install still succeeds.
 $Windowed = 'shamblesw-windows-x64.exe'
 $DestW = Join-Path $DestDir 'shamblesw.exe'
+$HasWindowed = $true
 try {
     Get-Binary $Windowed $DestW
 } catch {
+    $HasWindowed = $false
     Write-Host "No windowed build in this release; skipping shamblesw.exe."
 }
 
 Write-Host "Installed to $Dest"
+if ($HasWindowed) {
+    Write-Host "Also installed $DestW, for a desktop shortcut with no console window."
+}
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $pathEntries = @()
@@ -67,7 +72,17 @@ if ($userPath) {
 if ($pathEntries -notcontains $DestDir) {
     $newPath = ($pathEntries + $DestDir) -join ';'
     [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-    Write-Host "Added $DestDir to your user PATH (open a new terminal to use shambles)."
+    Write-Host "Added $DestDir to your user PATH."
+}
+
+# The stored PATH above only reaches processes started after this one, so the
+# window that just ran the installer still cannot find shambles. Reinstalling
+# made that worse: the entry was already stored, so the branch above said
+# nothing and the install ended with a command-not-found and no explanation.
+# Putting it on this session's PATH as well means `shambles` works in the
+# terminal you are already standing in.
+if (($env:Path -split ';') -notcontains $DestDir) {
+    $env:Path = "$env:Path;$DestDir"
 }
 
 Write-Host 'Note: Shambles binaries are unsigned; Windows SmartScreen may warn on first run.'
@@ -82,4 +97,6 @@ if ($SkipSmoke -ne '1') {
     }
 }
 
+Write-Host "Run 'shambles' to start."
+Write-Host 'Terminals opened before now will not find it until you start a new terminal.'
 Write-Host 'Done.'
