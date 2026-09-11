@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 
 import pytest
 
@@ -24,6 +26,39 @@ def predictable_motion(monkeypatch):
     that want the reduced-motion path set it themselves.
     """
     monkeypatch.delenv("SHAMBLES_MOTION", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_thread_outlives_its_test():
+    """Let a test's background threads finish before the next test starts.
+
+    ``shambles.login.LoginProcess`` pumps vendor output on a daemon thread,
+    and ``fake_vendor`` can hand it a script that sleeps. A test that does not
+    wait leaves that thread running, still calling back into the service, long
+    after its own assertions have passed.
+
+    The next test then drives Tk on the main thread. When the stray thread
+    garbage-collects a Tk object, Tcl is entered from the wrong thread and
+    aborts the interpreter outright:
+
+        Fatal Python error: Aborted
+
+    That kills the whole run rather than failing one test, so no retry can
+    recover it. It is timing-dependent, which is why it showed up on one
+    runner and not another.
+
+    Joining is capped: a thread that will not end is left alone rather than
+    hanging the suite, because a slow test is a better failure than a stuck
+    one.
+    """
+    before = set(threading.enumerate())
+    yield
+    deadline = time.monotonic() + 5.0
+    current = threading.current_thread()
+    for thread in set(threading.enumerate()) - before:
+        if thread is current or not thread.is_alive():
+            continue
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
 @pytest.fixture
