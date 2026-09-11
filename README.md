@@ -126,6 +126,37 @@ Two things to know first:
    for your machine. Whether Shambles can swap an account there is a separate
    question, answered by the [support table](#will-it-work-for-you).
 
+### Check it worked
+
+```bash
+shambles --version
+```
+
+A version number means you are done. Anything else, in order of likelihood:
+
+**`shambles` is not recognized** (PowerShell) or **command not found** (bash).
+The binary is installed; your shell has not noticed yet.
+
+- **Windows.** Open a new PowerShell window. Windows stores the PATH change
+  in your user profile, and only terminals opened afterwards read it. To fix
+  the window you are already in:
+  ```powershell
+  $env:Path += ";$env:LOCALAPPDATA\Shambles"
+  ```
+- **Linux and macOS.** Put `~/.local/bin` on your PATH:
+  ```bash
+  export PATH="$HOME/.local/bin:$PATH"
+  ```
+  Add that line to `~/.bashrc` or `~/.zshrc` so it survives a reboot.
+
+**`libc.so.6: version 'GLIBC_2.xx' not found`.** Your Linux is older than the
+binary supports. Shambles needs glibc 2.35 or newer, which means Ubuntu 22.04
+or later, or Debian 12 or later. Check with `ldd --version`. On anything
+older, install with pipx below, which needs no matching system libraries.
+
+**Windows SmartScreen blocks it.** Expected for an unsigned publisher. Choose
+*More info*, then *Run anyway*, or use pipx instead.
+
 <details>
 <summary><strong>Other ways to install</strong></summary>
 
@@ -459,6 +490,7 @@ Session history, plugins and settings are shared and live elsewhere.
 | The window will not close | `Ctrl+C` in the launching terminal works, and so does `kill <pid>`. If it is stopped rather than frozen, run `pkill -CONT -f shambles && pkill -f shambles` |
 | A provider is greyed out in Add Account | Its CLI is not on your PATH. Shambles runs the vendor's own login command, so it needs `claude` or `codex` installed |
 | Windows SmartScreen warns you | The binaries are unsigned. Use pipx if you would rather not click through it |
+| PowerShell says `The term 'shambles' is not recognized` | The install worked; this terminal predates it. Open a new PowerShell window, or run `$env:Path += ";$env:LOCALAPPDATA\Shambles"` |
 | `libc.so.6: version 'GLIBC_2.38' not found` | A 2.1.0 Linux binary, which was built on too new a system. Upgrade to 2.1.1 or later, or install with pipx |
 | On Windows, `'NoneType' object has no attribute 'write'` | The 2.1.0 Windows binary had no console to print to. Upgrade to 2.1.1 or later |
 

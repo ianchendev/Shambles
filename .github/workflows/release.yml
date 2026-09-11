@@ -232,7 +232,7 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: |
-            Install with one command — Linux, macOS, or WSL:
+            Install with one command. Linux, macOS, or WSL:
 
             ```bash
             curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash
@@ -247,20 +247,49 @@ jobs:
             irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex
             ```
 
-            The scripts download the binary for your OS and architecture from
-            the latest release (or the tag you pin) into `~/.local/bin`, or
-            `%LOCALAPPDATA%\Shambles` on Windows — no sudo, no admin. You can
-            also grab a binary from the asset list below, or install with pipx:
+            The scripts fetch the binary for your OS and architecture into
+            `~/.local/bin`, or `%LOCALAPPDATA%\Shambles` on Windows. No sudo,
+            no admin. You can also take a binary from the asset list below, or
+            install with pipx, which needs no matching system libraries:
 
             ```bash
             pipx install git+https://github.com/ianchendev/Shambles
-            shambles
             ```
 
-            **The binaries are unsigned.** Windows SmartScreen will warn on
-            first run — that is expected for an unsigned publisher. If you
-            would rather not run an unsigned binary that manages credential
-            files, use the pipx install above and read the source first.
+            ## Check it worked
+
+            ```bash
+            shambles --version
+            ```
+
+            A version number means you are done. Otherwise:
+
+            **"shambles is not recognized" or "command not found".** The
+            binary is installed; your shell has not noticed yet. On Windows,
+            open a new PowerShell window, because only terminals started after
+            the install read the stored PATH. On Linux and macOS, put
+            `~/.local/bin` on your PATH:
+
+            ```bash
+            export PATH="$HOME/.local/bin:$PATH"
+            ```
+
+            **`libc.so.6: version 'GLIBC_2.xx' not found`.** Your Linux is
+            older than these binaries support. They need glibc 2.35 or newer,
+            so Ubuntu 22.04 or later, or Debian 12 or later. Check with
+            `ldd --version`, and use the pipx install above on anything older.
+
+            ## Notes
+
+            **Windows ships two binaries.** `shambles.exe` is the one you run
+            in a terminal, and it prints. `shamblesw.exe` is the windowed twin
+            for a desktop shortcut that should not flash a console. The
+            installer places both.
+
+            **The binaries are unsigned.** Windows SmartScreen warns on first
+            run, which is what an unsigned publisher looks like. If you would
+            rather not run an unsigned binary that manages credential files,
+            use the pipx install above and read the source first.
 
             To check a download against `SHA256SUMS` below:
 
@@ -274,20 +303,21 @@ jobs:
 
             **Windows account switching is unverified.** Claude Code appears
             to keep credentials in the Credential Manager there rather than in
-            `.credentials.json` — the file Shambles swaps — in which case
+            `.credentials.json`, the file Shambles swaps, in which case
             switching would quietly do nothing. The binary builds and runs;
             nobody has confirmed a switch takes effect. See
             `docs/token-storage.md`.
 
             **macOS account switching is not supported.** There are macOS
-            binaries below now and the installer will fetch one, but installing
-            is not switching support: credentials live in the Keychain there,
-            so there is no file for Shambles to swap.
+            binaries below and the installer will fetch one, but installing is
+            not switching support: credentials live in the Keychain there, so
+            there is no file for Shambles to swap.
 
             **Upgrading from 1.x?** First launch merges your split session
-            history back into one shared `~/.claude`, automatically and without
-            overwriting anything. Run it with no Claude Code sessions open.
+            history back into one shared `~/.claude`, automatically and
+            without overwriting anything. Run it with no Claude Code sessions
+            open.
 
             **WSL users:** run the Linux build *inside* WSL. A Windows `.exe`
-            manages `C:\Users\<you>\.claude`, which is a different Claude Code
-            installation from the one in your WSL home directory.
+            manages `C:\Users\<you>\.claude`, which is a different Claude
+            Code installation from the one in your WSL home directory.
