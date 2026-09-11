@@ -80,6 +80,13 @@ def belongs_to(paths, provider, name, *, platform) -> bool:
     compare -- a brand new profile has no expectation to violate, and a
     credential we cannot attribute is not evidence of a mismatch.
     """
+    # A credential identical to this profile's stash is this profile's login,
+    # whatever the vendor's config file currently says about it. Without this
+    # a running Claude Code session could rewrite that file and have Shambles
+    # refuse to re-stash a login it had just installed itself.
+    if state.holder_of_live_credential(
+            paths, provider, platform=platform) == name:
+        return True
     expected = state.profile_email(paths, provider, name)
     live = state.live_email(paths, provider, platform=platform)
     return not (expected and live and expected != live)

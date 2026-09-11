@@ -116,18 +116,53 @@ def profile_email(paths, provider, name: str) -> str | None:
                              active=False).email
 
 
+def holder_of_live_credential(paths, provider, *, platform: str = sys.platform):
+    """The profile whose stashed credential *is* the live one, byte for byte.
+
+    The strongest answer available, and the only one no other process can
+    forge. Addresses come from the vendor's own config file -- for Claude,
+    ``~/.claude.json`` -- which Claude Code rewrites from memory while a
+    session is running. A VS Code session doing that seconds after a switch
+    made the window's drift correction move the marker back to the account
+    the user had just left, while the token on disk was the new one the whole
+    time. That is why usage updated and the address did not.
+
+    Returns None when nothing matches, which is the normal answer for a
+    provider whose token rotates: Codex mints a replacement on every use, so
+    its live copy legitimately differs from the stash. The address check is
+    still right there, and still the fallback.
+    """
+    try:
+        live = provider.store(home=paths.home, platform=platform).read()
+    except Exception:
+        return None  # an unreadable store is not evidence of anything
+    if not live:
+        return None
+    for name in profile_names(paths, provider.id):
+        try:
+            if paths.credentials(provider.id, name).read_bytes() == live:
+                return name
+        except OSError:
+            continue
+    return None
+
+
 def owner_of_live(paths, provider, *, platform: str = sys.platform):
     """The saved profile this live login belongs to, or None.
 
-    Identity is matched on the address, which is the only stable handle a
-    credential exposes here -- Claude's tokens are opaque and carry none, so
-    it comes from the companion config, and Codex's is a JWT claim.
+    Asks the credential first and the address second. A stashed credential
+    that matches the live one byte for byte settles the question outright;
+    only when none matches does this fall back to the address, which is what
+    a rotating token and a never-stashed browser login both need.
 
     Used to answer the question the drift warning raises but never resolves:
     the machine is signed in as somebody, and either that somebody is already
     one of the saved accounts -- in which case the marker is simply pointing
     at the wrong one -- or they are new and worth offering to save.
     """
+    holder = holder_of_live_credential(paths, provider, platform=platform)
+    if holder:
+        return holder
     live = live_email(paths, provider, platform=platform)
     if not live:
         return None

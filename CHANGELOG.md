@@ -2,6 +2,34 @@
 
 Notable changes per release. Dates are the tag date.
 
+## Unreleased
+
+### Fixed
+
+- **The window could undo the account label of a switch you had just made.**
+  Switching from the window installed the new token correctly, then its
+  refresh moved the active marker straight back to the account you had left.
+  The VS Code panel showed the old address and organisation while the usage
+  bars showed the new account, because the token really had switched and only
+  the label had not.
+
+  Shambles decided which account was live by reading the address out of
+  `~/.claude.json`. Claude Code owns that file and rewrites it from memory
+  whenever a session is running, so a VS Code session doing that seconds after
+  a switch fed Shambles the previous account's address as fact. The terminal
+  interface never showed this because it does not correct the marker at all.
+
+  Ownership is now settled by the credential: a stashed copy that matches the
+  live one byte for byte is proof no other process can forge. The address
+  check remains the fallback, which is what Codex's rotating token and a
+  never-stashed browser login both need. The same evidence now protects
+  `belongs_to`, so a rewritten config can no longer make Shambles refuse to
+  re-stash a login it installed itself.
+
+  Reloading the VS Code window is still what makes the extension re-read the
+  file. Nothing here can stop another process writing its own config; this
+  stops Shambles being misled by it.
+
 ## 2.1.1 - 2026-09-11
 
 Both bugs below shipped in 2.1.0, built green, and passed their own smoke
