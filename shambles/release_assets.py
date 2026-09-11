@@ -24,7 +24,15 @@ _WIN = {
     "amd64": "shambles-windows-x64.exe",
 }
 
-ARTIFACTS = frozenset(_LINUX.values()) | frozenset(_DARWIN.values()) | frozenset(_WIN.values())
+#: The windowed twin of the Windows binary. ``shambles.exe`` is
+#: console-subsystem so it can print; a console-subsystem program launched
+#: from a desktop shortcut also flashes a terminal, which is what this one
+#: exists to avoid. Not in the platform table above because it is never the
+#: answer to "which binary runs here", only an extra file to fetch alongside.
+WINDOWED_WINDOWS = "shamblesw-windows-x64.exe"
+
+ARTIFACTS = (frozenset(_LINUX.values()) | frozenset(_DARWIN.values())
+             | frozenset(_WIN.values()) | {WINDOWED_WINDOWS})
 
 def release_asset(*, sys_platform: str, machine: str) -> str:
     table = {"linux": _LINUX, "darwin": _DARWIN, "win32": _WIN}.get(sys_platform)

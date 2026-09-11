@@ -2,6 +2,44 @@
 
 Notable changes per release. Dates are the tag date.
 
+## 2.1.1 - 2026-09-11
+
+Both bugs below shipped in 2.1.0, built green, and passed their own smoke
+tests. Each one only failed on a machine other than the one that built it.
+
+### Fixed
+
+- **The Linux binaries would not start on Ubuntu 22.04, Debian 12 or RHEL 9.**
+  PyInstaller bundles the build machine's shared libraries, and 2.1.0 was
+  built on Ubuntu 24.04, so `libpython`, `libcrypto` and `libX11` all carried
+  a `GLIBC_2.38` requirement. Anything older reported
+  `libc.so.6: version 'GLIBC_2.38' not found`. The Linux builds now run on
+  Ubuntu 22.04, which targets glibc 2.35, and `scripts/check_glibc.py` unpacks
+  the finished archive and fails the release if the floor ever creeps up
+  again. Nothing about the binary advertises this from the outside: the
+  executable itself reports `GLIBC_2.14` and says nothing about what is packed
+  inside it.
+- **`shambles --version` crashed on Windows.** The Windows binary was built
+  with PyInstaller's `--windowed`, which allocates no console, so Python set
+  `sys.stdout` and `sys.stderr` to `None`. `print` tolerates that; a bare
+  `sys.stderr.write` does not, and the update-notice line raised
+  `AttributeError: 'NoneType' object has no attribute 'write'`. Windows showed
+  a crash dialog at the end of every install. Writes on that path now skip a
+  missing handle.
+
+### Changed
+
+- **Windows ships two binaries.** `shambles.exe` is console-subsystem, so
+  `--version`, `--help` and `list --json` print. `shamblesw.exe` is the
+  windowed twin, for a desktop shortcut that should not flash a terminal.
+  2.1.0 shipped only the windowed build, under the console name. The
+  PowerShell installer fetches both; a release without the second asset still
+  installs.
+- **The release smoke tests read the output.** They checked exit status
+  before, which is precisely why a binary that printed nothing passed. They
+  now assert that `--version` prints a version and `--help` prints usage, on
+  every platform.
+
 ## 2.1.0 - 2026-09-09
 
 ### Added

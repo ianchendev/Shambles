@@ -309,13 +309,19 @@ the window. Each install route has a quiet path:
 
 | Route | Quiet launcher |
 |---|---|
-| Release binary | Already quiet, built with `--windowed` on Windows |
+| Release binary | `shamblesw.exe`, installed next to `shambles.exe` |
 | pipx / pip | `shamblesw`, the `gui-scripts` entry, backed by `pythonw.exe` |
 | From a checkout | `pythonw.exe` on Windows, `python3` on Linux |
 
-`shambles` (console) stays available everywhere so `--version` and `--help`
-still print. On Windows a `gui-scripts` binary has nowhere to write, which is
-why both exist.
+Windows gets two binaries because one cannot do both jobs. A console program
+can print but flashes a terminal when launched from a shortcut. A windowed one
+never flashes, and cannot print at all: Windows gives it no console, so Python
+sets its `stdout` and `stderr` to `None`. So `shambles.exe` is the console
+build, and `shamblesw.exe` the windowed twin.
+
+Version 2.1.0 shipped only the windowed build, under the console name.
+`shambles --version` printed nothing and then died on its first write to
+stderr. Fixed in 2.1.1.
 
 **Windows shortcut, from a checkout.** Right-click → New → Shortcut:
 
@@ -328,6 +334,9 @@ Run:         Normal window
 `pythonw.exe` sits next to `python.exe` in the same install. Check with
 `where pythonw`. Avoid `cmd /c` and `start`, which both bring the console
 back.
+
+**Windows shortcut, installed with the script:** target
+`%LOCALAPPDATA%\Shambles\shamblesw.exe`.
 
 **Windows shortcut, pipx install:** target
 `%USERPROFILE%\.local\bin\shamblesw.exe`.

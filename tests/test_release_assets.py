@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import pytest
-from shambles.release_assets import ARTIFACTS, UnsupportedPlatform, release_asset
+from shambles.release_assets import (ARTIFACTS, WINDOWED_WINDOWS,
+                                     UnsupportedPlatform, release_asset)
 
 @pytest.mark.parametrize("sys_platform,machine,want", [
     ("linux", "x86_64", "shambles-linux-x86_64"),
@@ -30,3 +31,22 @@ def test_install_sh_mentions_every_unix_artifact():
 def test_install_ps1_mentions_windows_artifact():
     text = Path("scripts/install.ps1").read_text(encoding="utf-8")
     assert "shambles-windows-x64.exe" in text
+
+
+def test_windows_ships_a_windowed_binary_too():
+    """Two Windows binaries, on purpose.
+
+    ``shambles.exe`` is console-subsystem so ``--version``, ``--help`` and
+    ``list --json`` can actually print. 2.1.0 shipped only a ``--windowed``
+    build under that name, which has no console at all: it printed nothing and
+    crashed on the first write to stderr. ``shamblesw.exe`` is the windowed
+    one, for a desktop shortcut that should not drag a console behind it.
+    """
+    assert WINDOWED_WINDOWS == "shamblesw-windows-x64.exe"
+    assert WINDOWED_WINDOWS in ARTIFACTS
+
+
+def test_install_ps1_installs_both_windows_binaries():
+    text = Path("scripts/install.ps1").read_text(encoding="utf-8")
+    assert "shambles-windows-x64.exe" in text
+    assert WINDOWED_WINDOWS in text

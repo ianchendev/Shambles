@@ -26,25 +26,35 @@ if ($env:SHAMBLES_FORCE_ASSET) {
     exit 1
 }
 
-if ($Version) {
-    $Url = "$Base/download/$Version/$Asset"
-} else {
-    $Url = "$Base/latest/download/$Asset"
-}
-
 $DestDir = Join-Path $env:LOCALAPPDATA 'Shambles'
 $Dest = Join-Path $DestDir 'shambles.exe'
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 
-$Tmp = [System.IO.Path]::GetTempFileName()
-try {
-    Write-Host "Downloading $Asset…"
-    Invoke-WebRequest -Uri $Url -OutFile $Tmp -UseBasicParsing
-    Move-Item -Force $Tmp $Dest
-} finally {
-    if (Test-Path $Tmp) {
-        Remove-Item -Force $Tmp
+function Get-Binary($AssetName, $Target) {
+    $Tmp = [System.IO.Path]::GetTempFileName()
+    try {
+        Write-Host "Downloading $AssetName…"
+        $From = if ($Version) { "$Base/download/$Version/$AssetName" }
+                else { "$Base/latest/download/$AssetName" }
+        Invoke-WebRequest -Uri $From -OutFile $Tmp -UseBasicParsing
+        Move-Item -Force $Tmp $Target
+    } finally {
+        if (Test-Path $Tmp) { Remove-Item -Force $Tmp }
     }
+}
+
+Get-Binary $Asset $Dest
+
+# The windowed twin, for a desktop shortcut. shambles.exe is
+# console-subsystem so --version and --help can print; launching that from a
+# shortcut flashes a console, which shamblesw.exe exists to avoid. A release
+# that predates it simply has no such asset, and the install still succeeds.
+$Windowed = 'shamblesw-windows-x64.exe'
+$DestW = Join-Path $DestDir 'shamblesw.exe'
+try {
+    Get-Binary $Windowed $DestW
+} catch {
+    Write-Host "No windowed build in this release; skipping shamblesw.exe."
 }
 
 Write-Host "Installed to $Dest"

@@ -14,10 +14,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # 22.04, not latest. PyInstaller bundles the build machine's
+          # libraries, so building on 24.04 stamped a GLIBC_2.38 floor onto
+          # 2.1.0 and it would not start on Ubuntu 22.04, Debian 12 or RHEL 9.
+          # Building here targets glibc 2.35, and check_glibc.py holds it.
+          - os: ubuntu-22.04
             artifact: shambles-linux-x86_64
             built: dist/shambles
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             artifact: shambles-linux-arm64
             built: dist/shambles
           # macos-15-intel is the last x86_64 macOS image GitHub offers (the
@@ -44,7 +48,7 @@ jobs:
 
       - name: Install X server (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb binutils
 
       - name: Install
         run: pip install -e ".[dev]" pyinstaller
@@ -129,45 +133,83 @@ jobs:
              --add-data "shambles/app/tui/*.tcss:shambles/app/tui"
              shambles/__main__.py
 
+      # Two binaries, because one cannot do both jobs. A console-subsystem
+      # program can print; a windowed one cannot, and Python sets its stdout
+      # and stderr to None. 2.1.0 shipped only the windowed build under the
+      # console name, so `shambles --version` printed nothing and then died
+      # on its first write to stderr. shambles.exe is the console one,
+      # shamblesw.exe the windowed twin for desktop shortcuts.
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: pyinstaller --onefile --windowed --name shambles
-             --add-data "shambles/providers/*.json;shambles/providers"
-             --add-data "shambles/app/tui/*.tcss;shambles/app/tui"
-             shambles/__main__.py
+        shell: pwsh
+        run: |
+          pyinstaller --onefile --name shambles `
+            --add-data "shambles/providers/*.json;shambles/providers" `
+            --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
+            shambles/__main__.py
+          pyinstaller --onefile --windowed --name shamblesw `
+            --add-data "shambles/providers/*.json;shambles/providers" `
+            --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
+            shambles/__main__.py
 
       # Every platform, always. A Linux-only smoke test let a broken Windows
       # binary through once already: PyInstaller runs the entry file as a
       # top-level script, so a relative import inside it killed the bundle on
       # startup. Only the Linux job noticed.
+      # The glibc floor is invisible from the outside: the executable itself
+      # reports GLIBC_2.14 and says nothing about the libraries packed inside
+      # it. Only unpacking the archive catches a build that cannot start
+      # anywhere but the runner that made it.
+      - name: Linux binary must run on more than this runner
+        if: runner.os == 'Linux'
+        run: python scripts/check_glibc.py dist/shambles 2.35
+
+      # Assert on what a user sees, not on the exit status. An exit-code-only
+      # check is what let a Windows binary ship that printed nothing at all.
       - name: Smoke-test the binary (Linux, macOS)
         if: runner.os != 'Windows'
         run: |
-          ./dist/shambles --version
-          ./dist/shambles --help
+          ./dist/shambles --version | grep -E "^shambles [0-9]+\.[0-9]+\.[0-9]+$"
+          ./dist/shambles --help | grep -q "switch"
 
-      - name: Smoke-test the binary (Windows)
+      - name: Smoke-test the binaries (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # --windowed detaches, so Start-Process -Wait is needed to get the
-          # exit code at all.
-          $p = Start-Process -FilePath .\dist\shambles.exe `
-                             -ArgumentList '--version' `
-                             -Wait -PassThru -NoNewWindow
-          if ($p.ExitCode -ne 0) {
-            Write-Error "binary exited $($p.ExitCode)"; exit 1
+          # The console build has to actually print. Checking only the exit
+          # code is how 2.1.0 shipped a binary that printed nothing.
+          $out = (& .\dist\shambles.exe --version 2>&1 | Out-String).Trim()
+          Write-Host "--version said: $out"
+          if ($out -notmatch 'shambles \d+\.\d+\.\d+') {
+            Write-Error "--version printed nothing usable"; exit 1
           }
-          Write-Host "binary started and exited cleanly"
+          $help = (& .\dist\shambles.exe --help 2>&1 | Out-String)
+          if ($help -notmatch 'switch') {
+            Write-Error "--help printed nothing usable"; exit 1
+          }
+          # The windowed twin has no console by design, so a clean exit is all
+          # there is to check. Before the stream guard it crashed here.
+          $p = Start-Process -FilePath .\dist\shamblesw.exe `
+                             -ArgumentList '--version' -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Error "shamblesw.exe exited $($p.ExitCode)"; exit 1
+          }
+          Write-Host "windowed build exited cleanly"
 
-      - name: Rename
+      - name: Collect
         shell: bash
-        run: mv "${{ matrix.built }}" "${{ matrix.artifact }}"
+        run: |
+          mkdir -p out
+          mv "${{ matrix.built }}" "out/${{ matrix.artifact }}"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv dist/shamblesw.exe out/shamblesw-windows-x64.exe
+          fi
+          ls -l out
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          path: out/*
 
   publish:
     needs: build

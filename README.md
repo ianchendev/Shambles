@@ -109,8 +109,9 @@ curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/in
 curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.1.0
 ```
 
-**Windows PowerShell** installs into `%LOCALAPPDATA%\Shambles` and adds it to
-your user PATH:
+**Windows PowerShell** installs `shambles.exe` and its windowed twin
+`shamblesw.exe` into `%LOCALAPPDATA%\Shambles`, and adds that to your user
+PATH:
 
 ```powershell
 irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex
@@ -166,7 +167,7 @@ is designed and waiting on the macOS and Windows credential work below.
 
 | Where you run it | Claude Code | Codex |
 |---|---|---|
-| Linux desktop | **Supported** | **Unverified** |
+| Linux desktop | **Supported**, glibc 2.35 or newer | **Unverified** |
 | WSL (Ubuntu and friends) | **Supported**, using the **Linux** build **inside** WSL | **Unverified** |
 | Windows, not WSL | **Unverified, probably not working** | **Unverified** |
 | macOS | **Not supported** | **Unverified** |
@@ -458,6 +459,8 @@ Session history, plugins and settings are shared and live elsewhere.
 | The window will not close | `Ctrl+C` in the launching terminal works, and so does `kill <pid>`. If it is stopped rather than frozen, run `pkill -CONT -f shambles && pkill -f shambles` |
 | A provider is greyed out in Add Account | Its CLI is not on your PATH. Shambles runs the vendor's own login command, so it needs `claude` or `codex` installed |
 | Windows SmartScreen warns you | The binaries are unsigned. Use pipx if you would rather not click through it |
+| `libc.so.6: version 'GLIBC_2.38' not found` | A 2.1.0 Linux binary, which was built on too new a system. Upgrade to 2.1.1 or later, or install with pipx |
+| On Windows, `'NoneType' object has no attribute 'write'` | The 2.1.0 Windows binary had no console to print to. Upgrade to 2.1.1 or later |
 
 ---
 
