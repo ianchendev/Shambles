@@ -336,3 +336,22 @@ def test_capture_preserves_the_rest_of_the_sidecar(paths):
     d = configjson.load(paths.account("claude", "Work"))
     assert d["oauthAccount"]["emailAddress"] == "work@example.com"
     assert d["stashed_at"] == 123
+
+
+def test_a_profile_with_no_stored_account_never_reads_the_vendor_config(
+        paths, monkeypatch):
+    """capture_live runs for every provider on every refresh. A Codex profile
+    has no sidecar and can never match, so parsing ~/.claude.json for it --
+    the largest file Shambles reads -- was work with one possible answer."""
+    from helpers import make_claude_json, make_profile
+    from shambles import configjson
+
+    make_profile(paths, "codex", "Work", email="w@example.test", active=True)
+    make_claude_json(paths, email="w@example.test")
+    read = []
+    real = configjson.load
+    monkeypatch.setattr(configjson, "load",
+                        lambda path: read.append(path) or real(path))
+
+    assert usage.capture_live(paths, "codex", "Work", now_ms=NOW) is False
+    assert paths.claude_json not in read

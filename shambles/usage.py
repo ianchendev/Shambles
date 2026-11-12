@@ -4,8 +4,8 @@ Claude Code stores both windows in ``~/.claude.json``. Codex writes the
 same 5h / week pair onto ``token_count`` events in ``~/.codex/sessions``.
 
 **Display only.** These figures are never written back into ``~/.claude.json``
--- see :data:`shambles.configjson.STALE_ON_SWITCH` for why restoring a cached
-copy misleads the extension. A profile's stashed usage is kept solely so the
+-- see ``stale_on_switch`` in ``providers/claude.json`` for why restoring a
+cached copy misleads the extension. A profile's stashed usage is kept solely so the
 window can show what an idle account looked like when you left it, always
 labelled with its age.
 """
@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import configjson
+from .providers.spec import finite
 
 #: ``kind`` values in the cache's ``limits`` array, mapped to a short label.
 #: ``weekly_all`` is the whole-week bucket; the per-model ones are ignored
@@ -90,9 +91,12 @@ class Bar:
             return None
         try:
             when = datetime.datetime.fromisoformat(self.resets_at)
-        except (TypeError, ValueError):
+            # The move to local time can fail on its own: an instant on the
+            # calendar's last day is a real one in UTC and off the end east
+            # of it.
+            return when.astimezone().strftime("%a %d %b, %H:%M")
+        except (TypeError, ValueError, OverflowError, OSError):
             return None
-        return when.astimezone().strftime("%a %d %b, %H:%M")
 
 
 @dataclass(frozen=True)
@@ -141,7 +145,7 @@ def parse(blob) -> Usage:
         return EMPTY
 
     fetched = blob.get("fetchedAtMs")
-    fetched = fetched if isinstance(fetched, (int, float)) else None
+    fetched = fetched if finite(fetched) else None
     util = blob.get("utilization")
     if not isinstance(util, dict):
         return Usage(bars=(), fetched_at_ms=int(fetched) if fetched else None)
@@ -152,7 +156,7 @@ def parse(blob) -> Usage:
             continue
         label = KINDS.get(entry.get("kind"))
         percent = entry.get("percent")
-        if label is None or not isinstance(percent, (int, float)):
+        if label is None or not finite(percent):
             continue
         found[label] = Bar(
             label=label,
@@ -169,7 +173,7 @@ def parse(blob) -> Usage:
         if not isinstance(bucket, dict):
             continue
         percent = bucket.get("utilization")
-        if not isinstance(percent, (int, float)):
+        if not finite(percent):
             continue
         # No `limits` entry means no severity to trust, so the value alone
         # decides: red past the threshold, otherwise unremarkable.
@@ -205,7 +209,7 @@ def parse_codex_rate_limits(limits, *, fetched_at_ms: int | None = None) -> Usag
             continue
         percent = bucket.get("used_percent")
         minutes = bucket.get("window_minutes")
-        if not isinstance(percent, (int, float)):
+        if not finite(percent):
             continue
         label = "session" if (
             isinstance(minutes, (int, float)) and minutes <= _CODEX_SESSION_MAX_MINUTES
@@ -279,7 +283,13 @@ def _latest_codex_session(config_dir: Path) -> Path | None:
 
 def _codex_resets_at(value) -> str | None:
     if isinstance(value, (int, float)):
-        return datetime.datetime.fromtimestamp(value, tz=datetime.timezone.utc).isoformat()
+        if not finite(value):
+            return None
+        try:
+            return datetime.datetime.fromtimestamp(
+                value, tz=datetime.timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None  # a number, but not one any calendar reaches
     if isinstance(value, str):
         return value
     return None
@@ -310,18 +320,29 @@ def capture_live(paths, provider_id, active_name, *, now_ms) -> bool:
     """
     if not active_name:
         return False
-    live = configjson.load(paths.claude_json).get("cachedUsageUtilization")
-    if not isinstance(live, dict):
+
+    # The profile's own sidecar first. It is a few hundred bytes, and without
+    # an account in it nothing below can match -- which is every profile of a
+    # provider with no companion file. ~/.claude.json is the largest file
+    # Shambles reads, and this runs for every provider on every refresh.
+    sidecar = configjson.load(paths.account(provider_id, active_name))
+    account = sidecar.get("oauthAccount")
+    expected = account.get("accountUuid") if isinstance(account, dict) else None
+    if not expected:
         return False
 
-    sidecar = configjson.load(paths.account(provider_id, active_name))
-    expected = (sidecar.get("oauthAccount") or {}).get("accountUuid")
-    if not expected or live.get("accountUuid") != expected:
+    live = configjson.load(paths.claude_json).get("cachedUsageUtilization")
+    if not isinstance(live, dict) or live.get("accountUuid") != expected:
         return False
 
     if sidecar.get("usage") == live:
         return False
 
     sidecar["usage"] = live
-    configjson.write_atomic(paths.account(provider_id, active_name), sidecar)
+    try:
+        configjson.write_atomic(paths.account(provider_id, active_name), sidecar)
+    except OSError:
+        # Display only, and called while the window draws. A sidecar that
+        # cannot be written this time is a figure recorded next time.
+        return False
     return True
