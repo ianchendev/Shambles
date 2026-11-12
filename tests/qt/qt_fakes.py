@@ -131,8 +131,11 @@ class FakeService:
         return self._done("remove", plan.provider, plan.account)
 
     def plan_eject(self):
+        # Shaped like the service's own plan: what eject does, then after.
         return ActionPlan("eject", None, None, True, "Eject Shambles?",
-                          ("Logins for Personal stay on disk.",))
+                          ("Shambles will stop managing your accounts. "
+                           "Nothing is deleted.",
+                           "Afterwards:\nLogins for Personal stay on disk."))
 
     def eject(self, plan):
         return self._done("eject", summary="Shambles has handed back 2 "
