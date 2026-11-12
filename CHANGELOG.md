@@ -46,6 +46,8 @@ Notable changes per release. Dates are the tag date.
 - Removing a profile is now refused when it is the one whose login is live,
   even if the active marker names a different profile.
 - A refused Add Account no longer leaves an empty profile behind.
+- Cancelling Add Account in one window no longer switches you back when you
+  had already moved to another profile in a second window.
 - Saving a login that one of your profiles already holds now names that
   profile, instead of making a second copy under a new name.
 

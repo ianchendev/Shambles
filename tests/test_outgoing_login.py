@@ -369,3 +369,30 @@ def test_a_parked_profile_can_still_be_removed(paths, provider):
     switcher.remove_profile(paths, provider, "Personal", platform="linux")
 
     assert state.profile_names(paths, provider.id) == ["Work"]
+
+
+# ---- undoing an Add that came to nothing ----------------------------------
+
+def test_a_cancelled_add_does_not_undo_a_switch_made_elsewhere(paths, provider):
+    """Two windows. One is waiting on the vendor's sign-in for a new profile;
+    in the other the user switches to a profile that has no login yet. When
+    the first is cancelled it saw an empty slot, took that for its own, and
+    switched the user back off the profile they had just chosen.
+
+    abandon_relogin already refuses unless the profile it is undoing is still
+    the live one. The two functions now share that rule."""
+    make_profile(paths, provider.id, "Work", email="w@example.test",
+                 active=True)
+    make_profile(paths, provider.id, "Spare", token=False)
+    live_path(paths, provider).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, provider).write_bytes(
+        paths.credentials(provider.id, "Work").read_bytes())
+    created = switcher.add_empty_account(paths, provider, "New",
+                                         platform="linux", sleep=lambda _: None)
+    switcher.switch(paths, provider, "Spare", platform="linux",   # elsewhere
+                    sleep=lambda _: None)
+
+    assert switcher.abandon_new_account(paths, provider, created, "Work",
+                                        platform="linux",
+                                        sleep=lambda _: None) is False
+    assert state.read_active(paths, provider.id) == "Spare"

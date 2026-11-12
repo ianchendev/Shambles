@@ -347,21 +347,15 @@ def abandon_new_account(paths, provider, created: str, previous: str | None, *,
 
     Refuses to roll back a profile that did acquire a credential, so a caller
     wrong about which happened cannot undo a successful login.
+
+    The same question :func:`abandon_relogin` answers, so it is asked there:
+    a new profile is the case with no stash, where anything in the live slot
+    is a login the vendor wrote. That function also checks ``created`` is
+    still the live profile, which this one used not to -- a cancelled Add
+    could switch the user off whatever they had moved to in another window.
     """
-    if not previous or previous == created:
-        return False
-    if not paths.profile_dir(provider.id, previous).is_dir():
-        return False
-
-    try:
-        if _store(paths, provider, platform).read() is not None:
-            return False
-    except ShamblesError:
-        return False
-
-    switch(paths, provider, previous, platform=platform,
-           now_ms_fn=now_ms_fn, sleep=sleep)
-    return True
+    return abandon_relogin(paths, provider, created, previous,
+                           platform=platform, now_ms_fn=now_ms_fn, sleep=sleep)
 
 
 #: What :func:`judge_relogin` found in the live slot after a vendor login.
@@ -421,8 +415,9 @@ def abandon_relogin(paths, provider, name: str, previous: str | None, *,
                     sleep=time.sleep) -> bool:
     """Put the user back on ``previous`` after a re-login that produced nothing.
 
-    ``abandon_new_account`` cannot do this: it only rolls back from an empty
-    slot, and a lapsed profile's switch leaves its dead token there instead.
+    A lapsed profile's switch leaves its dead token in the slot, so "the slot
+    is empty" is not the test: the slot must hold nothing the profile does not
+    already have.
 
     Returns True when it switched back. Touches nothing, and returns False,
     unless ``name`` is still the live profile and the live credential is
