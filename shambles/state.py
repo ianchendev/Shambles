@@ -116,8 +116,9 @@ def profile_email(paths, provider, name: str) -> str | None:
                              active=False).email
 
 
-def holder_of_live_credential(paths, provider, *, platform: str = sys.platform):
-    """The profile whose stashed credential *is* the live one, byte for byte.
+def holders_of_live_credential(paths, provider, *,
+                               platform: str = sys.platform) -> list[str]:
+    """Every profile whose stashed credential *is* the live one, byte for byte.
 
     The strongest answer available, and the only one no other process can
     forge. Addresses come from the vendor's own config file -- for Claude,
@@ -127,24 +128,42 @@ def holder_of_live_credential(paths, provider, *, platform: str = sys.platform):
     the user had just left, while the token on disk was the new one the whole
     time. That is why usage updated and the address did not.
 
-    Returns None when nothing matches, which is the normal answer for a
-    provider whose token rotates: Codex mints a replacement on every use, so
-    its live copy legitimately differs from the stash. The address check is
-    still right there, and still the fallback.
+    Empty when nothing matches, which is the normal answer for a provider
+    whose token rotates: Codex mints a replacement on every use, so its live
+    copy legitimately differs from the stash. The address check is still
+    right there, and still the fallback.
+
+    A list because one login can be saved under two names. Callers that care
+    which of them is marked must ask, not take the first.
     """
     try:
         live = provider.store(home=paths.home, platform=platform).read()
     except Exception:
-        return None  # an unreadable store is not evidence of anything
+        return []  # an unreadable store is not evidence of anything
     if not live:
-        return None
+        return []
+    found = []
     for name in profile_names(paths, provider.id):
         try:
             if paths.credentials(provider.id, name).read_bytes() == live:
-                return name
+                found.append(name)
         except OSError:
             continue
-    return None
+    return found
+
+
+def holder_of_live_credential(paths, provider, *, platform: str = sys.platform):
+    """One profile holding the live credential, or None.
+
+    See :func:`holders_of_live_credential`. The marked profile is preferred
+    when it is among them, so a login saved under two names never reads as a
+    reason to move the marker from one to the other.
+    """
+    holders = holders_of_live_credential(paths, provider, platform=platform)
+    marked = read_active(paths, provider.id)
+    if marked in holders:
+        return marked
+    return holders[0] if holders else None
 
 
 def owner_of_live(paths, provider, *, platform: str = sys.platform):
@@ -189,6 +208,23 @@ def inspect(paths, provider, *, platform: str = sys.platform) -> State:
         return State(UNKNOWN, provider.id, live_email=live)
 
     expected = profile_email(paths, provider, marked)
+
+    # Ask the credential before the address, exactly as owner_of_live does.
+    # The address is whatever the vendor's config file says, and for Claude
+    # that file is rewritten from memory by any session still running: it can
+    # lag a switch, and it can agree with the marker while the bytes in the
+    # store are another profile's. A stashed credential identical to the live
+    # one is proof either way.
+    holders = holders_of_live_credential(paths, provider, platform=platform)
+    if marked in holders:
+        return State(MANAGED, provider.id, profile=marked,
+                     live_email=expected or live)
+    if holders:
+        return State(DRIFTED, provider.id, profile=marked,
+                     live_email=(profile_email(paths, provider, holders[0])
+                                 or live),
+                     expected_email=expected)
+
     # Only call it drift when both sides actually name someone. A profile that
     # has never been logged into has no expectation to violate.
     if expected and live and expected != live:

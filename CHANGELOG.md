@@ -23,6 +23,29 @@ Notable changes per release. Dates are the tag date.
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.
+- **Switching no longer replaces a login that is saved nowhere.** With
+  profiles saved but none marked active (the state Eject leaves behind, or a
+  profile folder removed by hand), Switch, Add Account and Sign in used to
+  overwrite whatever login was live without keeping a copy of it. They now
+  stop and ask you to save it first. When the live login is already one of
+  your saved profiles there is nothing to lose, and they carry on.
+- **A switch that fails halfway no longer costs the account you left.** If
+  the login was replaced but the active marker could not be written, the next
+  switch filed the new account's token under the old profile and destroyed
+  the old one. Shambles now recognises the live login by its bytes, so
+  running the switch again simply finishes it.
+- **A Claude Code session left running no longer blocks switching.** A
+  session still signed in as the previous account rewrites `~/.claude.json`,
+  and Shambles then refused every switch with "Signed in as ..., but ...
+  holds ...", about a login that was the right one all along. The stored
+  login now settles which account is live, not the address in that file.
+- A profile's saved address is no longer erased, or replaced with another
+  account's, when `~/.claude.json` is briefly out of step with the login. An
+  empty profile is no longer labelled with the previous account's address
+  after a cancelled Add Account.
+- A refused Add Account no longer leaves an empty profile behind.
+- Saving a login that one of your profiles already holds now names that
+  profile, instead of making a second copy under a new name.
 
 ## 2.1.2 - 2026-09-11
 

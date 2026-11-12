@@ -25,8 +25,8 @@ NOTHING_TO_SAVE = (
 
 SAVE_FIRST = (
     "Save your current account first.\n\n"
-    "Otherwise the live login would be replaced with nothing and you would "
-    "have to sign in again to get it back."
+    "The login that is live now is not one of your saved profiles. It would "
+    "be replaced, and you would have to sign in again to get it back."
 )
 
 REMOVE_ACTIVE = (
@@ -74,19 +74,27 @@ DRIFT_REFUSAL = (
 
 
 def belongs_to(paths, provider, name, *, platform) -> bool:
-    """Whether the live login is provably somebody else's than ``name``'s.
+    """Whether the live login may be filed under ``name``.
 
-    Returns True when the two agree *or* when either side has no identity to
-    compare -- a brand new profile has no expectation to violate, and a
-    credential we cannot attribute is not evidence of a mismatch.
+    False only when it is provably somebody else's. Returns True when the two
+    agree *or* when either side has no identity to compare -- a brand new
+    profile has no expectation to violate, and a credential we cannot
+    attribute is not evidence of a mismatch.
     """
     # A credential identical to this profile's stash is this profile's login,
     # whatever the vendor's config file currently says about it. Without this
     # a running Claude Code session could rewrite that file and have Shambles
     # refuse to re-stash a login it had just installed itself.
-    if state.holder_of_live_credential(
-            paths, provider, platform=platform) == name:
+    holders = state.holders_of_live_credential(paths, provider,
+                                               platform=platform)
+    if name in holders:
         return True
+    # And one identical to another profile's stash is that profile's login,
+    # for the same reason. The address cannot be asked here: a switch that
+    # stopped after replacing the credential leaves the old account's address
+    # on file beside the new account's token, and the two then agree.
+    if holders:
+        return False
     expected = state.profile_email(paths, provider, name)
     live = state.live_email(paths, provider, platform=platform)
     return not (expected and live and expected != live)
@@ -100,20 +108,32 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
     The guard sits here rather than only in ``switch`` so that every caller
     inherits it -- this write is the one that costs a refresh token.
     """
+    expected = state.profile_email(paths, provider, name)
+    live = state.live_email(paths, provider, platform=platform)
     if not belongs_to(paths, provider, name, platform=platform):
         raise DriftedLoginError(DRIFT_REFUSAL.format(
-            live=state.live_email(paths, provider, platform=platform),
-            name=name,
-            expected=state.profile_email(paths, provider, name)))
+            live=live, name=name, expected=expected))
     paths.ensure_profile(provider.id, name)
     store = _store(paths, provider, platform)
 
     blob = retry.with_retry(store.read, f"read {store.describe()}", sleep=sleep)
-    if blob is not None:
-        _write_credential(paths, provider, name, blob, sleep=sleep)
+    if blob is None:
+        # Nobody is signed in, so there is no login for an identity to
+        # describe. Whatever the vendor's config file names is left over from
+        # some other moment, and the profile keeps what it had.
+        return
+    _write_credential(paths, provider, name, blob, sleep=sleep)
 
+    # The identity filed beside a credential is only ever replaced by the
+    # same identity, refreshed. The vendor's config file is not the
+    # credential: it can name no account at all, or -- rewritten from memory
+    # by a session still running as someone else -- the wrong one, while
+    # belongs_to has just established from the bytes that this login is
+    # ``name``'s. Filing either would leave the profile mislabelled or
+    # unlabelled, and an unlabelled profile is one the drift check can no
+    # longer protect.
     companion = provider.companion_read(home=paths.home)
-    if companion:
+    if companion and not (expected and live != expected):
         configjson.write_sidecar(paths.account(provider.id, name), companion,
                                  now_ms_fn())
 
@@ -149,14 +169,9 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
         raise ProfileNotFoundError(
             f"Profile '{target_name}' no longer exists on disk.")
 
-    # Refuse before anything moves. The copy-out below files the live login
-    # under current.profile, so switching while signed in as somebody else
-    # destroys that profile's token -- and the card offers the button that
-    # does it, with only a warning line to say otherwise.
-    if current.kind == state.DRIFTED:
-        raise DriftedLoginError(DRIFT_REFUSAL.format(
-            live=current.live_email, name=current.profile,
-            expected=current.expected_email))
+    # Refuse before anything moves. Whatever is live is about to be replaced,
+    # so it has to have somewhere to go first.
+    outgoing = _outgoing_profile(paths, provider, current, platform=platform)
 
     # Refuse before anything moves if the companion cannot be parsed. Writing
     # onto an unreadable config would replace the whole file with two keys.
@@ -178,10 +193,11 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
                 lambda: configjson.backup(companion_path, paths.backup_dir, stamp),
                 f"back up {companion_path.name}", sleep=sleep)
 
-        # Stash the outgoing login so switching away is never lossy. Skipped
-        # when the marker points at a profile that is already gone.
-        if current.profile and paths.profile_dir(provider.id, current.profile).is_dir():
-            stash_live_login(paths, provider, current.profile, platform=platform,
+        # Stash the outgoing login so switching away is never lossy. None
+        # only when the store is empty: _outgoing_profile has already refused
+        # a login with nowhere to go.
+        if outgoing:
+            stash_live_login(paths, provider, outgoing, platform=platform,
                              now_ms_fn=lambda: stamp, sleep=sleep)
 
         incoming = paths.credentials(provider.id, target_name)
@@ -215,6 +231,42 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     return state.inspect(paths, provider, platform=platform)
 
 
+def _outgoing_profile(paths, provider, current, *, platform) -> str | None:
+    """The profile the live login is filed under before it is replaced.
+
+    ``None`` means there is no live login, so nothing is at stake. Raises
+    rather than return ``None`` while the store holds one: every caller is
+    about to write over it, and a login filed nowhere is gone.
+
+    The marker is only the second thing asked. A saved profile holding these
+    exact bytes owns them whatever the marker says, and filing them there
+    costs nothing -- which is also what lets a switch that stopped between
+    replacing the credential and moving the marker be finished by simply
+    running it again.
+    """
+    holders = state.holders_of_live_credential(paths, provider,
+                                               platform=platform)
+    if holders:
+        return current.profile if current.profile in holders else holders[0]
+
+    # The copy-out files the live login under current.profile, so switching
+    # while signed in as somebody else destroys that profile's token -- and
+    # the card offers the button that does it, with only a warning line to
+    # say otherwise.
+    if current.kind == state.DRIFTED:
+        raise DriftedLoginError(DRIFT_REFUSAL.format(
+            live=current.live_email, name=current.profile,
+            expected=current.expected_email))
+    if current.kind == state.MANAGED:
+        return current.profile
+
+    # No profile is marked, or the marked one is gone from disk. There is
+    # nowhere to file a login, so one that exists must be saved first.
+    if _store(paths, provider, platform).read() is not None:
+        raise AlreadyManagedError(SAVE_FIRST)
+    return None
+
+
 def _companion_path(provider, paths):
     """Where this provider's companion file lives, or ``None`` if it has none."""
     from .providers import spec as specmod
@@ -237,6 +289,14 @@ def save_current_account(paths, provider, name, *, platform=sys.platform,
         raise AlreadyManagedError(NOTHING_TO_SAVE.format(
             store=store.describe(), provider=provider.display_name))
 
+    # Not marked, but already here: a profile holds these exact bytes.
+    # Switching to it is what puts the marker back; a second copy under a
+    # new name would only be a second card for one login.
+    holder = state.holder_of_live_credential(paths, provider, platform=platform)
+    if holder:
+        raise AlreadyManagedError(
+            f"This login is already saved as '{holder}'.")
+
     name = profiles.validate_profile_name(
         name, state.profile_names(paths, provider.id))
     stash_live_login(paths, provider, name, platform=platform,
@@ -247,17 +307,28 @@ def save_current_account(paths, provider, name, *, platform=sys.platform,
 
 def add_empty_account(paths, provider, name, *, platform=sys.platform,
                       now_ms_fn=now_ms, sleep=time.sleep) -> str:
-    """Create a profile with no login and make it current."""
-    current = state.inspect(paths, provider, platform=platform)
-    store = _store(paths, provider, platform)
-    if current.kind == state.UNMANAGED and store.read() is not None:
-        raise AlreadyManagedError(SAVE_FIRST)
+    """Create a profile with no login and make it current.
 
+    The switch decides whether that is safe -- it clears the live slot, so
+    it refuses a login that no profile holds -- and a refusal takes the new
+    directory back out with it. Left behind, it is a blank card whose name
+    cannot be used for the retry.
+    """
     name = profiles.validate_profile_name(
         name, state.profile_names(paths, provider.id))
     paths.ensure_profile(provider.id, name)
-    result = switch(paths, provider, name, platform=platform,
-                    now_ms_fn=now_ms_fn, sleep=sleep)
+    try:
+        result = switch(paths, provider, name, platform=platform,
+                        now_ms_fn=now_ms_fn, sleep=sleep)
+    except ShamblesError:
+        # Only while it is not the live profile: a switch that failed after
+        # moving the marker has made this directory the active one.
+        if state.read_active(paths, provider.id) != name:
+            try:
+                paths.profile_dir(provider.id, name).rmdir()
+            except OSError:
+                pass  # not empty, or already gone: leave it for the user
+        raise
     return result.profile or name
 
 
@@ -303,15 +374,12 @@ def begin_relogin(paths, provider, name: str, *, platform=sys.platform,
                   now_ms_fn=now_ms, sleep=time.sleep) -> str | None:
     """Make ``name`` live so the vendor's login can fill it.
 
-    Returns the profile that was live before, which is what
+    Returns the profile the live login was filed under, which is what
     :func:`abandon_relogin` puts back if the sign-in comes to nothing. When
     ``name`` already is the live profile nothing moves and ``name`` comes back.
 
-    Refuses when no saved profile is live but the vendor holds a login.
-    ``switch`` stashes the outgoing login under the marked profile, so with
-    nothing marked that login would be overwritten and kept nowhere. This is
-    ``add_empty_account``'s guard, widened from an unmanaged machine to any
-    login that no profile holds.
+    Refuses, as ``switch`` does, when the vendor holds a login that no saved
+    profile could take: it would be overwritten and kept nowhere.
     """
     if not paths.profile_dir(provider.id, name).is_dir():
         raise ProfileNotFoundError(f"Profile '{name}' no longer exists on disk.")
@@ -320,15 +388,10 @@ def begin_relogin(paths, provider, name: str, *, platform=sys.platform,
     if current.kind == state.MANAGED and current.profile == name:
         return name
 
-    marked = current.profile
-    if marked and not paths.profile_dir(provider.id, marked).is_dir():
-        marked = None
-    if marked is None and _store(paths, provider, platform).read() is not None:
-        raise AlreadyManagedError(SAVE_FIRST)
-
+    previous = _outgoing_profile(paths, provider, current, platform=platform)
     switch(paths, provider, name, platform=platform, now_ms_fn=now_ms_fn,
            sleep=sleep)
-    return marked
+    return previous
 
 
 def judge_relogin(paths, provider, name: str, *, platform=sys.platform,
