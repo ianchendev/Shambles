@@ -125,6 +125,8 @@ def test_a_clobbered_config_does_not_read_as_drift(two_accounts):
 
     assert current.kind == state.MANAGED
     assert current.profile == "Personal"
+    # ...and the address shown is the profile's own, not the clobbered one.
+    assert current.live_email == "me@home.test"
 
 
 def test_a_clobbered_config_does_not_block_switching_away(two_accounts):
@@ -174,16 +176,24 @@ def test_a_login_another_profile_holds_reads_as_drift(two_accounts):
 
 def test_the_marked_profile_wins_when_two_profiles_hold_the_same_login(paths):
     """Saving one login under two names is allowed. Whichever is marked is
-    the live one; the other must not read as a reason to move the marker."""
-    make_profile(paths, "claude", "Alpha", email="same@corp.test")
-    make_profile(paths, "claude", "Beta", email="same@corp.test", active=True)
+    the live one; the other must not read as a reason to move the marker.
+
+    Three different addresses, so that nothing here can be answered by
+    comparing them: only the bytes say who holds the login, and only the
+    marker says which of the two holders is meant."""
+    make_profile(paths, "claude", "Alpha", email="a@corp.test")
+    make_profile(paths, "claude", "Beta", email="b@corp.test", active=True)
     blob = paths.credentials("claude", "Alpha").read_bytes()
     paths.credentials("claude", "Beta").write_bytes(blob)
-    make_claude_json(paths, email="same@corp.test")
+    make_claude_json(paths, email="other@corp.test")
     (paths.home / ".claude").mkdir(exist_ok=True)
     (paths.home / ".claude" / ".credentials.json").write_bytes(blob)
 
+    assert state.holder_of_live_credential(paths, claude(),
+                                           platform="linux") == "Beta"
+    assert state.owner_of_live(paths, claude(), platform="linux") == "Beta"
     current = state.inspect(paths, claude(), platform="linux")
-
     assert (current.kind, current.profile) == (state.MANAGED, "Beta")
     assert switcher.belongs_to(paths, claude(), "Beta", platform="linux")
+    assert switcher._outgoing_profile(paths, claude(), current,
+                                      platform="linux") == "Beta"

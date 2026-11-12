@@ -12,12 +12,14 @@ import json
 
 import pytest
 
-from helpers import (NOW, healthy_ms, make_claude_json,
+from helpers import (NOW, credentials, healthy_ms, make_claude_json,
                      make_live_claude_login, make_live_codex_login,
                      make_profile)
-from shambles import providers, state, switcher
+from shambles import eject, providers, state, switcher
 from shambles.app.service import ShamblesService
-from shambles.errors import AlreadyManagedError, SwitchFailedError
+from shambles.errors import (AlreadyManagedError, DriftedLoginError,
+                             ShamblesError, SwitchFailedError)
+from shambles.stores.base import StoreUnavailableError
 
 PROVIDER_IDS = ["claude", "codex"]
 
@@ -161,8 +163,6 @@ def test_adding_with_no_marker_keeps_a_login_that_is_saved_nowhere(
 def test_a_refused_add_leaves_no_empty_profile_behind(paths):
     """The directory was created before the switch that refused, so every
     refused Add left a blank card, and the name could not be used again."""
-    from shambles.errors import DriftedLoginError
-
     claude = providers.load("claude")
     make_profile(paths, "claude", "Work", email="w@example.test", active=True)
     make_claude_json(paths, email="stranger@example.test")
@@ -197,7 +197,11 @@ def test_an_interrupted_switch_does_not_cost_the_outgoing_token(
     """The live credential was replaced and then the marker could not be
     written. The marker still names Work while the live login is Personal's,
     and ~/.claude.json has not been touched yet, so by address everything
-    still agrees. The next switch used to file Personal's token under Work."""
+    still agrees. The next switch used to file Personal's token under Work.
+
+    What saves it is that the live bytes are still exactly Personal's stash.
+    That holds until the vendor next refreshes the token; after that nothing
+    on disk can tell whose login it is, and this protection is gone."""
     claude = providers.load("claude")
     make_profile(paths, "claude", "Work", email="w@example.test", active=True)
     make_profile(paths, "claude", "Personal", email="p@example.test")
@@ -233,8 +237,6 @@ def test_an_interrupted_switch_does_not_cost_the_outgoing_token(
 def test_stashing_refuses_a_login_another_profile_already_holds(paths):
     """Byte for byte Personal's stash, so it is Personal's login whatever the
     address on file says. Filing it under Work would replace Work's token."""
-    from shambles.errors import DriftedLoginError
-
     claude = providers.load("claude")
     make_profile(paths, "claude", "Work", email="w@example.test", active=True)
     make_profile(paths, "claude", "Personal", email="p@example.test")
@@ -244,10 +246,14 @@ def test_stashing_refuses_a_login_another_profile_already_holds(paths):
     live_path(paths, claude).write_bytes(personal)
     work = paths.credentials("claude", "Work").read_bytes()
 
-    with pytest.raises(DriftedLoginError):
+    with pytest.raises(DriftedLoginError) as raised:
         switcher.stash_live_login(paths, claude, "Work", platform="linux",
                                   sleep=lambda _: None)
 
+    # Decided by the bytes, so worded from them. The two addresses agree
+    # here, and "signed in as w@, but Work holds w@" explains nothing.
+    assert "the one saved as 'Personal'" in str(raised.value)
+    assert "w@example.test" not in str(raised.value)
     assert paths.credentials("claude", "Work").read_bytes() == work
 
 
@@ -292,22 +298,41 @@ def test_stashing_with_no_live_login_files_no_identity(paths):
     assert state.profile_email(paths, claude, "New") is None
 
 
-def test_saving_a_login_a_profile_already_holds_names_that_profile(
+def test_saving_a_login_a_profile_already_holds_marks_that_profile(
         paths, provider):
-    """No marker, and the live bytes are Work's own stash. Saving it again
-    under a second name is never what was meant; saying where it already is
-    lets the user switch to it, which puts the marker back."""
+    """No marker, and the live bytes are Work's own stash: the state Eject
+    leaves until the vendor next refreshes. The window offers Save here. A
+    second copy under a new name is never what was meant, and refusing would
+    make that button one that can only say no. What is missing is the marker,
+    so that is what Save writes, and it says which profile it was."""
     make_profile(paths, provider.id, "Work", email="w@example.test")
     live_path(paths, provider).parent.mkdir(parents=True, exist_ok=True)
     live_path(paths, provider).write_bytes(
         paths.credentials(provider.id, "Work").read_bytes())
 
-    with pytest.raises(AlreadyManagedError) as raised:
-        switcher.save_current_account(paths, provider, "Again",
-                                      platform="linux", sleep=lambda _: None)
+    saved = switcher.save_current_account(paths, provider, "Again",
+                                          platform="linux",
+                                          sleep=lambda _: None)
 
-    assert "already saved as 'Work'" in str(raised.value)
+    assert saved == "Work"
+    assert state.read_active(paths, provider.id) == "Work"
     assert state.profile_names(paths, provider.id) == ["Work"]
+
+
+def test_save_works_in_the_state_eject_leaves_behind(paths, provider):
+    """End to end: eject, come back, press Save."""
+    make_profile(paths, provider.id, "Work", email="w@example.test",
+                 active=True)
+    live_path(paths, provider).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, provider).write_bytes(
+        paths.credentials(provider.id, "Work").read_bytes())
+    eject.run(paths, [provider], platform="linux", sleep=lambda _: None)
+    assert state.inspect(paths, provider, platform="linux").kind == state.UNKNOWN
+
+    switcher.save_current_account(paths, provider, "Default", platform="linux",
+                                  sleep=lambda _: None)
+
+    assert state.inspect(paths, provider, platform="linux").kind == state.MANAGED
 
 
 # --- A login no profile holds must survive every way of starting one -------
@@ -358,6 +383,47 @@ def test_removing_the_profile_that_holds_the_live_login_is_refused(paths):
     assert paths.credentials("claude", "Personal").exists()
 
 
+def seed_duplicates(paths, provider):
+    """One login saved under two names, Beta marked, and live."""
+    make_profile(paths, provider.id, "Alpha", email="same@example.test")
+    make_profile(paths, provider.id, "Beta", email="same@example.test",
+                 active=True)
+    blob = paths.credentials(provider.id, "Alpha").read_bytes()
+    paths.credentials(provider.id, "Beta").write_bytes(blob)
+    if provider.id == "claude":
+        make_claude_json(paths, email="same@example.test")
+    live_path(paths, provider).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, provider).write_bytes(blob)
+    return blob
+
+
+def test_the_unmarked_duplicate_of_the_live_login_can_be_removed(
+        paths, provider):
+    """Holding the live bytes is a reason to refuse only when nobody else
+    does. With two holders the unmarked one is a spare copy, and refusing
+    left a duplicate that could never be cleaned up."""
+    blob = seed_duplicates(paths, provider)
+
+    switcher.remove_profile(paths, provider, "Alpha", platform="linux")
+
+    assert state.profile_names(paths, provider.id) == ["Beta"]
+    assert paths.credentials(provider.id, "Beta").read_bytes() == blob
+    assert live_path(paths, provider).read_bytes() == blob
+
+
+def test_following_the_refusal_gets_a_duplicate_removed(paths, provider):
+    """'Switch to another profile first, then remove this one.'"""
+    seed_duplicates(paths, provider)
+
+    with pytest.raises(AlreadyManagedError):
+        switcher.remove_profile(paths, provider, "Beta", platform="linux")
+    switcher.switch(paths, provider, "Alpha", platform="linux",
+                    sleep=lambda _: None)
+    switcher.remove_profile(paths, provider, "Beta", platform="linux")
+
+    assert state.profile_names(paths, provider.id) == ["Alpha"]
+
+
 def test_a_parked_profile_can_still_be_removed(paths, provider):
     make_profile(paths, provider.id, "Work", email="w@example.test",
                  active=True)
@@ -396,3 +462,195 @@ def test_a_cancelled_add_does_not_undo_a_switch_made_elsewhere(paths, provider):
                                         platform="linux",
                                         sleep=lambda _: None) is False
     assert state.read_active(paths, provider.id) == "Spare"
+
+
+
+# ---- filing bytes a profile already holds ---------------------------------
+
+def test_a_holder_with_no_identity_is_not_given_the_address_on_file(paths):
+    """No marker, the live bytes are Personal's stash, and ~/.claude.json
+    names Work because a session is still running as Work. The bytes are
+    already safe under Personal, so there is nothing to copy; the only thing
+    a stash would add is that address, on the wrong profile."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.test")
+    make_profile(paths, "claude", "Personal")           # credential, no sidecar
+    make_profile(paths, "claude", "Other", email="o@example.test")
+    make_claude_json(paths, email="w@example.test")
+    live_path(paths, claude).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, claude).write_bytes(
+        paths.credentials("claude", "Personal").read_bytes())
+
+    switcher.switch(paths, claude, "Other", platform="linux",
+                    sleep=lambda _: None)
+
+    assert state.profile_email(paths, claude, "Personal") is None
+    assert not paths.account("claude", "Personal").exists()
+
+
+def test_finishing_an_interrupted_switch_does_not_mislabel_the_incoming(
+        paths, monkeypatch):
+    """The same, reached the way it really happens: the profile switched to
+    has a login and no stored address yet."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Personal")           # credential, no sidecar
+    make_claude_json(paths, email="w@example.test")
+    make_live_claude_login(paths, access_token="tok-Work")
+    work = paths.credentials("claude", "Work").read_bytes()
+
+    real = state.write_active
+
+    def disk_full(*args, **kwargs):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(state, "write_active", disk_full)
+    with pytest.raises(SwitchFailedError):
+        switcher.switch(paths, claude, "Personal", platform="linux",
+                        sleep=lambda _: None)
+    monkeypatch.setattr(state, "write_active", real)
+    switcher.switch(paths, claude, "Personal", platform="linux",
+                    sleep=lambda _: None)
+
+    assert paths.credentials("claude", "Work").read_bytes() == work
+    assert state.profile_email(paths, claude, "Personal") is None
+
+
+# ---- what counts as a login worth refusing for ----------------------------
+
+def signed_out_husk():
+    blob = credentials(access_token="tok-gone")
+    blob["claudeAiOauth"]["refreshToken"] = ""       # cleared by the vendor
+    return json.dumps(blob).encode("utf-8")
+
+
+@pytest.mark.parametrize("live_bytes", [signed_out_husk(), b""],
+                         ids=["signed-out-husk", "zero-byte-file"])
+def test_bytes_that_are_not_a_login_are_not_a_reason_to_refuse(paths,
+                                                              live_bytes):
+    """'Save your current account first' about a credential the vendor has
+    emptied, or an empty file. Neither can sign in, and the only way past the
+    refusal was to save it as a profile that was dead on arrival."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Other", email="o@example.test")
+    live_path(paths, claude).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, claude).write_bytes(live_bytes)
+
+    switcher.switch(paths, claude, "Other", platform="linux",
+                    sleep=lambda _: None)
+
+    assert state.read_active(paths, "claude") == "Other"
+
+
+def test_an_empty_store_is_not_drift_whatever_the_address_on_file_says(paths):
+    """Nobody is signed in. ~/.claude.json still names a stranger, so the
+    state read as DRIFTED and the switch was refused with 'Signed in as
+    stranger', with nothing to save and no way on but a new vendor sign-in."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Personal", email="p@example.test")
+    make_claude_json(paths, email="stranger@example.test")
+    work = paths.credentials("claude", "Work").read_bytes()
+    assert not live_path(paths, claude).exists()
+
+    switcher.switch(paths, claude, "Personal", platform="linux",
+                    sleep=lambda _: None)
+
+    assert state.read_active(paths, "claude") == "Personal"
+    assert paths.credentials("claude", "Work").read_bytes() == work
+    assert state.profile_email(paths, claude, "Work") == "w@example.test"
+
+
+def test_begin_relogin_still_comes_back_to_the_marked_profile_from_an_empty_store(
+        paths, provider):
+    """Nothing is live, so nothing is at stake, but the marked profile is
+    still where the user was and where a cancelled sign-in returns to."""
+    make_profile(paths, provider.id, "Work", email="w@example.test",
+                 active=True)
+    make_profile(paths, provider.id, "Old", email="o@example.test",
+                 refresh_expires_ms=lapsed_ms())
+
+    assert switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                                  sleep=lambda _: None) == "Work"
+
+
+# ---- a live file caught between truncate and write ------------------------
+
+def test_an_empty_live_file_does_not_replace_the_saved_token(paths, provider):
+    """Neither vendor replaces its credential file atomically, so a read can
+    land after the truncate and before the write and see zero bytes. Those
+    were filed as the outgoing login: the saved token replaced by an empty
+    file, and then the live slot overwritten too."""
+    make_profile(paths, provider.id, "Work", email="w@example.test",
+                 active=True)
+    make_profile(paths, provider.id, "Other", email="o@example.test")
+    if provider.id == "claude":
+        make_claude_json(paths, email="w@example.test")
+    live_path(paths, provider).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, provider).write_bytes(b"")
+    work = paths.credentials(provider.id, "Work").read_bytes()
+
+    switcher.switch(paths, provider, "Other", platform="linux",
+                    sleep=lambda _: None)
+
+    assert paths.credentials(provider.id, "Work").read_bytes() == work
+
+
+def test_an_empty_live_file_is_not_restashed(paths):
+    """The same read, on the path that runs at every refresh with no click."""
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="w@example.test", active=True)
+    live_path(paths, codex).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, codex).write_bytes(b"")
+    work = paths.credentials("codex", "Work").read_bytes()
+
+    assert switcher.restash_active(paths, codex, platform="linux") is False
+    assert paths.credentials("codex", "Work").read_bytes() == work
+
+
+# ---- an Add whose login did arrive ----------------------------------------
+
+def test_abandoning_keeps_an_add_whose_login_another_window_already_filed(
+        paths):
+    """Codex. The vendor signs in, and a second window's refresh files that
+    login under the new profile before the first window gives up. The slot
+    then holds exactly what the profile holds, which is the test
+    abandon_relogin uses for 'nothing new arrived'. For a new profile
+    anything in the slot is the login it was waiting for."""
+    codex = providers.load("codex")
+    make_profile(paths, "codex", "Work", email="w@example.test", active=True)
+    make_live_codex_login(paths, email="w@example.test", exp_ms=healthy_ms())
+    paths.credentials("codex", "Work").write_bytes(
+        live_path(paths, codex).read_bytes())
+    created = switcher.add_empty_account(paths, codex, "New", platform="linux",
+                                         sleep=lambda _: None)
+    make_live_codex_login(paths, email="new@example.test")    # the vendor
+    assert switcher.restash_active(paths, codex, platform="linux")  # window 2
+
+    assert switcher.abandon_new_account(paths, codex, created, "Work",
+                                        platform="linux",
+                                        sleep=lambda _: None) is False
+    assert state.read_active(paths, "codex") == "New"
+
+
+# ---- an Add that fails after it has become the live profile ---------------
+
+def test_an_add_that_fails_after_the_marker_moved_keeps_its_directory(
+        paths, monkeypatch):
+    """The cleanup after a refused Add removes the new directory. Once the
+    marker names it, removing it would leave a marker pointing at nothing."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_claude_json(paths, email="w@example.test")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+    def splice_fails(self, data, *, home):
+        raise StoreUnavailableError("the config is held by another process")
+
+    monkeypatch.setattr(type(claude), "companion_write", splice_fails)
+    with pytest.raises(ShamblesError):
+        switcher.add_empty_account(paths, claude, "Fresh", platform="linux",
+                                   sleep=lambda _: None)
+
+    assert state.read_active(paths, "claude") == "Fresh"
+    assert paths.profile_dir("claude", "Fresh").is_dir()

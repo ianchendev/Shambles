@@ -29,11 +29,18 @@ Notable changes per release. Dates are the tag date.
   overwrite whatever login was live without keeping a copy of it. They now
   stop and ask you to save it first. When the live login is already one of
   your saved profiles there is nothing to lose, and they carry on.
-- **A switch that fails halfway no longer costs the account you left.** If
+- **A switch that fails halfway can be finished by running it again.** If
   the login was replaced but the active marker could not be written, the next
   switch filed the new account's token under the old profile and destroyed
   the old one. Shambles now recognises the live login by its bytes, so
-  running the switch again simply finishes it.
+  running the switch again finishes it. This holds until the vendor next
+  refreshes that login, so retry straight away.
+- **A login file that is empty for a moment no longer wipes the saved
+  token.** Claude Code and Codex both rewrite their login file in place, and
+  a read that landed between the two halves of that saw an empty file.
+  Shambles saved those zero bytes over the profile's token: on a switch, and
+  for Codex on every refresh of the window with no click at all. An empty
+  file is now treated as no login.
 - **A Claude Code session left running no longer blocks switching.** A
   session still signed in as the previous account rewrites `~/.claude.json`,
   and Shambles then refused every switch with "Signed in as ..., but ...
@@ -43,13 +50,16 @@ Notable changes per release. Dates are the tag date.
   account's, when `~/.claude.json` is briefly out of step with the login. An
   empty profile is no longer labelled with the previous account's address
   after a cancelled Add Account.
-- Removing a profile is now refused when it is the one whose login is live,
-  even if the active marker names a different profile.
+- Removing a profile is now refused when it is the only one holding the
+  login that is live, even if the active marker names a different profile.
+- A switch is no longer refused as "signed in as someone else" when nobody
+  is signed in at all and only an old address is left in `~/.claude.json`.
 - A refused Add Account no longer leaves an empty profile behind.
 - Cancelling Add Account in one window no longer switches you back when you
   had already moved to another profile in a second window.
-- Saving a login that one of your profiles already holds now names that
-  profile, instead of making a second copy under a new name.
+- Saving a login that one of your profiles already holds now marks that
+  profile as the active one, instead of making a second copy under a new
+  name.
 
 ## 2.1.2 - 2026-09-11
 
