@@ -7,7 +7,10 @@ does not stop a new provider quietly skipping the awkward cases, and this does.
 Provider-specific behaviour is asserted at the bottom, after the shared suite.
 """
 
+import hashlib
 import json
+
+from pathlib import Path
 
 import pytest
 
@@ -16,7 +19,8 @@ from shambles.providers import ABSENT, CLOSED, CLOSING, LIVE, UNKNOWN, Identity
 from shambles.providers import spec as specmod
 from shambles.providers.claude import account_name, service_name
 from shambles.providers.codex import jwt_claims
-from shambles.stores import CredentialStore, FileStore, KeychainStore
+from shambles.stores import (CredentialStore, CredmanStore, FallbackStore,
+                             FileStore, KeychainStore)
 
 NOW = 1_785_000_000_000
 DAY_MS = 86_400_000
@@ -157,12 +161,33 @@ def test_claude_securestorage_override_suppresses_the_hash():
     ("ada.lovelace", "ada.lovelace"),
     ("with space", "claude-code-user"),
     ("wîth-unicode", "claude-code-user"),
-    ("", "claude-code-user"),
 ])
 def test_claude_account_falls_back_for_names_the_vendor_refuses(username, expected):
     provider = providers.load("claude", env={})
     block = provider.spec["store"]["darwin"]
     assert account_name(block, {"USER": username}) == expected
+
+
+def test_claude_account_asks_the_system_when_user_is_unset():
+    """Claude Code reads ``process.env.USER || os.userInfo().username``.
+
+    A process started by launchd, cron or a desktop launcher can have no USER
+    at all. Stopping at the variable sent that process to the
+    ``claude-code-user`` Keychain item while the vendor, asking the system,
+    went on using the real one -- two programs reading two different logins.
+    """
+    provider = providers.load("claude", env={})
+    block = provider.spec["store"]["darwin"]
+    assert account_name(block, {}, os_user=lambda: "liam") == "liam"
+    assert account_name(block, {"USER": ""}, os_user=lambda: "liam") == "liam"
+
+
+def test_claude_account_falls_back_when_the_system_has_no_name_either():
+    provider = providers.load("claude", env={})
+    block = provider.spec["store"]["darwin"]
+    assert account_name(block, {}, os_user=lambda: "") == "claude-code-user"
+    assert (account_name(block, {}, os_user=lambda: "bad name")
+            == "claude-code-user")
 
 
 def test_claude_account_is_a_fixed_literal_on_windows():
@@ -171,10 +196,165 @@ def test_claude_account_is_a_fixed_literal_on_windows():
     assert account_name(block, {"USER": "liam"}) == "claude-code-user"
 
 
-def test_claude_uses_the_keychain_on_macos(tmp_path):
+def test_claude_service_name_hashes_the_variable_exactly_as_typed():
+    """Claude Code hashes the raw string, not a tidied path.
+
+    ``/home/example/alt/`` and ``/home/example/alt`` are different Keychain
+    items to it. Hashing the normalised path looked up an item the vendor
+    never wrote, which reads as "not signed in" and writes somewhere unread.
+    """
     provider = providers.load("claude", env={})
-    assert isinstance(provider.store(home=tmp_path, platform="darwin"),
-                      KeychainStore)
+    block = provider.spec["store"]["darwin"]
+    tidy = service_name(block, config_dir=Path("/home/example/alt"),
+                        env={"CLAUDE_CONFIG_DIR": "/home/example/alt"})
+    slashed = service_name(block, config_dir=Path("/home/example/alt"),
+                           env={"CLAUDE_CONFIG_DIR": "/home/example/alt/"})
+    assert tidy != slashed
+    digest = hashlib.sha256(b"/home/example/alt/").hexdigest()[:8]
+    assert slashed == f"Claude Code-credentials-{digest}"
+
+
+def test_claude_service_name_is_the_same_on_windows_and_macos():
+    provider = providers.load("claude", env={})
+    env = {"CLAUDE_CONFIG_DIR": "C:/Users/example/alt"}
+    names = {service_name(provider.spec["store"][platform],
+                          config_dir=Path("C:/Users/example/alt"), env=env)
+             for platform in ("darwin", "win32")}
+    digest = hashlib.sha256(b"C:/Users/example/alt").hexdigest()[:8]
+    assert names == {f"Claude Code-credentials-{digest}"}
+
+
+# -- Claude: which store, on which machine ------------------------------------
+
+
+def test_claude_on_macos_layers_the_keychain_over_the_file(tmp_path):
+    """The vendor's backend is ``keychain-with-plaintext-fallback``.
+
+    A Mac used over SSH has its login in ``~/.claude/.credentials.json``
+    because the Keychain refused the write. A store that only knew about the
+    Keychain would call that machine signed out.
+    """
+    provider = providers.load("claude", env={})
+    store = provider.store(home=tmp_path, platform="darwin")
+    assert isinstance(store, FallbackStore)
+    assert isinstance(store.primary, KeychainStore)
+    assert store.fallback == FileStore(
+        tmp_path / ".claude" / ".credentials.json", 0o600)
+
+
+def test_claude_on_windows_is_the_file_unless_credman_is_switched_on(tmp_path):
+    """The documented default, and what the binary does with the flag off.
+
+    Shambles used Credential Manager unconditionally here. On a default
+    install the vendor never reads it, so a switch wrote the incoming login
+    where nothing looked, spliced the new identity into ``.claude.json``, and
+    reported success -- the old token under the new account's name.
+    """
+    provider = providers.load("claude", env={})
+    store = provider.store(home=tmp_path, platform="win32")
+    assert store == FileStore(tmp_path / ".claude" / ".credentials.json", 0o600)
+
+
+def test_claude_on_windows_uses_credman_when_the_environment_forces_it(tmp_path):
+    provider = providers.load(
+        "claude", env={"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"})
+    store = provider.store(home=tmp_path, platform="win32")
+    assert isinstance(store, FallbackStore)
+    assert isinstance(store.primary, CredmanStore)
+    assert store.primary.service == "Claude Code-credentials"
+    assert store.primary.account == "claude-code-user"
+    assert store.primary.chunk_size == 2400
+    assert isinstance(store.fallback, FileStore)
+
+
+@pytest.mark.parametrize("value", ["0", "true", ""])
+def test_only_the_exact_value_forces_credman(tmp_path, value):
+    """The vendor compares against the string ``"1"`` and nothing else."""
+    provider = providers.load(
+        "claude", env={"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": value})
+    assert isinstance(provider.store(home=tmp_path, platform="win32"),
+                      FileStore)
+
+
+def _flag(on):
+    return json.dumps({"cachedGrowthBookFeatures":
+                       {"tengu_windows_credman": on}})
+
+
+def test_claude_on_windows_uses_credman_when_the_vendors_flag_is_on(tmp_path):
+    """The rollout flag, read from the file the vendor reads it from."""
+    (tmp_path / ".claude.json").write_text(_flag(True), encoding="utf-8")
+    provider = providers.load("claude", env={})
+    store = provider.store(home=tmp_path, platform="win32")
+    assert isinstance(store, FallbackStore)
+    assert isinstance(store.primary, CredmanStore)
+
+
+@pytest.mark.parametrize("content", [
+    _flag(False), _flag("true"), _flag(1), "{}", "not json", "",
+    json.dumps({"cachedGrowthBookFeatures": None}), "[]",
+])
+def test_anything_but_a_true_flag_leaves_windows_on_the_file(tmp_path, content):
+    """Guessing "on" is the dangerous direction: with the flag off the vendor
+    never looks at Credential Manager."""
+    (tmp_path / ".claude.json").write_text(content, encoding="utf-8")
+    provider = providers.load("claude", env={})
+    assert isinstance(provider.store(home=tmp_path, platform="win32"),
+                      FileStore)
+
+
+def test_the_legacy_config_file_outranks_claude_json_for_the_flag(tmp_path):
+    """The vendor reads ``.config.json`` when it has anything in it and only
+    otherwise ``.claude.json`` -- so a flag in the second is not consulted."""
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / ".config.json").write_text("{}", encoding="utf-8")
+    (tmp_path / ".claude.json").write_text(_flag(True), encoding="utf-8")
+    provider = providers.load("claude", env={})
+    assert isinstance(provider.store(home=tmp_path, platform="win32"),
+                      FileStore)
+
+
+def test_the_flag_is_read_from_the_config_directory_when_one_is_set(tmp_path):
+    """``.claude.json`` moves into ``CLAUDE_CONFIG_DIR`` when that is set."""
+    alt = tmp_path / "alt"
+    alt.mkdir()
+    (alt / ".claude.json").write_text(_flag(True), encoding="utf-8")
+    provider = providers.load("claude", env={"CLAUDE_CONFIG_DIR": str(alt)})
+    store = provider.store(home=tmp_path, platform="win32")
+    assert isinstance(store, FallbackStore)
+    assert store.fallback.path == alt / ".credentials.json"
+
+
+def test_the_flag_never_switches_the_store_off_windows(tmp_path):
+    (tmp_path / ".claude.json").write_text(_flag(True), encoding="utf-8")
+    provider = providers.load(
+        "claude", env={"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"})
+    assert isinstance(provider.store(home=tmp_path, platform="linux"),
+                      FileStore)
+    assert isinstance(
+        provider.store(home=tmp_path, platform="darwin").primary,
+        KeychainStore)
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_the_credentials_file_follows_the_securestorage_override(
+        tmp_path, platform):
+    """``CLAUDE_SECURESTORAGE_CONFIG_DIR`` moves the credentials file even
+    when ``CLAUDE_CONFIG_DIR`` points somewhere else."""
+    provider = providers.load("claude", env={
+        "CLAUDE_CONFIG_DIR": str(tmp_path / "config"),
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR": str(tmp_path / "secure")})
+    store = provider.store(home=tmp_path, platform=platform)
+    assert store.path == tmp_path / "secure" / ".credentials.json"
+
+
+def test_an_empty_securestorage_override_means_the_default_directory(tmp_path):
+    """Set but empty selects ``~/.claude``, *not* ``CLAUDE_CONFIG_DIR``."""
+    provider = providers.load("claude", env={
+        "CLAUDE_CONFIG_DIR": str(tmp_path / "config"),
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR": ""})
+    store = provider.store(home=tmp_path, platform="linux")
+    assert store.path == tmp_path / ".claude" / ".credentials.json"
 
 
 def test_claude_missing_expiry_is_unknown_not_closed():

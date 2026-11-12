@@ -18,11 +18,12 @@ import hashlib
 import json
 import math
 import os
+import re
 import unicodedata
 from pathlib import Path
 
 from .. import configjson
-from ..stores import CredmanStore, FileStore, KeychainStore
+from ..stores import CredmanStore, FallbackStore, FileStore, KeychainStore
 from ..stores.base import StoreUnavailableError
 from . import spec as specmod
 from .base import (ABSENT, CLOSED, CLOSING, LIVE, SIGNED_OUT, UNKNOWN,
@@ -32,7 +33,7 @@ MS_PER_DAY = 86_400_000
 
 
 def service_name(block: dict, *, config_dir: Path, env) -> str:
-    """Reproduce Claude Code's Keychain service-name construction.
+    """Reproduce Claude Code's secure-storage service-name construction.
 
     From the shipping binary::
 
@@ -42,19 +43,28 @@ def service_name(block: dict, *, config_dir: Path, env) -> str:
     SHA-256 of the NFC-normalized config directory, present **iff**
     ``CLAUDE_CONFIG_DIR`` is set and ``CLAUDE_SECURESTORAGE_CONFIG_DIR`` is not
     the empty string. The latter is undocumented and is the only way to keep the
-    default service name while relocating the config.
+    default service name while relocating the config. The same name is used
+    for the macOS Keychain item and the Windows Credential Manager target.
+
+    **The hash is taken over the variable exactly as it was typed.** Claude
+    Code hashes the raw string, so ``/home/me/alt/`` and ``/home/me/alt`` are
+    two different items to it, as are ``C:/Users/me/alt`` and
+    ``C:\\Users\\me\\alt``. A tidied path -- which is what ``config_dir`` is,
+    having been through :class:`pathlib.Path` -- hashes to something the
+    vendor never wrote, and the lookup silently finds nothing.
 
     Verified two independent ways: deriving the hash by hand for the default
     config directory gives the same eight characters the CLI was observed to
     use when actually run with that directory set explicitly.
     """
     suppress = env.get(block.get("hash_suppress_env", ""))
+    raw = env.get(spec_env_name(block), "")
     if suppress is not None:
         hashed = bool(suppress)
-        source = suppress or str(config_dir)
+        source = suppress
     else:
-        hashed = bool(env.get(spec_env_name(block), ""))
-        source = str(config_dir)
+        hashed = bool(raw)
+        source = raw or str(config_dir)
 
     suffix = ""
     if hashed:
@@ -75,20 +85,104 @@ def spec_env_name(block: dict) -> str:
     return block.get("config_dir_env", "CLAUDE_CONFIG_DIR")
 
 
-def account_name(block: dict, env) -> str:
-    """``$USER``, or a fixed fallback for names the vendor refuses.
+def account_name(block: dict, env, *, os_user=None) -> str:
+    """``$USER``, then the operating system's own answer, then a fixed name.
 
-    Claude Code substitutes ``claude-code-user`` for any username outside
-    ``[A-Za-z0-9._-]``, and uses that literal unconditionally on Windows.
+    Claude Code reads ``process.env.USER || os.userInfo().username`` and
+    substitutes ``claude-code-user`` for any name outside ``[A-Za-z0-9._-]``.
+    On Windows it uses that literal unconditionally.
+
+    The middle step matters. A process started by launchd, cron or a desktop
+    launcher can have no ``USER`` at all, and stopping at the variable would
+    send it to the ``claude-code-user`` item while the vendor, asking the
+    system instead, went on using the real one.
     """
     if "account" in block:
         return block["account"]
-    import re
     name = env.get(block.get("account_env", "USER"), "")
+    if not name:
+        name = (os_user or _os_user)()
     pattern = block.get("account_pattern")
     if not name or (pattern and not re.match(pattern, name)):
         return block.get("account_fallback", "claude-code-user")
     return name
+
+
+def _os_user() -> str:
+    """The login name the system holds for this process, or ``""``."""
+    try:
+        import pwd
+        return pwd.getpwuid(os.getuid()).pw_name
+    except (ImportError, KeyError, OSError):
+        return ""
+
+
+def secure_dir(spec: dict, *, home, env) -> Path:
+    """The directory holding Claude Code's plaintext ``.credentials.json``.
+
+    Not always the config directory. ``CLAUDE_SECURESTORAGE_CONFIG_DIR``
+    takes over when it is set at all: its value when it has one, and the
+    *default* directory -- not ``CLAUDE_CONFIG_DIR`` -- when it is set but
+    empty. From the binary::
+
+        if (e !== undefined) return (e || join(homedir(), ".claude"))
+        return configDir()
+    """
+    block = spec.get("secure_dir") or {}
+    override = env.get(block.get("env", ""))
+    if override is None:
+        return specmod.config_dir(spec, home=home, env=env)
+    if override:
+        return Path(unicodedata.normalize("NFC", override))
+    return specmod.expand(block.get("when_empty", "~/.claude"), home=home)
+
+
+def config_root(spec: dict, *, home, env) -> Path:
+    """Where ``.claude.json`` sits: the config directory if one is set,
+    otherwise the home directory itself."""
+    override = env.get((spec.get("config_dir") or {}).get("env", ""), "")
+    return Path(override) if override else Path(home)
+
+
+def gate_open(spec: dict, gate: dict | None, *, home, env) -> bool:
+    """Whether a store that the vendor only uses when told to is in use.
+
+    Windows Credential Manager is the case. Claude Code consults it only
+    when ``CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`` or when its own cached copy
+    of a server-side flag says so, and reads that flag from the legacy
+    ``.config.json`` if that file has anything in it, otherwise from
+    ``.claude.json``. The same two files are read here, in the same order,
+    with the same outcome for a file that is missing or unparsable: off.
+
+    Guessing "on" would be the dangerous direction. With the gate closed the
+    vendor never looks at Credential Manager, so a credential written there
+    is a switch that reports success and changes nothing.
+    """
+    if not gate:
+        return True
+    if env.get(gate.get("env", ""), "") == gate.get("env_value", "1"):
+        return True
+
+    config = specmod.config_dir(spec, home=home, env=env)
+    root = config_root(spec, home=home, env=env)
+    text = ""
+    for template in gate.get("flag_files", ()):
+        path = Path(str(template)
+                    .replace("{config_dir}", str(config))
+                    .replace("{config_root}", str(root)))
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
+            continue
+        except (OSError, UnicodeDecodeError):
+            return False
+        if text:
+            break
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return False
+    return specmod.pointer(data, gate.get("flag", "")) is True
 
 
 class ClaudeProvider:
@@ -130,13 +224,35 @@ class ClaudeProvider:
     # -- where the bytes live ---------------------------------------------
 
     def store(self, *, home, platform: str):
+        """The store Claude Code itself would read on this platform.
+
+        A file on Linux. On macOS the Keychain, layered over that same file.
+        On Windows the file -- unless Credential Manager has been switched on
+        for this account, in which case Credential Manager layered over the
+        file. See :class:`~shambles.stores.FallbackStore` for the layering.
+        """
         block = specmod.store_block(self.spec, platform)
+        primary = self._single_store(block, home=home)
+        fallback = block.get("fallback")
+        if not fallback:
+            return primary
+
+        plain = self._single_store(fallback, home=home)
+        if not gate_open(self.spec, block.get("enabled_by"),
+                         home=home, env=self.env):
+            return plain
+        return FallbackStore(primary, plain)
+
+    def _single_store(self, block: dict, *, home):
         config = specmod.config_dir(self.spec, home=home, env=self.env)
         kind = block["kind"]
 
         if kind == "file":
+            path = str(block["path"]).replace(
+                "{secure_dir}",
+                str(secure_dir(self.spec, home=home, env=self.env)))
             return FileStore(
-                specmod.expand(block["path"], home=home, config_dir=config),
+                specmod.expand(path, home=home, config_dir=config),
                 specmod.mode_of(block))
         if kind == "keychain":
             return KeychainStore(
@@ -146,7 +262,7 @@ class ClaudeProvider:
             return CredmanStore(
                 service=service_name(block, config_dir=config, env=self.env),
                 account=account_name(block, self.env),
-                chunk_size=block.get("chunk_size", 2000))
+                chunk_size=block.get("chunk_size", 2400))
         raise ValueError(f"Unknown store kind '{kind}' for provider 'claude'.")
 
     # -- what the bytes mean ----------------------------------------------

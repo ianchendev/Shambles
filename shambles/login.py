@@ -226,18 +226,16 @@ def environment(provider, *, home, platform) -> dict[str, str]:
     child = dict(os.environ)
     provider_env = provider.env
     child.update(provider_env)
-    config_key = provider.spec.get("config_dir", {}).get("env")
-    selectors = {config_key} if config_key else set()
-    for block in provider.spec.get("store", {}).values():
-        selectors.update(value for key, value in block.items()
-                         if key.endswith("_env"))
-    for key in selectors:
+    # Every variable that decides *where* the vendor keeps its login comes
+    # from the provider's environment or not at all. The config directory is
+    # passed through exactly as it was written: Claude Code hashes that raw
+    # string into its Keychain item name, so a tidied copy -- a trailing
+    # slash dropped, separators flipped -- would sign in to a different item
+    # from the one the user's own shell reads.
+    for key in _store_selectors(provider.spec):
         child.pop(key, None)
         if key in provider_env:
             child[key] = provider_env[key]
-    if config_key and provider_env.get(config_key):
-        child[config_key] = str(specmod.config_dir(
-            provider.spec, home=home, env=provider_env))
     resolved_home = str(Path(home).resolve())
     child["HOME"] = resolved_home
     child["USERPROFILE"] = resolved_home
@@ -246,6 +244,34 @@ def environment(provider, *, home, platform) -> dict[str, str]:
         child["HOMEDRIVE"] = drive
         child["HOMEPATH"] = tail
     return child
+
+
+def _store_selectors(spec: dict) -> set[str]:
+    """Names of the environment variables a spec says relocate the login.
+
+    Collected from the spec rather than listed here, so a variable the
+    research turns up later is honoured the moment it is written down: the
+    config directory, and anything under ``store`` or ``secure_dir`` whose
+    key is ``env`` or ends in ``_env``.
+    """
+    found = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, str) and (key == "env"
+                                               or key.endswith("_env")):
+                    found.add(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    for section in ("config_dir", "secure_dir", "store"):
+        walk(spec.get(section))
+    found.discard("")
+    return found
 
 
 class LoginProcess:

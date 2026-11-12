@@ -316,7 +316,10 @@ def test_login_environment_matches_the_provider_context(
 
     config_key = "CODEX_HOME" if provider_id == "codex" else "CLAUDE_CONFIG_DIR"
     monkeypatch.setenv(config_key, str(paths.home / "unrelated-config"))
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_CLIENT_ID", "unrelated-client")
+    # Variables that relocate the login but belong to the *parent's* shell,
+    # not to the provider context this login is for.
+    monkeypatch.setenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", "https://unrelated.test")
+    monkeypatch.setenv("CLAUDE_CODE_FORCE_WINDOWS_CREDMAN", "1")
     provider_env = {"USER": "test-user"}
     if override:
         provider_env[config_key] = str(paths.home / "selected-config")
@@ -333,11 +336,27 @@ def test_login_environment_matches_the_provider_context(
     assert (specmod.config_dir(provider.spec, home=paths.home, env=child_env)
             == specmod.config_dir(provider.spec, home=paths.home, env=provider_env))
     if provider_id == "claude":
-        assert "CLAUDE_CODE_OAUTH_CLIENT_ID" not in child_env
-        for platform in ("darwin", "win32"):
+        assert "CLAUDE_CODE_CUSTOM_OAUTH_URL" not in child_env
+        assert "CLAUDE_CODE_FORCE_WINDOWS_CREDMAN" not in child_env
+        # The vendor, started with this environment, must resolve to the very
+        # store Shambles will read afterwards -- on every platform.
+        for platform in ("darwin", "linux", "win32"):
             expected = provider.store(home=paths.home, platform=platform)
             actual = providers.load("claude", env=child_env).store(
                 home=paths.home, platform=platform)
-            assert actual.service == expected.service
-            assert actual.account == expected.account
+            assert actual == expected
     assert dict(os.environ) == parent_env
+
+
+def test_the_config_directory_reaches_the_vendor_exactly_as_typed(paths):
+    """Claude Code hashes the raw variable into its Keychain item name.
+
+    Handing the child a tidied path -- here, without the trailing slash --
+    signs it in to a different item from the one the user's own shell reads,
+    and from the one Shambles then looks in.
+    """
+    raw = str(paths.home / "selected-config") + "/"
+    provider = providers.load(
+        "claude", env={"USER": "test-user", "CLAUDE_CONFIG_DIR": raw})
+    child_env = login.environment(provider, home=paths.home, platform="darwin")
+    assert child_env["CLAUDE_CONFIG_DIR"] == raw

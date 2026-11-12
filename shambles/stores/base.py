@@ -29,6 +29,17 @@ class StoreUnavailableError(ShamblesError):
     """
 
 
+class StoreLockedError(StoreUnavailableError):
+    """The store exists but will not answer in this session.
+
+    The macOS Keychain over SSH is the case that matters: ``security`` exits
+    36 (``errSecInteractionNotAllowed``) because unlocking needs a dialog and
+    there is nobody to show one to. Claude Code treats that as "nothing here"
+    and uses its plaintext file instead, so a layered store has to be able to
+    tell this apart from every other refusal.
+    """
+
+
 @runtime_checkable
 class CredentialStore(Protocol):
     """Somewhere a blob of bytes can be kept, per platform."""
