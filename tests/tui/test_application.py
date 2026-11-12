@@ -176,6 +176,14 @@ class SnapshotService:
         self.login_handle = handle
         return handle
 
+    def start_add(self, provider, name, on_line, on_done):
+        self.add_calls.append((provider, name))
+        self._login_on_line = on_line
+        self._login_on_done = on_done
+        handle = FakeLoginHandle()
+        self.login_handle = handle
+        return handle
+
     def sign_in_url(self, line):
         # The real pure function, so detection stays honestly tested.
         return login.find_url(line)
@@ -563,7 +571,9 @@ async def test_save_failure_shows_the_service_error(service):
 
 # --- Add ---------------------------------------------------------------
 
-async def test_add_prompts_for_a_name_and_creates_an_empty_profile(service):
+async def test_add_prompts_for_a_name_then_signs_it_in(service):
+    """Reproduced: Add used to stop at "Added fresh.", with the user signed
+    out of the account they were on and nothing signed in to the new one."""
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("a")  # top-level
@@ -572,8 +582,30 @@ async def test_add_prompts_for_a_name_and_creates_an_empty_profile(service):
         await pilot.press(*"fresh", "enter")
         await pilot.pause()
         assert service.add_calls == [("claude", "fresh")]
+        assert app.screen.id == "login-progress"
+        service.finish_login(ActionResult(
+            True, "add", "Added fresh and signed in.",
+            snapshot=service.current))
+        await pilot.pause()
         assert app.screen.id == "result"
-        assert "Added fresh." in screen_text(app)
+        assert "Added fresh and signed in." in screen_text(app)
+        assert not app.mutation_running
+
+
+async def test_cancelled_add_says_where_the_user_is(service):
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("a", "tab", *"fresh", "enter")
+        await pilot.pause()
+        await pilot.press("escape")
+        assert service.login_handle.cancelled is True
+        service.finish_login(ActionResult(
+            False, "add", error=ActionError(
+                "login_cancelled", "Sign-in cancelled.",
+                "You are back on 'Personal'. Nothing was lost.")))
+        await pilot.pause()
+        assert app.screen.id == "result"
+        assert "You are back on 'Personal'" in screen_text(app)
 
 
 async def test_add_j_changes_the_selected_provider(service):
@@ -788,6 +820,25 @@ async def test_login_progress_surfaces_a_printed_address_to_the_user(service):
         service.send_login_line("Open https://example.test/authorize")
         await pilot.pause()
         assert "https://example.test/authorize" in flattened(app)
+
+
+async def test_enter_on_a_lapsed_account_signs_it_in_instead_of_switching(
+        service):
+    """Reproduced: Enter switched to an expired account -- installing its
+    dead token -- while the details pane said it could not be switched to."""
+    service.current = Snapshot(1, groups=[
+        Group("claude", "Claude", accounts=[
+            Account("Personal", active=True),
+            Account("Old", needs_login=True, state="closed"),
+        ]),
+    ])
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("j", "enter")
+        await pilot.pause()
+        assert service.switch_calls == []
+        assert service.login_calls == [("claude", "Old")]
+        assert app.screen.id == "login-progress"
 
 
 async def test_login_can_be_cancelled(service):
@@ -1082,7 +1133,7 @@ async def test_help_lists_lifecycle_shortcuts(service):
         await pilot.press("?")
         help_text = screen_text(app)
         assert "Account actions" in help_text
-        assert "Log in to selected account" in help_text
+        assert "Sign in to selected account again" in help_text
         assert "Add" in help_text
         assert "Eject" in help_text
         assert "skip welcome motion" not in help_text
@@ -1238,7 +1289,7 @@ async def test_help_can_be_dismissed_without_changing_selection(service):
         assert app.screen.id == "help"
         assert "Refresh" in screen_text(app)
         assert "Enter" in screen_text(app)
-        assert "Switch selected account" in screen_text(app)
+        assert "Switch to selected account" in screen_text(app)
         await pilot.press("escape")
         assert app.selected_account == "Work"
         await pilot.press("k")

@@ -66,6 +66,15 @@ RELOGIN_OTHER_ACCOUNT = (
     "Sign out of the vendor's site in your browser, or use a private window, "
     "then press Sign in again."
 )
+#: Adding an account while the browser is still signed in to one already
+#: saved. Filing it would keep two profiles for one account and call the
+#: second one new.
+ADD_DUPLICATE = (
+    "You signed in as {live}, which is already saved as '{owner}'. Nothing "
+    "was saved under '{name}', and you are on '{owner}' now.\n\n"
+    "To add a different account, sign out in your browser or use a private "
+    "window, then press Sign in on '{name}'."
+)
 RELOGIN_STILL_LAPSED = "'{name}' still needs a login.\n\n{tail}"
 RELOGIN_BACK = "You are back on '{previous}', nothing was lost."
 
@@ -1483,42 +1492,31 @@ class ShamblesApp(tk.Tk):
                 env=self.login_environment(provider),
                 failure_text=RELOGIN_FAILED.format(name=name))
 
-            outcome = switcher.UNCHANGED
-            if session.succeeded:
-                try:
-                    outcome = switcher.judge_relogin(self.paths, provider, name,
-                                                     platform=self.platform)
-                    if outcome == switcher.RENEWED:
-                        switcher.stash_live_login(self.paths, provider, name,
-                                                  platform=self.platform)
-                except ShamblesError as exc:
-                    # The live slot may now hold a new login, so no rollback:
-                    # switching away would throw it out.
-                    messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
-                    return
+            try:
+                outcome = switcher.settle_login(
+                    self.paths, provider, name, previous, adding=False,
+                    succeeded=session.succeeded, platform=self.platform)
+            except ShamblesError as exc:
+                # The live slot may now hold a new login, so no rollback:
+                # switching away would throw it out.
+                messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
+                return
 
-            if outcome == switcher.RENEWED:
+            if outcome.kind == switcher.RENEWED:
                 messagebox.showinfo(WINDOW_TITLE,
                                     RELOGIN_DONE.format(name=name), parent=self)
-            elif outcome == switcher.OTHER_ACCOUNT:
-                live = state.live_email(self.paths, provider,
-                                        platform=self.platform)
-                expected = state.profile_email(self.paths, provider, name)
+            elif outcome.kind == switcher.OTHER_ACCOUNT:
                 messagebox.showwarning(
                     WINDOW_TITLE,
                     RELOGIN_OTHER_ACCOUNT.format(
-                        live=live or "another account", name=name,
-                        expected=expected or "a different account"),
+                        live=outcome.live_email or "another account",
+                        name=name,
+                        expected=outcome.expected_email
+                        or "a different account"),
                     parent=self)
             else:
-                try:
-                    restored = switcher.abandon_relogin(
-                        self.paths, provider, name, previous,
-                        platform=self.platform)
-                except ShamblesError:
-                    restored = False
-                tail = (RELOGIN_BACK.format(previous=previous) if restored
-                        else provider.login_hint())
+                tail = (RELOGIN_BACK.format(previous=previous)
+                        if outcome.restored else provider.login_hint())
                 messagebox.showwarning(
                     WINDOW_TITLE,
                     RELOGIN_STILL_LAPSED.format(name=name, tail=tail),
@@ -1559,28 +1557,35 @@ class ShamblesApp(tk.Tk):
         # The profile is active and empty. The vendor's own command fills it.
         session = LoginDialog(self, provider, created, self.theme,
                               env=self.login_environment(provider))
-        if session.succeeded and self.stash_after_login(provider, created):
+        try:
+            outcome = switcher.settle_login(
+                self.paths, provider, created, previous, adding=True,
+                succeeded=session.succeeded, platform=self.platform)
+        except ShamblesError as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
+            self.refresh()
+            return
+
+        if outcome.kind == switcher.RENEWED:
             messagebox.showinfo(
                 WINDOW_TITLE,
                 f"'{created}' is signed in and active.\n\n"
                 "Start a new session to pick it up — a running one keeps the "
                 "token it loaded at startup.",
                 parent=self)
+        elif outcome.kind == switcher.DUPLICATE:
+            messagebox.showwarning(
+                WINDOW_TITLE,
+                ADD_DUPLICATE.format(
+                    live=outcome.live_email or "an account",
+                    owner=outcome.owner, name=created),
+                parent=self)
         else:
-            # No credential arrived, so put the user back where they were
-            # rather than leaving them signed out of a working account. The
-            # profile is kept, so the sign-in can be retried without naming it
-            # again.
-            restored = False
-            try:
-                restored = switcher.abandon_new_account(
-                    self.paths, provider, created, previous,
-                    platform=self.platform)
-            except ShamblesError:
-                restored = False
-
+            # No credential arrived, so the user is put back where they were
+            # rather than left signed out of a working account. The profile
+            # is kept, so the sign-in can be retried without naming it again.
             back = (f"\n\nYou are back on '{previous}' — nothing was lost."
-                    if restored else
+                    if outcome.restored else
                     "\n\nSwitching to another profile is safe — nothing was "
                     "lost.")
             messagebox.showwarning(

@@ -18,8 +18,36 @@ Notable changes per release. Dates are the tag date.
   browser was still signed in as someone else, saves nothing over the profile
   and says which address the browser used.
 
+- **Adding an account in the terminal UI signs it in.** `a` used to create
+  an empty profile, switch to it and stop, which signed you out of the
+  account you were on and left the new one with no login. It now runs the
+  vendor's sign-in straight away, as the window does, and puts you back on
+  your previous account if the sign-in is cancelled or fails. The profile is
+  kept so you can retry without naming it again.
+
 ### Fixed
 
+- **A cancelled or failed sign-in in the terminal UI puts you back where you
+  were.** Pressing `l` and then Esc, or a sign-in that wrote nothing, left the
+  expired account live and the working one signed out, with "The vendor
+  login command failed. Review the output and retry." on screen. Each outcome
+  now has its own message and says which account you are on.
+- **Enter on an account that needs a login signs it in** in the terminal UI,
+  instead of switching to it and installing its dead token. The details pane
+  said it could not be switched to; now it says "Enter or l to sign in".
+- A missing `claude` or `codex` CLI is reported before anything moves. The
+  terminal UI used to switch to the account first and then say the CLI was
+  missing.
+- **Adding an account that is already saved is refused**, in the window and
+  the terminal UI. With the browser still signed in to a saved account,
+  adding a new one reported success and kept a second copy of the same
+  account under the new name. It now saves nothing, puts you on the account
+  that login belongs to, and says to use a private window.
+- A sign-in in the terminal UI that comes back as somebody else's account
+  says whose it was, instead of "The vendor did not write a usable login".
+- The terminal UI no longer tells you to "Run 'claude auth login' in a
+  terminal" for a parked account. Run that way it signs in whichever account
+  is live, not the one you were looking at.
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.

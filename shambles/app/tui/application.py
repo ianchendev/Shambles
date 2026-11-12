@@ -237,10 +237,11 @@ class HelpScreen(ModalScreen[None]):
                 "\n"
                 "j / Down     Next account\n"
                 "k / Up       Previous account\n"
-                "Enter        Switch selected account\n"
-                "a            Add a new profile\n"
+                "Enter        Switch to selected account, or sign it in\n"
+                "             if its login no longer works\n"
+                "a            Add an account and sign in to it\n"
                 "m            Account actions (save, add, rename, remove)\n"
-                "l            Log in to selected account\n"
+                "l            Sign in to selected account again\n"
                 "x            Eject Shambles\n"
                 "r            Refresh local state\n"
                 "u            Hide the update notice\n"
@@ -530,6 +531,13 @@ class ShamblesTUI(App[str | None]):
             if group.provider != self.selected_provider:
                 continue
             for account in group.accounts:
+                if account.name == self.selected_account and account.needs_login:
+                    # Switching would install a dead token and leave the
+                    # vendor prompting for the very login this runs. The
+                    # window offers Sign in in place of Switch for the same
+                    # reason.
+                    self._start_login(group.provider, account.name)
+                    return
                 if account.name == self.selected_account and not account.active:
                     plan = self.service.plan_switch(group.provider, account.name)
                     if plan.requires_confirmation:
@@ -634,10 +642,24 @@ class ShamblesTUI(App[str | None]):
         )
 
     def _begin_add(self, picked: tuple[str, str] | None) -> None:
-        if picked is None:
+        """Create the profile and sign it in, as one step.
+
+        Adding has to make the new profile live, which signs the user out of
+        the account they were on; stopping there left them signed out with an
+        empty profile and only "Added X." to go on. The service rolls back if
+        the sign-in comes to nothing.
+        """
+        if picked is None or self.mutation_running:
             return
         provider, name = picked
-        self._begin_mutation(lambda: self.service.add(provider, name))
+        self._mutation_pending = True
+        self._login_handle = self.service.start_add(
+            provider, name,
+            on_line=lambda line: self.post_message(LoginLine(line)),
+            on_done=lambda result: self.post_message(LoginFinished(result)),
+        )
+        self.push_screen(LoginProgress(provider, name.strip()),
+                         self._login_cancelled)
 
     def _begin_rename(
         self, provider: str, old_name: str, new_name: str | None,
@@ -699,6 +721,9 @@ class ShamblesTUI(App[str | None]):
         provider, account = self.selected_provider, self.selected_account
         if provider is None or account is None:
             return
+        self._start_login(provider, account)
+
+    def _start_login(self, provider: str, account: str) -> None:
         self._mutation_pending = True
         self._login_handle = self.service.start_login(
             provider, account,
