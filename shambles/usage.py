@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import configjson
+from .providers.spec import finite
 
 #: ``kind`` values in the cache's ``limits`` array, mapped to a short label.
 #: ``weekly_all`` is the whole-week bucket; the per-model ones are ignored
@@ -141,7 +142,7 @@ def parse(blob) -> Usage:
         return EMPTY
 
     fetched = blob.get("fetchedAtMs")
-    fetched = fetched if isinstance(fetched, (int, float)) else None
+    fetched = fetched if finite(fetched) else None
     util = blob.get("utilization")
     if not isinstance(util, dict):
         return Usage(bars=(), fetched_at_ms=int(fetched) if fetched else None)
@@ -152,7 +153,7 @@ def parse(blob) -> Usage:
             continue
         label = KINDS.get(entry.get("kind"))
         percent = entry.get("percent")
-        if label is None or not isinstance(percent, (int, float)):
+        if label is None or not finite(percent):
             continue
         found[label] = Bar(
             label=label,
@@ -169,7 +170,7 @@ def parse(blob) -> Usage:
         if not isinstance(bucket, dict):
             continue
         percent = bucket.get("utilization")
-        if not isinstance(percent, (int, float)):
+        if not finite(percent):
             continue
         # No `limits` entry means no severity to trust, so the value alone
         # decides: red past the threshold, otherwise unremarkable.
@@ -205,7 +206,7 @@ def parse_codex_rate_limits(limits, *, fetched_at_ms: int | None = None) -> Usag
             continue
         percent = bucket.get("used_percent")
         minutes = bucket.get("window_minutes")
-        if not isinstance(percent, (int, float)):
+        if not finite(percent):
             continue
         label = "session" if (
             isinstance(minutes, (int, float)) and minutes <= _CODEX_SESSION_MAX_MINUTES
@@ -279,7 +280,13 @@ def _latest_codex_session(config_dir: Path) -> Path | None:
 
 def _codex_resets_at(value) -> str | None:
     if isinstance(value, (int, float)):
-        return datetime.datetime.fromtimestamp(value, tz=datetime.timezone.utc).isoformat()
+        if not finite(value):
+            return None
+        try:
+            return datetime.datetime.fromtimestamp(
+                value, tz=datetime.timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None  # a number, but not one any calendar reaches
     if isinstance(value, str):
         return value
     return None
@@ -323,5 +330,10 @@ def capture_live(paths, provider_id, active_name, *, now_ms) -> bool:
         return False
 
     sidecar["usage"] = live
-    configjson.write_atomic(paths.account(provider_id, active_name), sidecar)
+    try:
+        configjson.write_atomic(paths.account(provider_id, active_name), sidecar)
+    except OSError:
+        # Display only, and called while the window draws. A sidecar that
+        # cannot be written this time is a figure recorded next time.
+        return False
     return True

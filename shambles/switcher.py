@@ -591,14 +591,15 @@ def restash_active(paths, provider, *, platform=sys.platform,
     if not name or not paths.profile_dir(provider.id, name).is_dir():
         return False
 
-    # Only refresh a stash from a credential that is provably this profile's.
-    # This runs on every window refresh, so without the check merely opening
-    # the window while signed in as someone else replaces a saved token --
-    # no click, no warning, and no copy left anywhere.
-    if not belongs_to(paths, provider, name, platform=platform):
-        return False
-
     try:
+        # Only refresh a stash from a credential that is provably this
+        # profile's. This runs on every window refresh, so without the check
+        # merely opening the window while signed in as someone else replaces
+        # a saved token -- no click, no warning, and no copy left anywhere.
+        # Inside the guard, because it reads the store too.
+        if not belongs_to(paths, provider, name, platform=platform):
+            return False
+
         live = _store(paths, provider, platform).read()
         if not live:
             # Absent, or empty: a read that landed between the vendor's

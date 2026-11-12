@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .providers import spec as specmod
+from .stores.base import StoreUnavailableError
 
 #: The marker names a profile, and the live identity matches it.
 MANAGED = "managed"
@@ -69,7 +70,9 @@ def config_dir_override(provider, *, home, env=None) -> str | None:
 def read_active(paths, provider_id: str) -> str | None:
     try:
         name = paths.active_marker(provider_id).read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError is a marker that is not text: a torn write. It names
+        # nobody, which is what no marker means.
         return None
     return name or None
 
@@ -97,10 +100,17 @@ def profile_names(paths, provider_id: str) -> list[str]:
 
 
 def live_email(paths, provider, *, platform: str) -> str | None:
-    """Who the provider's live store says is signed in."""
+    """Who the provider's live store says is signed in.
+
+    ``None`` when the store cannot be read, as when it is empty. Every store
+    reports that as :class:`StoreUnavailableError`, never as ``OSError``, so
+    that is what has to be caught here: this runs inside ``inspect``, on
+    every refresh, and a locked Keychain or a file held by another process
+    is a reason to show less, not to show nothing.
+    """
     try:
         blob = provider.store(home=paths.home, platform=platform).read()
-    except OSError:
+    except (OSError, StoreUnavailableError):
         return None
     return provider.identity(blob, home=paths.home, active=True).email
 
