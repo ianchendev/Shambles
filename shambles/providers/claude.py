@@ -328,9 +328,11 @@ class ClaudeProvider:
             return Liveness(SIGNED_OUT)
 
         expires = specmod.pointer(parsed, block["pointer"])
-        if not isinstance(expires, (int, float)):
+        if not specmod.finite(expires):
             # The VS Code extension writes credentials without this field.
-            # Reporting CLOSED would strand a perfectly good account.
+            # Reporting CLOSED would strand a perfectly good account. A value
+            # that is not a usable number is no better known than a missing
+            # one.
             return Liveness(UNKNOWN)
 
         expires = int(expires)
@@ -391,8 +393,8 @@ class ClaudeProvider:
         # splicing two identity keys onto {} and writing it back replaces
         # every project, MCP server and machine ID in the file. Claude Code
         # rewrites this path on its own schedule, so a read landing mid-write
-        # is the case to survive, and refusing leaves the switch reporting
-        # drift rather than silently truncating the user's config.
+        # is the case to survive, and refusing leaves the switch to be run
+        # again rather than silently truncating the user's config.
         config = configjson.load_for_write(path)
         stale = set(block.get("stale_on_switch", ()))
         for key in block["keys"]:

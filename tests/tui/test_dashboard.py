@@ -215,8 +215,20 @@ async def test_hero_needs_login_callout(snapshot):
         await pilot.pause()
         screen = screen_text(app)
         assert "needs login" in screen
-        assert "Run claude login" in screen
-        assert "l to log in" in screen
+        assert "Enter or l to sign in" in screen
+        # The vendor's own advice is wrong for a parked account: run in a
+        # terminal, it signs in whichever profile is live, not this one.
+        assert "Run claude login" not in screen
+        assert "cannot switch" not in screen
+
+
+def test_an_active_account_that_needs_login_says_how_to_sign_in(snapshot):
+    group = snapshot.groups[0]
+    account = replace(group.accounts[1], active=True)
+    rendered = table_text(render_account_details(group, account, width=80,
+                                                 unicode=True))
+    assert "Enter or l to sign in" in rendered
+    assert "Already active" not in rendered
 
 
 async def test_medium_dashboard_expands_selected_row(snapshot):
@@ -428,12 +440,12 @@ async def test_needs_login_callout_is_reachable_at_78x28(snapshot):
         await pilot.pause()
         screen = screen_text(app)
         details = app.query_one("#account-details")
-        if "Run claude login" not in screen and "l to log in" not in screen:
+        if "l to sign in" not in screen:
             assert details.styles.scrollbar_size_vertical > 0
             details.scroll_end(animate=False)
             await pilot.pause()
             screen = screen_text(app)
-        assert "Run claude login" in screen or "l to log in" in screen
+        assert "l to sign in" in screen
 
 
 @pytest.mark.parametrize("size", [(80, 8), (48, 10)])
@@ -613,3 +625,12 @@ async def test_details_are_not_truncated_to_a_width_the_pane_no_longer_has(
         screen = screen_text(app)
     assert "work@example.test" in screen
     assert "22%" in screen
+
+
+async def test_an_80_column_footer_still_names_the_sign_in_key(snapshot):
+    """At 80x24, the commonest terminal, the compact footer dropped l login,
+    so the one key that fixes a lapsed account was not on screen."""
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        assert "l login" in screen_text(app)

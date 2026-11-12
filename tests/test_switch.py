@@ -688,3 +688,200 @@ def test_abandon_relogin_has_nowhere_to_go_back_to(paths, provider, previous):
     assert not switcher.abandon_relogin(paths, provider, "Old", previous,
                                         platform="linux")
     assert state.read_active(paths, provider.id) == "Old"
+
+
+# -- settling a vendor login --------------------------------------------
+#
+# Every frontend runs the vendor's login the same way and then has to decide
+# what the live slot now means. These pin that decision in one place, so the
+# terminal UI cannot leave somebody on a dead account that the window would
+# have rolled back.
+
+def test_settle_relogin_files_a_renewed_login(paths, provider):
+    parked_lapsed(paths, provider)
+    previous = switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                                      sleep=lambda _: None)
+    fresh = seed_fresh(paths, provider, "o@example.com").read_bytes()
+
+    outcome = switcher.settle_login(paths, provider, "Old", previous,
+                                    adding=False, succeeded=True,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.RENEWED
+    assert outcome.restored is False
+    assert state.read_active(paths, provider.id) == "Old"
+    assert paths.credentials(provider.id, "Old").read_bytes() == fresh
+
+
+@pytest.mark.parametrize("succeeded", [True, False])
+def test_settle_relogin_puts_you_back_when_nothing_arrived(paths, provider,
+                                                           succeeded):
+    """Cancelled, failed, or a clean exit that wrote nothing: all of them
+    leave the dead token live, and none of them is a reason to stay on it."""
+    parked_lapsed(paths, provider)
+    work = paths.credentials(provider.id, "Work").read_bytes()
+    previous = switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                                      sleep=lambda _: None)
+
+    outcome = switcher.settle_login(paths, provider, "Old", previous,
+                                    adding=False, succeeded=succeeded,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.UNCHANGED
+    assert outcome.restored is True
+    assert outcome.previous == "Work"
+    assert state.read_active(paths, provider.id) == "Work"
+    assert live_path(paths, provider).read_bytes() == work
+
+
+def test_settle_relogin_moves_to_the_saved_owner_of_the_new_login(paths,
+                                                                  provider):
+    """The browser was still signed in as Work. That login is Work's, so the
+    marker follows it, and nothing is filed over Old."""
+    parked_lapsed(paths, provider)
+    dead = paths.credentials(provider.id, "Old").read_bytes()
+    previous = switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                                      sleep=lambda _: None)
+    seed_fresh(paths, provider, "w@example.com")
+
+    outcome = switcher.settle_login(paths, provider, "Old", previous,
+                                    adding=False, succeeded=True,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.OTHER_ACCOUNT
+    assert outcome.owner == "Work"
+    assert outcome.live_email == "w@example.com"
+    assert outcome.expected_email == "o@example.com"
+    assert state.read_active(paths, provider.id) == "Work"
+    assert paths.credentials(provider.id, "Old").read_bytes() == dead
+
+
+def test_settle_relogin_leaves_a_strangers_login_unsaved(paths, provider):
+    parked_lapsed(paths, provider)
+    dead = paths.credentials(provider.id, "Old").read_bytes()
+    previous = switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                                      sleep=lambda _: None)
+    fresh = seed_fresh(paths, provider, "stranger@example.com").read_bytes()
+
+    outcome = switcher.settle_login(paths, provider, "Old", previous,
+                                    adding=False, succeeded=True,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.OTHER_ACCOUNT
+    assert outcome.owner is None
+    assert paths.credentials(provider.id, "Old").read_bytes() == dead
+    assert live_path(paths, provider).read_bytes() == fresh
+
+
+def test_settle_new_login_files_a_new_account(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    seed_live(paths, provider, "w@example.com")
+    created = switcher.add_empty_account(paths, provider, "Personal",
+                                         platform="linux", sleep=lambda _: None)
+    fresh = seed_fresh(paths, provider, "p@example.com").read_bytes()
+
+    outcome = switcher.settle_login(paths, provider, created, "Work",
+                                    adding=True, succeeded=True,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.RENEWED
+    assert state.read_active(paths, provider.id) == "Personal"
+    assert paths.credentials(provider.id, "Personal").read_bytes() == fresh
+
+
+def test_settle_new_login_refuses_an_account_that_is_already_saved(paths,
+                                                                   provider):
+    """Adding 'Personal' while the browser is still signed in to Work used to
+    report success and save a second copy of Work under the new name."""
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    seed_live(paths, provider, "w@example.com")
+    created = switcher.add_empty_account(paths, provider, "Personal",
+                                         platform="linux", sleep=lambda _: None)
+    seed_fresh(paths, provider, "w@example.com")
+
+    outcome = switcher.settle_login(paths, provider, created, "Work",
+                                    adding=True, succeeded=True,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.DUPLICATE
+    assert outcome.owner == "Work"
+    assert outcome.live_email == "w@example.com"
+    assert state.read_active(paths, provider.id) == "Work"
+    assert not paths.credentials(provider.id, "Personal").exists()
+    assert paths.profile_dir(provider.id, "Personal").is_dir()
+
+
+@pytest.mark.parametrize("succeeded", [True, False])
+def test_settle_new_login_puts_you_back_when_nothing_arrived(paths, provider,
+                                                             succeeded):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    work = seed_live(paths, provider, "w@example.com").read_bytes()
+    created = switcher.add_empty_account(paths, provider, "Personal",
+                                         platform="linux", sleep=lambda _: None)
+
+    outcome = switcher.settle_login(paths, provider, created, "Work",
+                                    adding=True, succeeded=succeeded,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.UNCHANGED
+    assert outcome.restored is True
+    assert state.read_active(paths, provider.id) == "Work"
+    assert live_path(paths, provider).read_bytes() == work
+    assert paths.profile_dir(provider.id, "Personal").is_dir()
+
+
+# -- a marker left behind by a login made elsewhere ------------------------
+
+def drifted_to_saved(paths, provider):
+    """Work is marked, but the live login is Home's: signed in elsewhere."""
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    make_profile(paths, provider.id, "Home", email="h@example.com")
+    if provider.id == "claude":
+        make_claude_json(paths, email="h@example.com")
+        live = paths.claude_dir / ".credentials.json"
+        live.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        live = paths.home / ".codex" / "auth.json"
+        live.parent.mkdir(parents=True, exist_ok=True)
+    live.write_bytes(paths.credentials(provider.id, "Home").read_bytes())
+    return live
+
+
+def test_adopt_live_owner_points_the_marker_at_whoever_is_signed_in(
+        paths, provider):
+    drifted_to_saved(paths, provider)
+    work = paths.credentials(provider.id, "Work").read_bytes()
+
+    assert switcher.adopt_live_owner(paths, provider, platform="linux") == "Home"
+
+    assert state.read_active(paths, provider.id) == "Home"
+    assert paths.credentials(provider.id, "Work").read_bytes() == work
+
+
+def test_adopt_live_owner_leaves_a_strangers_login_alone(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    seed_fresh(paths, provider, "stranger@example.com")
+
+    assert switcher.adopt_live_owner(paths, provider, platform="linux") is None
+    assert state.read_active(paths, provider.id) == "Work"
+
+
+def test_switching_to_the_account_that_is_already_live_is_not_refused(
+        paths, provider):
+    """Reproduced in the CLI and the terminal UI: signed in as Home with Work
+    marked, 'switch claude Home' was refused with a message telling the user
+    to switch to the profile the login belongs to -- which is Home."""
+    from shambles.app.service import ShamblesService
+
+    live = drifted_to_saved(paths, provider)
+    home = live.read_bytes()
+    work = paths.credentials(provider.id, "Work").read_bytes()
+    service = ShamblesService(paths=paths, providers=[provider],
+                              platform="linux")
+
+    result = service.switch(provider.id, "Home")
+
+    assert result.ok, result.error
+    assert state.read_active(paths, provider.id) == "Home"
+    assert live.read_bytes() == home
+    assert paths.credentials(provider.id, "Work").read_bytes() == work
