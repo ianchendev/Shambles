@@ -1713,3 +1713,62 @@ def test_a_refused_start_opens_no_browser(paths, make_app, monkeypatch, claude):
 
     assert seen == {}
     assert said[-1][0] == "showerror"
+
+
+# -- adding an account that is already saved ----------------------------
+
+def _add_dialog(monkeypatch, name, provider_id="claude"):
+    class FakeDialog:
+        def __init__(self, *args, **kwargs):
+            self.result = (name, provider_id)
+
+    monkeypatch.setattr(gui, "AddAccountDialog", FakeDialog)
+
+
+def test_adding_an_account_that_is_already_saved_is_refused(
+        paths, make_app, monkeypatch):
+    """Reproduced: adding 'Personal' while the browser was still signed in to
+    Work said "'Personal' is signed in and active" and kept a second copy of
+    Work under the new name."""
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+    said = _said(monkeypatch)
+    _add_dialog(monkeypatch, "Personal")
+
+    def vendor_writes():
+        make_claude_json(paths, email="w@example.com")
+        make_live_claude_login(paths, access_token="tok-work-again")
+
+    _vendor(monkeypatch, succeeded=True, writes=vendor_writes)
+    app = make_app(paths)
+
+    app.on_add()
+
+    assert state.read_active(paths, "claude") == "Work"
+    assert not paths.credentials("claude", "Personal").exists()
+    kind, message = said[-1]
+    assert kind == "showwarning"
+    assert "already saved as 'Work'" in message
+    assert "private window" in message
+
+
+def test_adding_a_new_account_still_files_it(paths, make_app, monkeypatch):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+    said = _said(monkeypatch)
+    _add_dialog(monkeypatch, "Personal")
+
+    def vendor_writes():
+        make_claude_json(paths, email="p@example.com")
+        make_live_claude_login(paths, access_token="tok-personal")
+
+    _vendor(monkeypatch, succeeded=True, writes=vendor_writes)
+    app = make_app(paths)
+
+    app.on_add()
+
+    assert state.read_active(paths, "claude") == "Personal"
+    assert b"tok-personal" in paths.credentials("claude", "Personal").read_bytes()
+    assert said[-1][0] == "showinfo"

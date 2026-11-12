@@ -215,8 +215,20 @@ async def test_hero_needs_login_callout(snapshot):
         await pilot.pause()
         screen = screen_text(app)
         assert "needs login" in screen
-        assert "Run claude login" in screen
-        assert "l to log in" in screen
+        assert "Enter or l to sign in" in screen
+        # The vendor's own advice is wrong for a parked account: run in a
+        # terminal, it signs in whichever profile is live, not this one.
+        assert "Run claude login" not in screen
+        assert "cannot switch" not in screen
+
+
+def test_an_active_account_that_needs_login_says_how_to_sign_in(snapshot):
+    group = snapshot.groups[0]
+    account = replace(group.accounts[1], active=True)
+    rendered = table_text(render_account_details(group, account, width=80,
+                                                 unicode=True))
+    assert "Enter or l to sign in" in rendered
+    assert "Already active" not in rendered
 
 
 async def test_medium_dashboard_expands_selected_row(snapshot):
@@ -428,12 +440,12 @@ async def test_needs_login_callout_is_reachable_at_78x28(snapshot):
         await pilot.pause()
         screen = screen_text(app)
         details = app.query_one("#account-details")
-        if "Run claude login" not in screen and "l to log in" not in screen:
+        if "l to sign in" not in screen:
             assert details.styles.scrollbar_size_vertical > 0
             details.scroll_end(animate=False)
             await pilot.pause()
             screen = screen_text(app)
-        assert "Run claude login" in screen or "l to log in" in screen
+        assert "l to sign in" in screen
 
 
 @pytest.mark.parametrize("size", [(80, 8), (48, 10)])

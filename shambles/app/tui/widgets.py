@@ -101,14 +101,16 @@ def _meter_lines(window: Window, *, width: int, unicode: bool) -> list[Text]:
 
 
 def _context_line(account: Account, *, unicode: bool) -> str:
-    if account.active:
+    # Before "active": a live account with no usable login is the one most in
+    # need of the key that fixes it, and "Already active" told it nothing.
+    if account.needs_login:
+        parts = ["Enter or l to sign in", "its saved login no longer works"]
+    elif account.active:
         parts = [
             "Already active",
             "m for actions",
             "running sessions keep their login",
         ]
-    elif account.needs_login:
-        parts = ["l to log in", "cannot switch until this account is signed in"]
     else:
         parts = ["Enter to switch", "m for actions"]
     return _join(parts, unicode=unicode)
@@ -169,9 +171,6 @@ def render_account_details(
                 line.append("  ")
                 line.append(surface.detail, style=MUTED)
             add_line(line)
-
-    if account.needs_login and account.login_hint:
-        add_line(Text(account.login_hint, style=TERRACOTTA))
 
     if not compact:
         add_line(Text(_context_line(account, unicode=unicode), style=GOLD))

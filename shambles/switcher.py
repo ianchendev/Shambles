@@ -12,6 +12,7 @@ and only its steps differ, which is exactly the split DD-4 describes.
 import shutil
 import sys
 import time
+from dataclasses import dataclass
 
 from . import configjson, migrate, profiles, retry, state
 from .errors import (AlreadyManagedError, DriftedLoginError,
@@ -523,6 +524,102 @@ def abandon_relogin(paths, provider, name: str, previous: str | None, *,
     switch(paths, provider, previous, platform=platform, now_ms_fn=now_ms_fn,
            sleep=sleep)
     return True
+
+
+#: Adding an account brought back a login that is already saved under
+#: another name -- the browser was still signed in to that account.
+DUPLICATE = "duplicate"
+
+
+def judge_new_login(paths, provider, name: str, *, platform=sys.platform,
+                    now_ms_fn=now_ms) -> str:
+    """What the vendor's login left in the live slot for a brand new profile.
+
+    :func:`judge_relogin` cannot answer this. A new profile has no address to
+    compare against, so a login for somebody already saved reads as a match,
+    and filing it would leave two profiles holding one account under
+    different names -- reported to the user as the new account they asked for.
+    """
+    blob = _store(paths, provider, platform).read()
+    if (blob is None or not provider.has_login(blob)
+            or provider.liveness(blob, now_ms=now_ms_fn()).needs_login):
+        return UNCHANGED
+    owner = state.owner_of_live(paths, provider, platform=platform)
+    if owner and owner != name:
+        return DUPLICATE
+    return RENEWED
+
+
+@dataclass(frozen=True)
+class LoginOutcome:
+    """Where a vendor login left the user, for a frontend to put into words."""
+
+    #: :data:`RENEWED`, :data:`UNCHANGED`, :data:`OTHER_ACCOUNT` or
+    #: :data:`DUPLICATE`.
+    kind: str
+    profile: str
+    previous: str | None = None
+    #: True when the user was put back on ``previous``.
+    restored: bool = False
+    #: The saved profile the new login belongs to, when it is somebody else's.
+    owner: str | None = None
+    live_email: str | None = None
+    expected_email: str | None = None
+
+
+def settle_login(paths, provider, name: str, previous: str | None, *,
+                 adding: bool, succeeded: bool, platform=sys.platform,
+                 now_ms_fn=now_ms, sleep=time.sleep) -> LoginOutcome:
+    """Decide what a finished vendor login means, and act on it.
+
+    Every frontend runs the vendor's command and then lands here, so that
+    each one files, refuses and rolls back identically. Before this the
+    terminal UI saved whatever it found and stayed put otherwise, which left a
+    cancelled sign-in on a dead account with the working one signed out.
+
+    ``succeeded`` is the vendor's clean exit. A failed or cancelled login is
+    judged as :data:`UNCHANGED` without reading the slot, and rolled back the
+    same way; the rollback functions themselves refuse to discard a login the
+    vendor did write, so a cancel that raced a successful write keeps it.
+
+    - :data:`RENEWED`: filed under ``name``.
+    - :data:`OTHER_ACCOUNT` / :data:`DUPLICATE`: nothing is filed under
+      ``name``. When the login belongs to a saved profile the marker moves to
+      it, which is a relabelling of what is already live; otherwise the login
+      stays live and unsaved for the user to save or replace.
+    - :data:`UNCHANGED`: the user goes back to ``previous`` when that is safe.
+    """
+    kind = UNCHANGED
+    # Somebody switched away while the vendor ran. Whatever is live now is
+    # not this sign-in's to judge, and the rollback below refuses to move.
+    if succeeded and state.read_active(paths, provider.id) == name:
+        judge = judge_new_login if adding else judge_relogin
+        kind = judge(paths, provider, name, platform=platform,
+                     now_ms_fn=now_ms_fn)
+
+    if kind == RENEWED:
+        stash_live_login(paths, provider, name, platform=platform,
+                         now_ms_fn=now_ms_fn, sleep=sleep)
+        return LoginOutcome(RENEWED, name, previous)
+
+    if kind in (OTHER_ACCOUNT, DUPLICATE):
+        owner = state.owner_of_live(paths, provider, platform=platform)
+        if owner == name:
+            owner = None
+        if owner:
+            state.write_active(paths, provider.id, owner)
+        return LoginOutcome(
+            kind, name, previous, owner=owner,
+            live_email=state.live_email(paths, provider, platform=platform),
+            expected_email=state.profile_email(paths, provider, name))
+
+    abandon = abandon_new_account if adding else abandon_relogin
+    try:
+        restored = abandon(paths, provider, name, previous, platform=platform,
+                           now_ms_fn=now_ms_fn, sleep=sleep)
+    except ShamblesError:
+        restored = False
+    return LoginOutcome(UNCHANGED, name, previous, restored=restored)
 
 
 def rename_profile(paths, provider, old_name: str, new_name: str, *,
