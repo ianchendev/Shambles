@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from conftest import posix_only
 from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
                      make_profile)
 from shambles import providers, state
@@ -192,14 +193,16 @@ def test_the_contract_exposes_every_field_a_shell_renders(paths):
 
     group = snap.to_dict(build(paths))["groups"][0]
     assert set(group) == {"provider", "display_name", "surfaces", "accounts",
-                          "state", "live_email", "can_save", "notices"}
+                          "state", "live_email", "can_save", "notices",
+                          "can_sign_in", "cli"}
     assert set(group["surfaces"][0]) == {"id", "label", "detail"}
     assert set(group["accounts"][0]) == {
         "name", "email", "display_name", "plan", "active", "state",
-        "needs_login", "login_hint", "usage"}
+        "needs_login", "login_hint", "usage", "expires_at_ms",
+        "status_label", "publishes_usage"}
     assert set(group["accounts"][0]["usage"][0]) == {
         "label", "used_percent", "resets_at_ms", "resets_label",
-        "age_label", "stale"}
+        "age_label", "stale", "severity"}
 
 
 def test_the_panel_and_the_window_agree_about_disk(paths):
@@ -542,3 +545,83 @@ def test_an_unknown_provider_names_the_ones_that_exist(paths, capsys):
 
     assert "Unknown provider 'claud'" in err
     assert "claude, codex" in err
+
+
+# -- what a window needs beyond the list --------------------------------------
+
+
+@posix_only
+def test_a_group_says_whether_its_vendor_cli_can_sign_in(paths, fake_vendor):
+    """A window disables Sign in and Add rather than letting them fail."""
+    fake_vendor("claude")
+
+    claude_group = group_of(paths, "claude")
+    codex_group = group_of(paths, "codex")
+
+    assert (claude_group.can_sign_in, claude_group.cli) == (True, "claude")
+    assert (codex_group.can_sign_in, codex_group.cli) == (False, "codex")
+
+
+def test_an_account_carries_its_expiry_date_and_the_word_for_its_state(paths):
+    """DD-1 keeps the date off the face but available on request."""
+    lapsed_at = NOW - DAY_MS
+    make_profile(paths, "claude", "Lapsed", email="l@example.test",
+                 refresh_expires_ms=lapsed_at)
+    make_profile(paths, "claude", "Fine", email="f@example.test",
+                 refresh_expires_ms=NOW + 30 * DAY_MS)
+
+    accounts = {a.name: a for a in group_of(paths, "claude").accounts}
+
+    assert accounts["Lapsed"].expires_at_ms == lapsed_at
+    assert accounts["Lapsed"].status_label == "needs login"
+    assert accounts["Fine"].expires_at_ms == NOW + 30 * DAY_MS
+    assert accounts["Fine"].status_label is None
+
+
+def test_usage_windows_carry_a_severity_and_when_they_reset(paths):
+    """The colour rule lives here, not in each frontend."""
+    from helpers import account, write_json
+
+    make_profile(paths, "claude", "Busy", email="b@example.test")
+    write_json(paths.account("claude", "Busy"), {
+        "oauthAccount": account("b@example.test", uuid="uuid-b"),
+        "usage": {
+            "accountUuid": "uuid-b",
+            "fetchedAtMs": NOW,
+            "utilization": {"limits": [
+                {"kind": "session", "percent": 12, "severity": "normal",
+                 "resets_at": "2026-09-01T10:00:00+00:00"},
+                {"kind": "weekly_all", "percent": 85, "severity": "normal",
+                 "resets_at": None},
+            ]},
+        },
+    })
+
+    session, week = group_of(paths, "claude").accounts[0].usage
+
+    assert (session.severity, week.severity) == ("ok", "gone")
+    assert session.resets_at_ms == 1_788_256_800_000
+    assert week.resets_at_ms is None
+
+
+@posix_only
+def test_the_window_fields_reach_the_wire(paths, fake_vendor):
+    fake_vendor("claude")
+    make_profile(paths, "claude", "Work", email="w@example.test",
+                 refresh_expires_ms=NOW - DAY_MS)
+
+    wire = snap.to_dict(build(paths))["groups"][0]
+
+    assert wire["can_sign_in"] is True and wire["cli"] == "claude"
+    assert wire["accounts"][0]["expires_at_ms"] == NOW - DAY_MS
+    assert wire["accounts"][0]["status_label"] == "needs login"
+
+
+def test_an_account_says_whether_its_provider_publishes_usage_at_all(paths):
+    """Blank space reads as a broken widget; a frontend needs to know whether
+    there is something to explain."""
+    make_profile(paths, "claude", "Work", email="w@example.test")
+
+    work = group_of(paths, "claude").accounts[0]
+
+    assert work.usage == [] and work.publishes_usage is True

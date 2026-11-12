@@ -85,6 +85,18 @@ Install from source instead, which needs no matching system libraries:
   fi
 }
 
+# The window is its own archive: it carries Qt, which is far larger than
+# everything else, so it is kept out of the binary every command starts.
+# Prints nothing for a platform with no window build.
+resolve_window() {
+  case "$1" in
+    shambles-linux-x86_64) echo "shambles-window-linux-x86_64.tar.gz" ;;
+    shambles-linux-arm64)  echo "shambles-window-linux-arm64.tar.gz" ;;
+    shambles-macos-x86_64) echo "shambles-window-macos-x86_64.tar.gz" ;;
+    shambles-macos-arm64)  echo "shambles-window-macos-arm64.tar.gz" ;;
+  esac
+}
+
 if [ -n "${SHAMBLES_FORCE_ASSET:-}" ]; then
   ASSET="$SHAMBLES_FORCE_ASSET"
 elif ! ASSET="$(resolve_asset)"; then
@@ -169,7 +181,12 @@ Install from source instead, which needs no matching system libraries:
 fi
 
 mv -f "$TMP" "$DEST"
-trap 'rm -f "$SUMS"' EXIT
+WINDOW_TMP=""
+cleanup() {
+  rm -f "$SUMS"
+  if [ -n "$WINDOW_TMP" ]; then rm -rf -- "$WINDOW_TMP"; fi
+}
+trap cleanup EXIT
 
 echo "Installed to ${DEST}"
 if [ "$SKIP_SMOKE" != "1" ]; then
@@ -183,6 +200,92 @@ case ":${PATH}:" in
     echo '  export PATH="$HOME/.local/bin:$PATH"'
     ;;
 esac
+
+# The window, unless SHAMBLES_NO_WINDOW=1. Optional: the binary above is
+# already installed and works without it, so nothing here can undo that.
+#
+# Checked against the same SHA256SUMS as the binary, and unpacked beside its
+# final place so that putting it there is a rename. The old window is only
+# replaced once the new one has arrived whole; a failed or mismatched
+# download leaves it as it was. A release from before the window existed has
+# no such archive, which is reported and is not an error.
+install_window() {
+  local name dir parent archive expected actual
+  name="$(resolve_window "$ASSET")"
+  [ -n "$name" ] || return 0
+
+  dir="${HOME}/.local/share/shambles/window"
+  parent="$(dirname "$dir")"
+  mkdir -p "$parent"
+  WINDOW_TMP="$(mktemp -d "${parent}/.window-download.XXXXXX")"
+  archive="${WINDOW_TMP}/window.tar.gz"
+
+  echo "Downloading ${name}..."
+  if ! curl -fsSL -o "$archive" "${RELEASE}/${name}" 2>/dev/null; then
+    echo "This release has no window to download; 'shambles gui' opens the classic one."
+    return 0
+  fi
+
+  if [ "${SHAMBLES_SKIP_VERIFY:-0}" = "1" ]; then
+    echo "Checksum not verified (SHAMBLES_SKIP_VERIFY=1)."
+  elif [ ! -s "$SUMS" ]; then
+    echo "This release publishes no SHA256SUMS; the window was not verified." >&2
+  elif ! actual="$(sha256_of "$archive")"; then
+    echo "No sha256sum or shasum on this system; the window was not verified." >&2
+  else
+    expected="$(awk -v name="$name" '{ f = $2; sub(/^\*/, "", f); if (f == name) print $1 }' "$SUMS" | head -n 1)"
+    if [ -z "$expected" ]; then
+      echo "SHA256SUMS does not list ${name}; the window was not verified." >&2
+    elif [ "$expected" != "$actual" ]; then
+      echo "The window download does not match the release checksum, so it was not installed.
+  expected ${expected}
+  got      ${actual}
+Shambles itself is installed. Run the installer again to retry the window." >&2
+      return 0
+    else
+      echo "Checksum verified."
+    fi
+  fi
+
+  if ! tar -xzf "$archive" -C "$WINDOW_TMP" 2>/dev/null \
+      || [ ! -x "${WINDOW_TMP}/shambles-window/shambles-window" ]; then
+    echo "The window archive could not be unpacked, so it was not installed." >&2
+    return 0
+  fi
+
+  rm -rf -- "${dir}.old"
+  if [ -e "$dir" ]; then mv "$dir" "${dir}.old"; fi
+  mv "${WINDOW_TMP}/shambles-window" "$dir"
+  rm -rf -- "${dir}.old"
+  echo "Installed the window to ${dir}"
+  echo "  shambles gui    opens it"
+
+  # A launcher entry, so the window is in the applications menu and not
+  # only behind a command. Linux only: macOS has no such file, and there the
+  # window is a plain folder until it is packaged as an .app. Rewritten on
+  # every install, because it names the window by path.
+  # SHAMBLES_NO_DESKTOP=1 skips it.
+  if [ "$os" = "Linux" ] && [ "${SHAMBLES_NO_DESKTOP:-0}" != "1" ]; then
+    local apps="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+    if mkdir -p "$apps" 2>/dev/null; then
+      {
+        echo "[Desktop Entry]"
+        echo "Type=Application"
+        echo "Name=Shambles"
+        echo "Comment=Switch between Claude Code and Codex accounts"
+        echo "Exec=\"${dir}/shambles-window\""
+        echo "Icon=${dir}/shambles.png"
+        echo "Terminal=false"
+        echo "Categories=Utility;Development;"
+      } > "${apps}/shambles.desktop"
+      echo "Added Shambles to your applications menu."
+    fi
+  fi
+}
+
+if [ "${SHAMBLES_NO_WINDOW:-0}" != "1" ]; then
+  install_window
+fi
 
 if [ "$os" = "Linux" ] && grep -qi microsoft /proc/version 2>/dev/null; then
   echo "Note: this is WSL. Shambles here manages the Claude Code and Codex installed"

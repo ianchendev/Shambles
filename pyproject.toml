@@ -27,6 +27,11 @@ classifiers = [
 dependencies = ["textual>=8.2,<9"]
 
 [project.optional-dependencies]
+# The Qt window. Optional because it is by far the largest dependency and the
+# CLI, the terminal UI and the classic window all work without it. Essentials
+# only: the Addons half is WebEngine, 3D and the like, none of which the
+# window uses. Capped below 6.10, which raised the Linux floor to glibc 2.34.
+gui = ["PySide6-Essentials>=6.8,<6.10"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
@@ -51,13 +56,16 @@ Homepage = "https://github.com/ianchendev/Shambles"
 Issues = "https://github.com/ianchendev/Shambles/issues"
 
 [tool.setuptools]
-packages = ["shambles", "shambles.app", "shambles.app.tui", "shambles.providers", "shambles.stores"]
+packages = ["shambles", "shambles.app", "shambles.app.tui", "shambles.app.qt", "shambles.providers", "shambles.stores"]
 
 # Provider specs are data, not code, so they need declaring explicitly or they
 # ship missing and every provider fails to load at runtime.
 [tool.setuptools.package-data]
 "shambles.providers" = ["*.json"]
 "shambles.app.tui" = ["*.tcss"]
+# The window's QML and typeface are read from disk at runtime, like the TUI's
+# stylesheet, so they need declaring or an installed copy opens nothing.
+"shambles.app.qt" = ["qml/*.qml", "fonts/*.ttf", "fonts/OFL.txt", "icons/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

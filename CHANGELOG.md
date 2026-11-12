@@ -25,6 +25,61 @@ Notable changes per release. Dates are the tag date.
   your previous account if the sign-in is cancelled or fails. The profile is
   kept so you can retry without naming it again.
 
+- **A new window, in preview: `shambles gui --new`.** Rebuilt in Qt on the
+  same service the terminal UI uses. One resizable column: each provider's
+  live account on top with its usage, everyone else as rows beneath. What is
+  different from the classic window:
+
+  - Nothing opens a separate dialog. Adding, signing in, renaming, removing
+    and ejecting happen in a sheet inside the window, and results are said in
+    words at the bottom instead of in a message box.
+  - Signing in shows steps and who to sign in as, not the vendor's raw
+    output. **Open sign-in page** and **Copy link** appear when the vendor
+    prints a link.
+  - A row opens to show the exact date its saved login is good until, which
+    used to live only in a tooltip.
+  - Keyboard: `1` to `9` switch to an account, `/` filters once there are
+    seven or more, `Ctrl+N` adds, `Ctrl+R` refreshes, `Esc` closes.
+  - Light and dark, under the `...` menu. It follows the system where Qt can
+    tell and remembers your choice where it cannot, which includes WSL.
+  - While you are signed in as an account that is not saved, switching is
+    held back until you save it. The classic window let the click through
+    and relied on the core to refuse.
+
+  Plain `shambles gui` still opens the classic window.
+
+- **The window has an icon and a place in your applications menu.** The
+  title bar and taskbar show a Shambles icon instead of a blank one.
+  `install.sh` adds a launcher entry on Linux
+  (`~/.local/share/applications/shambles.desktop`) and `install.ps1` adds a
+  Start menu shortcut on Windows, both pointing at the installed window.
+  Set `SHAMBLES_NO_DESKTOP=1` to skip either.
+
+- **The installers fetch the new window as its own download.** It carries
+  Qt (a 36 to 82 MB download, depending on the platform), so it ships beside
+  the `shambles` binary instead of inside
+  it: every other command stays as fast as it was. `install.sh` unpacks it
+  to `~/.local/share/shambles/window` and `install.ps1` to
+  `%LOCALAPPDATA%\Shambles\window`, and `shambles gui --new` opens it from
+  there. Set `SHAMBLES_NO_WINDOW=1` to skip it. From pip or pipx it is an
+  optional extra instead: `pip install 'shambles[gui]'`.
+
+  The archive has a `licenses` folder: Qt and PySide6 are LGPL-3.0, so it
+  carries that text, the GPL-3.0 it incorporates, and a notice saying where
+  Qt's source is. Qt stays as separate, unmodified shared libraries that you
+  can replace.
+
+  The Linux window needs glibc 2.35, the same as the binary. It brings its
+  own copy of the few system libraries Qt needs, so it starts on a bare
+  Linux or WSL install with nothing to `apt install`.
+
+- **`shambles list --json` says more about each account.** Every group now
+  carries `can_sign_in` and `cli` (whether the vendor's command is there to
+  run, and its name). Every account carries `expires_at_ms` and
+  `status_label`, and every usage window carries `severity` and a filled-in
+  `resets_at_ms`. All additions; nothing existing changed, and the contract
+  version stays at 1.
+
 ### Fixed
 
 - **A cancelled or failed sign-in in the terminal UI puts you back where you

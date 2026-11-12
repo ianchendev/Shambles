@@ -61,3 +61,32 @@ def set_update_check(paths, enabled: bool) -> None:
     data = load_settings(paths)
     data[UPDATE_CHECK] = bool(enabled)
     save_settings(paths, data)
+
+
+#: Which colours the window draws in. ``system`` follows the desktop where
+#: the toolkit can tell what it is; under WSLg it cannot, which is why this
+#: is a stored choice at all rather than something read from the OS.
+WINDOW_THEME = "window.theme"
+WINDOW_THEMES = ("system", "light", "dark")
+
+
+def window_theme(paths) -> str:
+    """The stored theme, or ``system`` for anything that is not one.
+
+    A hand-edited file is a guess at the format. Reading a guess as the
+    default costs nothing; handing the window a name it has no palette for
+    would leave it unpainted.
+    """
+    value = load_settings(paths).get(WINDOW_THEME)
+    return value if value in WINDOW_THEMES else WINDOW_THEMES[0]
+
+
+def set_window_theme(paths, theme: str) -> None:
+    """Remember ``theme``. Raises ``ValueError`` before writing anything."""
+    if theme not in WINDOW_THEMES:
+        raise ValueError(
+            f"{theme!r} is not a theme. Choose one of: "
+            + ", ".join(WINDOW_THEMES) + ".")
+    data = load_settings(paths)
+    data[WINDOW_THEME] = theme
+    save_settings(paths, data)
