@@ -75,3 +75,37 @@ jobs:
             export SHAMBLES_BIN="$PWD/dist/shambles"
           fi
           python -m pytest tests/real -v -s -rA -p no:cacheprovider
+
+  # The SwiftUI menu-bar panel in macos/ talks to the CLI's JSON output. It
+  # had never been built by anything but its author's machine. This builds
+  # it and runs its tests, including the one that starts the real CLI.
+  #
+  # macOS 26 only. The panel calls glassEffect, which exists only in the
+  # macOS 26 SDK; it is guarded at run time for older systems, but the source
+  # does not compile against the macOS 15 SDK (Swift 6.1, Xcode 16), which is
+  # what the macos-15 runner has. Building needs Xcode 26.
+  swift-app:
+    name: swift app (macos-26)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Where the Swift integration test looks for the CLI.
+      - name: Install Shambles into the checkout's virtualenv
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e .
+
+      - name: Build
+        working-directory: macos
+        run: |
+          swift --version
+          swift build
+
+      - name: Test
+        working-directory: macos
+        run: swift test
