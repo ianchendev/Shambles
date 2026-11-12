@@ -63,6 +63,7 @@ def release_with_window(fake_release):
     launcher.chmod(0o755)
     (bundle / "_internal").mkdir()
     (bundle / "_internal" / "marker").write_text("new", encoding="utf-8")
+    (bundle / "shambles.png").write_bytes(b"png")
     archive = fake_release / "window.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(bundle, arcname="shambles-window")
@@ -153,3 +154,69 @@ def test_install_sh_can_skip_the_window(release_with_window, monkeypatch):
     home = Path(os.environ["HOME"])
     assert (home / ".local/bin/shambles").is_file()
     assert not (home / ".local/share/shambles").exists()
+
+
+# -- the launcher entry ---------------------------------------------------------
+
+
+def _desktop_entry(home: Path) -> dict:
+    text = (home / ".local/share/applications/shambles.desktop").read_text()
+    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="bash installer")
+def test_install_sh_adds_a_launcher_entry_that_points_at_the_window(
+        release_with_window, monkeypatch):
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    _install(monkeypatch)
+
+    home = Path(os.environ["HOME"])
+    entry = _desktop_entry(home)
+    window = home / ".local/share/shambles/window"
+
+    assert entry["Type"] == "Application" and entry["Name"] == "Shambles"
+    assert entry["Terminal"] == "false"
+    # Quoted, so a home directory with a space in it still launches.
+    assert entry["Exec"] == f'"{window}/shambles-window"'
+    assert Path(entry["Exec"].strip('"')).is_file()
+    assert Path(entry["Icon"]).is_file(), \
+        "the launcher names an icon the window does not ship"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="bash installer")
+def test_no_launcher_entry_without_a_window_to_launch(release_with_window,
+                                                      monkeypatch):
+    """An entry pointing at nothing is a dead icon in somebody's menu."""
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    home = Path(os.environ["HOME"])
+
+    _install(monkeypatch, WINDOW_BROKEN="1")
+    assert not (home / ".local/share/applications/shambles.desktop").exists()
+
+    _install(monkeypatch, SHAMBLES_NO_WINDOW="1")
+    assert not (home / ".local/share/applications/shambles.desktop").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="bash installer")
+def test_the_launcher_entry_can_be_skipped(release_with_window, monkeypatch):
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    _install(monkeypatch, SHAMBLES_NO_DESKTOP="1")
+
+    home = Path(os.environ["HOME"])
+    assert (home / ".local/share/shambles/window/shambles-window").is_file()
+    assert not (home / ".local/share/applications").exists()
+
+
+def test_install_ps1_adds_a_start_menu_shortcut_to_the_window():
+    """Read, not run: there is no PowerShell here. What can be held is that
+    the shortcut is per-user, points at the window, and cannot fail the
+    install."""
+    text = Path("scripts/install.ps1").read_text(encoding="utf-8")
+    start = text.index("# A Start menu shortcut")
+    block = text[start:text.index("} catch {", start) + 200]
+
+    assert "GetFolderPath('Programs')" in block, "must be the per-user menu"
+    assert "shambles-window.exe" in block
+    assert "Shambles.lnk" in block
+    assert "SHAMBLES_NO_DESKTOP" in block
+    assert "Could not add a Start menu shortcut" in block

@@ -105,6 +105,28 @@ if [ "${SHAMBLES_NO_WINDOW:-0}" != "1" ] && [ -n "$WINDOW_ASSET" ]; then
     rm -rf "$WINDOW_DIR"
     mv "${WINDOW_TMP}/shambles-window" "$WINDOW_DIR"
     echo "Installed the window to ${WINDOW_DIR}"
+
+    # A launcher entry, so the window is in the applications menu and not
+    # only behind a command. Linux only: macOS has no such file, and there
+    # the window is a plain folder until it is packaged as an .app.
+    # Rewritten on every install, because it names the window by path.
+    # SHAMBLES_NO_DESKTOP=1 skips it.
+    if [ "$os" = "Linux" ] && [ "${SHAMBLES_NO_DESKTOP:-0}" != "1" ]; then
+      APPS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+      if mkdir -p "$APPS_DIR" 2>/dev/null; then
+        {
+          echo "[Desktop Entry]"
+          echo "Type=Application"
+          echo "Name=Shambles"
+          echo "Comment=Switch between Claude Code and Codex accounts"
+          echo "Exec=\"${WINDOW_DIR}/shambles-window\""
+          echo "Icon=${WINDOW_DIR}/shambles.png"
+          echo "Terminal=false"
+          echo "Categories=Utility;Development;"
+        } > "${APPS_DIR}/shambles.desktop"
+        echo "Added Shambles to your applications menu."
+      fi
+    fi
     echo "  shambles gui --new    opens it"
   else
     echo "No window in this release, or it could not be unpacked."

@@ -89,6 +89,28 @@ if ($env:SHAMBLES_NO_WINDOW -ne '1' -and -not $env:SHAMBLES_FORCE_ASSET) {
         if (Test-Path $WindowDir) { Remove-Item -Recurse -Force $WindowDir }
         Move-Item $Unpacked $WindowDir
         Write-Host "Installed the window to $WindowDir"
+
+        # A Start menu shortcut, so the window can be found without a
+        # terminal. Per-user, so no admin. Rewritten on every install
+        # because it names the window by path. Its own try: a shortcut that
+        # cannot be written is not a reason to call the install a failure.
+        # $env:SHAMBLES_NO_DESKTOP = '1' skips it.
+        if ($env:SHAMBLES_NO_DESKTOP -ne '1') {
+            try {
+                $WindowExe = Join-Path $WindowDir 'shambles-window.exe'
+                $Programs = [Environment]::GetFolderPath('Programs')
+                $Shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut(
+                    (Join-Path $Programs 'Shambles.lnk'))
+                $Shortcut.TargetPath = $WindowExe
+                $Shortcut.WorkingDirectory = $WindowDir
+                $Shortcut.IconLocation = "$WindowExe,0"
+                $Shortcut.Description = 'Switch between Claude Code and Codex accounts'
+                $Shortcut.Save()
+                Write-Host 'Added Shambles to your Start menu.'
+            } catch {
+                Write-Host 'Could not add a Start menu shortcut; the window is still installed.'
+            }
+        }
         Write-Host "  shambles gui --new    opens it"
     } catch {
         Write-Host 'No window in this release, or it could not be unpacked.'

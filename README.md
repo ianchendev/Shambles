@@ -373,6 +373,11 @@ it for you into `~/.local/share/shambles/window` (or
 it. It carries the system libraries Qt needs, so there is nothing to
 `apt install`.
 
+The scripts also put Shambles in your applications menu: a launcher entry on
+Linux and a Start menu shortcut on Windows. `SHAMBLES_NO_DESKTOP=1` skips
+that. On macOS the window is a plain folder for now, with no entry in
+Launchpad.
+
 From pip or pipx it is an optional extra instead:
 
 ```bash
