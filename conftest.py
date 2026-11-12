@@ -1,4 +1,6 @@
+import gc
 import os
+import sys
 import threading
 import time
 
@@ -52,6 +54,15 @@ def no_thread_outlives_its_test():
     one.
     """
     before = set(threading.enumerate())
+    # The other half of the same crash. A Tk object left in a reference
+    # cycle by an earlier test is freed whenever the collector next runs,
+    # and the collector runs on whichever thread happens to allocate. If
+    # that is a login worker, Tcl is entered from the wrong thread exactly
+    # as above. Collecting here, on the main thread, before this test starts
+    # any thread of its own, leaves nothing of Tk's for a worker to free.
+    # Only once Tk has been loaded: before that there is nothing to guard.
+    if "tkinter" in sys.modules:
+        gc.collect()
     yield
     deadline = time.monotonic() + 5.0
     current = threading.current_thread()
