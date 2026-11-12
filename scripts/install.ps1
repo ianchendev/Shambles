@@ -299,7 +299,7 @@ param(
                         $Shortcut.Save()
                         Write-Host 'Added Shambles to your Start menu.'
                     } catch {
-                        Write-Host 'Could not add a Start menu shortcut; the window is still installed.'
+                        Write-Host "Could not add a Start menu shortcut ($($_.Exception.Message)); the window is still installed."
                     }
                 }
             }

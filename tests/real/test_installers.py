@@ -421,6 +421,29 @@ def start_menu_shortcut(shell):
 
 @windows_only
 @pytest.mark.parametrize("shell", SHELLS)
+def test_the_start_menu_shortcut_in_a_plain_folder(release, tmp_path, shell):
+    """The shortcut on its own, in a folder whose name is plain ASCII, so a
+    failure here cannot be the folder name's fault."""
+    local = tmp_path / "plain"
+    local.mkdir()
+    release()
+    window = this_asset().replace("shambles-windows-",
+                                  "shambles-window-windows-") \
+                         .replace(".exe", ".zip")
+    publish_window(release, window)
+
+    done = run_ps(shell, f"irm {release.base}/install.ps1 | iex",
+                  windows_env(local, release.base, SHAMBLES_NO_PATH="1"))
+
+    assert done.returncode == 0
+    assert "Could not add a Start menu shortcut" not in done.stdout
+    path, target = start_menu_shortcut(shell)
+    assert path, "no Start menu shortcut was written"
+    assert Path(target) == local / "Shambles" / "window" / "shambles-window.exe"
+
+
+@windows_only
+@pytest.mark.parametrize("shell", SHELLS)
 def test_install_ps1_installs_the_window_and_a_start_menu_shortcut(
         release, tmp_path, shell):
     """The one part of the window's install that could only be read until
