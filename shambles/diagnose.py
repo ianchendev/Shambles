@@ -8,9 +8,11 @@ login somewhere else. When one of those is wrong a switch succeeds, the
 window shows the new account, and nothing changes -- the failure that is
 hardest to notice and most expensive to be wrong about.
 
-Every check here is a look, never a change. Nothing is written, no vendor
-program is started, and no credential is read beyond asking a store whether
-it holds one.
+Every check here is a look, never a change. Nothing is written or deleted,
+no vendor program is started, and no credential is read beyond asking a
+store whether it holds one. On Windows the names of Claude Code's entries in
+Credential Manager are listed, and the bookkeeping entry that says how a
+login was split is read, to find what an older Shambles left behind.
 
 The findings are plain data so that any frontend can show them; ``shambles
 doctor`` is merely the first to.
@@ -25,6 +27,7 @@ from pathlib import Path
 from .errors import ShamblesError
 from .providers import spec as specmod
 from .stores import FallbackStore, UnsupportedStore
+from .stores import credman as credmod
 
 #: Switching will not take effect, or cannot be done at all.
 PROBLEM = "problem"
@@ -95,8 +98,11 @@ def is_windows_binary_under_wsl(path: str | None) -> bool:
 
 
 def diagnose(paths, providers, *, platform=sys.platform, env=None,
-             which=None, wsl=None) -> list[Finding]:
-    """Everything worth saying about this machine, most serious first."""
+             which=None, wsl=None, credman=None) -> list[Finding]:
+    """Everything worth saying about this machine, most serious first.
+
+    ``credman`` stands in for the Windows Credential Manager in tests.
+    """
     env = os.environ if env is None else env
     which = shutil.which if which is None else which
     wsl = is_wsl(env) if wsl is None and platform.startswith("linux") else bool(wsl)
@@ -113,6 +119,9 @@ def diagnose(paths, providers, *, platform=sys.platform, env=None,
     for provider in providers:
         found.extend(_provider_findings(paths, provider, platform=platform,
                                         env=env, which=which, wsl=wsl))
+
+    if platform == "win32" and any(p.id == "claude" for p in providers):
+        found.extend(_old_credman_findings(credman))
 
     order = {PROBLEM: 0, WARNING: 1, INFO: 2}
     return sorted(found, key=lambda f: order[f.level])
@@ -209,6 +218,42 @@ def _provider_findings(paths, provider, *, platform, env, which, wsl):
                 "and a separate login, which a switch made here does not "
                 "touch."))
     return found
+
+
+def _old_credman_findings(backend):
+    """Credential Manager entries an older Shambles wrote and left behind.
+
+    Reported, never removed. They may hold a login, and deleting a login is
+    for the person whose login it is to decide.
+    """
+    try:
+        leftovers = credmod.old_shambles_entries(backend)
+    except ShamblesError as exc:
+        return [Finding(
+            INFO, "claude", "credman_leftovers_unchecked",
+            "Could not look in Windows Credential Manager for entries left "
+            f"by Shambles 2.1.2 or older: {exc}")]
+    if not leftovers:
+        return []
+
+    targets = [name for leftover in leftovers for name in leftover.targets]
+    keep = sorted({leftover.keep for leftover in leftovers})
+    listed = "\n".join(f"  {name}" for name in targets)
+    kept = " or ".join(f"'{name}'" for name in keep)
+    noun = "entry" if len(targets) == 1 else "entries"
+    return [Finding(
+        WARNING, "claude", "credman_leftovers",
+        f"Windows Credential Manager still holds {len(targets)} {noun} that "
+        "Shambles 2.1.2 or older wrote when it switched Claude accounts:\n"
+        f"{listed}\n"
+        "Claude Code never reads them, but they can hold a copy of an old "
+        "login. Shambles has not changed or deleted anything. They are safe "
+        "to delete once no copy of Shambles 2.1.2 or older is left on this "
+        "machine: in Control Panel, open Credential Manager, then Windows "
+        "Credentials, and remove each name listed above from Generic "
+        f"Credentials. Do not remove {kept} itself, with nothing after the "
+        "name: when Credential Manager is switched on for Claude Code, that "
+        "is its login.")]
 
 
 def render(findings) -> str:

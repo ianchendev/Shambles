@@ -36,6 +36,7 @@ import binascii
 import ctypes
 import json
 import math
+import re
 from ctypes import wintypes
 from dataclasses import dataclass, field
 
@@ -54,6 +55,18 @@ META_MARKER = "#m"
 
 #: How ``Bun.secrets`` turns (service, name) into a Windows target name.
 TARGET_TEMPLATE = "{service}/{name}"
+
+#: What Shambles 2.1.2 and older wrote for Claude Code on every Windows
+#: switch: the service names Claude Code uses, the account below, the login
+#: cut into raw pieces "#0", "#1", ... and a "#m" holding the number of pieces
+#: as bare digits. Claude Code's own "#m" is JSON and it ignores one that is
+#: not, so nothing has read these since they were written. They can hold an
+#: old login, which is why ``shambles doctor`` reports them. Nothing in
+#: Shambles deletes them: that is the user's call.
+OLD_SERVICE = re.compile(
+    r"Claude Code(?:-custom-oauth)?-credentials(?:-[0-9a-f]{8})?")
+OLD_ACCOUNT = "claude-code-user"
+_PIECE = re.compile(r"#(\d+)")
 
 CRED_TYPE_GENERIC = 1
 CRED_PERSIST_LOCAL_MACHINE = 2
@@ -225,6 +238,71 @@ class CredmanStore:
         return (f"Windows Credential Manager entry '{self._target()}'")
 
 
+@dataclass(frozen=True)
+class Leftover:
+    """Entries an older Shambles left under one Claude Code service name."""
+
+    service: str
+    #: Every entry it left, pieces first and the count last.
+    targets: tuple[str, ...]
+    #: The one name under this service that is Claude Code's own login when
+    #: Credential Manager is switched on for it. Never one of ``targets``.
+    keep: str
+
+
+def old_shambles_entries(backend=None) -> list[Leftover]:
+    """Entries Shambles 2.1.2 or older left in Credential Manager.
+
+    Looks only. A service is reported when its ``#m`` entry holds a bare
+    number, which Claude Code would never write or read, and no ``#p``
+    marker says a write is under way. Every ``#<digits>`` entry beside such a
+    count is reported with it: with no count it accepts, Claude Code reads no
+    pieces at all.
+    """
+    api = backend
+    if api is None:
+        try:
+            api = _Advapi32()
+        except (AttributeError, OSError) as exc:
+            raise StoreUnavailableError(
+                "The Windows Credential Manager is not available on this "
+                f"system:\n{exc}") from exc
+
+    names = set(api.targets("Claude Code"))
+    found = []
+    for name in sorted(names):
+        service, slash, rest = name.partition("/")
+        if (not slash or rest != OLD_ACCOUNT + META_MARKER
+                or not OLD_SERVICE.fullmatch(service)):
+            continue
+        base = TARGET_TEMPLATE.format(service=service, name=OLD_ACCOUNT)
+        if base + PENDING_MARKER in names:
+            continue
+        if _old_count(api.read(name)) is None:
+            continue
+        pieces = sorted(
+            (other for other in names
+             if other.startswith(base) and _PIECE.fullmatch(other[len(base):])),
+            key=lambda other: int(other[len(base) + 1:]))
+        found.append(Leftover(service=service, targets=(*pieces, name),
+                              keep=base))
+    return found
+
+
+def _old_count(raw: bytes | None) -> int | None:
+    """The piece count Shambles 2.1.2 wrote: digits and nothing else."""
+    if raw is None or parse_meta(raw) is not None:
+        return None
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if not (text.isascii() and text.isdigit()):
+        return None
+    count = int(text)
+    return count if 0 < count <= MAX_CHUNKS else None
+
+
 def _pending_count(raw: bytes | None) -> int:
     try:
         return min(max(int((raw or b"0").decode("ascii")), 0), MAX_CHUNKS)
@@ -258,7 +336,7 @@ class _CREDENTIAL(ctypes.Structure):
 
 
 class _Advapi32:
-    """Thin ``CredRead``/``CredWrite``/``CredDelete`` binding.
+    """Thin ``CredRead``/``CredWrite``/``CredDelete``/``CredEnumerate`` binding.
 
     Isolated in its own class so :class:`CredmanStore` can be handed a fake and
     tested on any platform.
@@ -277,8 +355,32 @@ class _Advapi32:
         self._dll.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
                                           wintypes.DWORD]
         self._dll.CredDeleteW.restype = wintypes.BOOL
+        self._dll.CredEnumerateW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(ctypes.POINTER(pointer))]
+        self._dll.CredEnumerateW.restype = wintypes.BOOL
         self._dll.CredFree.argtypes = [ctypes.c_void_p]
         self._dll.CredFree.restype = None
+
+    def targets(self, prefix: str) -> list[str]:
+        """The names of this user's generic credentials starting with ``prefix``."""
+        count = wintypes.DWORD()
+        found = ctypes.POINTER(ctypes.POINTER(_CREDENTIAL))()
+        # The filter is a prefix and one trailing asterisk, nothing richer.
+        if not self._dll.CredEnumerateW(prefix + "*", 0, ctypes.byref(count),
+                                        ctypes.byref(found)):
+            code = ctypes.get_last_error()
+            if code == ERROR_NOT_FOUND:
+                return []
+            raise StoreUnavailableError(
+                f"Windows Credential Manager could not list '{prefix}*': "
+                f"{_describe(code)}")
+        try:
+            return [found[index].contents.TargetName
+                    for index in range(count.value)
+                    if found[index].contents.Type == CRED_TYPE_GENERIC]
+        finally:
+            self._dll.CredFree(found)
 
     def read(self, target: str) -> bytes | None:
         pointer = ctypes.POINTER(_CREDENTIAL)()

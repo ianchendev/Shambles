@@ -245,7 +245,9 @@ store that Anthropic is switching on account by account. Shambles reads the
 same switch Claude Code reads and follows it. Versions up to 2.1.2 used
 Credential Manager regardless, in a layout Claude Code does not read, so a
 switch on Windows changed the name on screen and left the old login in place.
-Upgrade before using it there.
+Upgrade before using it there. Those versions also left entries in Credential
+Manager that nothing reads; `shambles doctor` lists them and says how to
+remove them.
 
 **Codex.** Shambles swaps `~/.codex/auth.json`, the same path on every
 system. That only works while Codex keeps its login in that file, which is

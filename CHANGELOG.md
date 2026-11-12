@@ -63,7 +63,9 @@ Notable changes per release. Dates are the tag date.
   and friends, `CODEX_ACCESS_TOKEN`), a `claude` inside WSL that is really
   the Windows install, Codex not keeping its login in `auth.json`, a
   relocated config directory, a missing vendor program, and where each login
-  is kept. Exits 1 on a problem; `--json` for scripts.
+  is kept. On Windows it also lists the Credential Manager entries that
+  Shambles 2.1.2 or older left behind, without touching them. Exits 1 on a
+  problem; `--json` for scripts.
 
 - **A native Windows on Arm binary**, `shambles-windows-arm64.exe`, and an
   installer that picks it. On releases without one the installer falls back
@@ -144,6 +146,11 @@ Notable changes per release. Dates are the tag date.
   incoming account's name into `.claude.json` and reported success: the old
   login under the new name. Shambles now uses the file, and Credential
   Manager only when Claude Code itself does, in Claude Code's own layout.
+
+  Those versions also left entries in Windows Credential Manager, named like
+  `Claude Code-credentials/claude-code-user#0` and `...#m`. Claude Code does
+  not read them, but they can hold a copy of an old login. `shambles doctor`
+  lists them and says how to remove them. Shambles does not delete them.
 
 - **A Mac signed in over SSH read as signed out.** When the Keychain refuses
   a write, Claude Code keeps the login in `~/.claude/.credentials.json`.
