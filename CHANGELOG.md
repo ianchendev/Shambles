@@ -50,12 +50,17 @@ Notable changes per release. Dates are the tag date.
 
 - **The installers fetch the new window as its own download.** It carries
   Qt (a 36 to 82 MB download, depending on the platform), so it ships beside
-  the `shambles` binary instead of inside
-  it: every other command stays as fast as it was. `install.sh` unpacks it
-  to `~/.local/share/shambles/window` and `install.ps1` to
-  `%LOCALAPPDATA%\Shambles\window`, and `shambles gui --new` opens it from
-  there. Set `SHAMBLES_NO_WINDOW=1` to skip it. From pip or pipx it is an
-  optional extra instead: `pip install 'shambles[gui]'`.
+  the `shambles` binary instead of inside it: every other command stays as
+  fast as it was. `install.sh` unpacks it to `~/.local/share/shambles/window`
+  and `install.ps1` to `%LOCALAPPDATA%\Shambles\window`, and
+  `shambles gui --new` opens it from there. There is a build for every
+  platform the binary ships for, Windows on Arm included.
+
+  It is checked against the release's `SHA256SUMS` like the binary, and
+  swapped in only once it has arrived whole. A download that fails or does
+  not match leaves the window you had, and never undoes the binary, which is
+  installed first. Set `SHAMBLES_NO_WINDOW=1` to skip it. From pip or pipx it
+  is an optional extra instead: `pip install 'shambles[gui]'`.
 
   The archive has a `licenses` folder: Qt and PySide6 are LGPL-3.0, so it
   carries that text, the GPL-3.0 it incorporates, and a notice saying where
@@ -123,9 +128,192 @@ Notable changes per release. Dates are the tag date.
 - The window's heading no longer says "Not signed in" or "Not sure which
   account is live" while a login it can name is live, and offers to save it
   when the marked profile has been deleted.
+- At 80 columns the terminal UI's footer shows `l login` instead of
+  `x eject`. The narrow footer had dropped the one key that fixes an account
+  that needs a login; eject is still under `?`.
+- The terminal UI no longer offers Remove for the active account, which it
+  then refused after you confirmed. Removing another account now says what
+  it costs: signing that address back in needs a new verification email.
+- The terminal UI's eject confirmation says what eject does before asking.
+  It used to show only the after-the-fact summary, as if it had happened.
+- **`shambles doctor`.** Checks whether switching can work on this machine
+  and says why not, without changing anything. It reports an environment
+  variable that makes the vendor ignore its stored login (`ANTHROPIC_API_KEY`
+  and friends, `CODEX_ACCESS_TOKEN`), a `claude` inside WSL that is really
+  the Windows install, Codex not keeping its login in `auth.json`, a
+  relocated config directory, a missing vendor program, and where each login
+  is kept. Exits 1 on a problem; `--json` for scripts.
+
+- **A native Windows on Arm binary**, `shambles-windows-arm64.exe`, and an
+  installer that picks it. On releases without one the installer falls back
+  to the x64 build, which Windows 11 on Arm runs under emulation.
+
+- **macOS and native Windows are now exercised on every pull request.** A
+  `real-machine` workflow installs the current Claude Code and Codex on
+  GitHub's macOS, Windows and Linux machines, drives Shambles against the
+  real Keychain and Credential Manager with made-up credentials, and asks the
+  vendors' own commands who is signed in after each switch. The README's
+  support table now says what that established and what it did not.
+
+### Fixed
+
+- **Switching Claude accounts on native Windows did nothing.** Shambles read
+  and wrote the Credential Manager there, always, in a layout Claude Code
+  does not use. Claude Code keeps its login in
+  `%USERPROFILE%\.claude\.credentials.json` unless Credential Manager has
+  been switched on for the account. So the live login read as absent, and a
+  switch put the incoming credential where nothing looked, wrote the
+  incoming account's name into `.claude.json` and reported success: the old
+  login under the new name. Shambles now uses the file, and Credential
+  Manager only when Claude Code itself does, in Claude Code's own layout.
+
+- **A Mac signed in over SSH read as signed out.** When the Keychain refuses
+  a write, Claude Code keeps the login in `~/.claude/.credentials.json`.
+  Shambles only looked in the Keychain. It now reads the file when the
+  Keychain is empty, as Claude Code does, and a switch moves the login into
+  the Keychain and clears the file, as Claude Code's own next write would.
+
+- **A locked Keychain was read as "no login".** It is now reported as locked,
+  with the command that unlocks it. The Keychain is also given 60 seconds to
+  answer instead of being waited on indefinitely.
+
+- **`--home` could reach the real Keychain.** `shambles --home <dir>` is the
+  documented way to try Shambles without risking a real login, but the
+  Keychain belongs to the user, not to a directory, so on macOS a switch
+  made for a scratch home would have replaced the real login. For any home
+  but the real one, only files are used now. The same applies to the
+  Windows Credential Manager.
+
+- **Codex told to keep its login in the system keyring.** With
+  `cli_auth_credentials_store` set to `keyring` or `auto`, Codex does not
+  read `auth.json`, and Shambles swapped it anyway. It now refuses, names
+  the setting and the file that set it, and touches nothing.
+
+- **`CLAUDE_CONFIG_DIR` with a trailing slash, or Windows-style separators,
+  on macOS.** Claude Code names its Keychain item after a hash of the
+  variable exactly as typed. Shambles hashed a tidied copy and looked in an
+  item that did not exist. The credentials file also now follows
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR`.
+
+- **A process with no `USER` variable used the wrong Keychain item.** Started
+  from a desktop launcher or launchd, Shambles fell back to a fixed account
+  name where Claude Code asks the system for the real one.
+
+- **A small login was visible in the process list during a Keychain write.**
+  The write now goes through standard input when it fits, as Claude Code's
+  does.
+
+- **`install.sh` could leave a binary that cannot start.** On a glibc older
+  than 2.35 it installed the file, then printed "Done". Both installers now
+  run the download before replacing anything, refuse a download that fails
+  its checksum, and say what to do instead. `install.sh` also recognises
+  musl, Rosetta shells and Git Bash.
+
+- **`install.ps1` changed the PowerShell session that ran it** and could
+  rewrite the user's PATH with its variables expanded. It also now works
+  under Windows PowerShell 5.1's defaults (TLS 1.2, the Restricted policy),
+  over a running Shambles, and from `cmd.exe`.
+
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.
+- **A `~/.claude` you symlinked yourself is no longer mistaken for the old
+  Shambles layout.** With `~/.claude` linked from a dotfiles checkout or
+  another drive, every Claude switch was refused with "still a symlink from
+  an older version of Shambles". If an old `~/.claude-profiles` folder was
+  still on disk as well, opening the window removed your link and put one of
+  that folder's profiles in its place. Only a link that points at a profile
+  inside `~/.claude-profiles` is converted now. Any other link is left exactly
+  as it is, and switching works through it.
+- **Converting the old layout no longer signs you in as a different
+  account.** `~/.claude` became the folder of whichever profile had the most
+  history, with that profile's login inside it, while Shambles went on
+  showing the profile you had been using as the active one. The next switch
+  then saved that login over the wrong profile and its own token was gone.
+  You now stay signed in as the account you were using.
+- **Converting the old layout, where `~/.claude` was a link to one profile's
+  folder, now finishes on the next start if it was cut short.** A full disk
+  or a crash partway through used to leave `~/.claude` converted while the
+  other accounts' logins were never copied into the new store. Nothing tried
+  again, so those accounts came back as empty profiles and each one needed a
+  new verification email. Every login is now saved before `~/.claude` is
+  touched, so an attempt that fails leaves the old layout in place and the
+  next start completes it. The failure is shown in a dialog instead of a
+  traceback, and a login already saved in the new store is never replaced by
+  the older copy from the old folder. Session and history files are copied
+  in one step each, so a full disk can no longer leave a cut-off file or an
+  emptied prompt history behind.
+- **Accounts saved with 1.0 are no longer left behind when something else
+  created `~/.shambles` first.** Running `shambles config set update.check
+  true` before the window had opened once, or saving a Codex account, made
+  Shambles believe the move out of `~/.claude-profiles` had already happened.
+  The window then opened with no Claude accounts and never looked again. The
+  move now counts as done only once the Claude accounts are in the new store.
+- **Moving accounts saved with 1.0 into the new store now finishes on the
+  next start if it was cut short.** A full disk or a crash partway through
+  the copy left the new store looking complete with some accounts missing,
+  and nothing tried again. The copy is now put in place in one step once all
+  of it has succeeded, and a failure is shown in a dialog instead of a
+  traceback. An old settings snapshot that cannot be copied no longer holds
+  the accounts back.
+- A prompt history file or an old active marker that is not valid text (the
+  last line cut short by a crash, for instance) no longer stops either
+  conversion, which used to fail the same way at every start. A history
+  entry containing a Unicode line separator is no longer split in two when
+  histories are merged.
+- A sign-in that Shambles refuses to start now says why in the terminal
+  interface (for instance, that you are signed in as a different account),
+  instead of only "The login could not be completed."
+- **Switching no longer replaces a login that is saved nowhere.** With
+  profiles saved but none marked active (the state Eject leaves behind, or a
+  profile folder removed by hand), Switch, Add Account and Sign in used to
+  overwrite whatever login was live without keeping a copy of it. They now
+  stop and ask you to save it first. When the live login is already one of
+  your saved profiles there is nothing to lose, and they carry on.
+- **A switch that fails halfway can be finished by running it again.** If
+  the login was replaced but the active marker could not be written, the next
+  switch filed the new account's token under the old profile and destroyed
+  the old one. Shambles now recognises the live login by its bytes, so
+  running the switch again finishes it. This holds until the vendor next
+  refreshes that login, so retry straight away.
+- **A login file that is empty for a moment no longer wipes the saved
+  token.** Claude Code and Codex both rewrite their login file in place, and
+  a read that landed between the two halves of that saw an empty file.
+  Shambles saved those zero bytes over the profile's token: on a switch, and
+  for Codex on every refresh of the window with no click at all. An empty
+  file is now treated as no login.
+- **A Claude Code session left running no longer blocks switching.** A
+  session still signed in as the previous account rewrites `~/.claude.json`,
+  and Shambles then refused every switch with "Signed in as ..., but ...
+  holds ...", about a login that was the right one all along. The stored
+  login now settles which account is live, not the address in that file.
+- A profile's saved address is no longer erased, or replaced with another
+  account's, when `~/.claude.json` is briefly out of step with the login. An
+  empty profile is no longer labelled with the previous account's address
+  after a cancelled Add Account.
+- Removing a profile is now refused when it is the only one holding the
+  login that is live, even if the active marker names a different profile.
+- A switch is no longer refused as "signed in as someone else" when nobody
+  is signed in at all and only an old address is left in `~/.claude.json`.
+- A refused Add Account no longer leaves an empty profile behind.
+- Cancelling Add Account in one window no longer switches you back when you
+  had already moved to another profile in a second window.
+- Saving a login that one of your profiles already holds now marks that
+  profile as the active one, instead of making a second copy under a new
+  name.
+- **A login file that cannot be read no longer stops Shambles opening.** When
+  the vendor's credential store was locked or unreadable (a locked Keychain,
+  a file held by another program), the window failed to start and the
+  terminal UI could not refresh. Both now show what they can from the saved
+  profiles. Switching is still refused until the store can be read, because
+  the outgoing login could not be copied out first.
+  A store that is busy for one read and free for the next can no longer get
+  a login filed under the wrong profile: whose login it is gets decided from
+  the same bytes that are about to be saved.
+- A `~/.claude.json` caught halfway through being written, a damaged active
+  marker, or a value in a vendor file that is not a real number (an expiry of
+  `NaN`, a reset time no calendar reaches) no longer crashes the account
+  list. The affected field is shown as unknown instead.
 
 ## 2.1.2 - 2026-09-11
 
