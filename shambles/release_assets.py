@@ -49,6 +49,7 @@ _WINDOW = {
     "shambles-macos-x86_64": "shambles-window-macos-x86_64.tar.gz",
     "shambles-macos-arm64": "shambles-window-macos-arm64.tar.gz",
     "shambles-windows-x64.exe": "shambles-window-windows-x64.zip",
+    "shambles-windows-arm64.exe": "shambles-window-windows-arm64.zip",
 }
 
 WINDOW_ARTIFACTS = frozenset(_WINDOW.values())

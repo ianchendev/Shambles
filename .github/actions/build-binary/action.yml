@@ -10,6 +10,13 @@ description: >
 runs:
   using: composite
   steps:
+    # --exclude-module PySide6 on every one-file build. The window is built
+    # separately as its own archive; Qt inside this binary would be unpacked
+    # on every launch and add most of a second to commands that never open a
+    # window. The CLI imports the window lazily and hands over to the
+    # installed window when Qt is absent, so excluding it here is what makes
+    # that hand-over happen. Harmless where PySide6 is not installed.
+    #
     # --windowed only on Windows: it suppresses the console window for a GUI
     # app there. On Linux it would swallow the --version and --help output,
     # and on macOS it would produce a .app bundle instead of the single
@@ -41,6 +48,7 @@ runs:
       shell: bash
       run: |
         pyinstaller --onefile --name shambles \
+          --exclude-module PySide6 --exclude-module shiboken6 \
           --add-data "shambles/providers/*.json:shambles/providers" \
           --add-data "shambles/app/tui/*.tcss:shambles/app/tui" \
           shambles/__main__.py
@@ -56,10 +64,12 @@ runs:
       shell: pwsh
       run: |
         pyinstaller --onefile --name shambles `
+          --exclude-module PySide6 --exclude-module shiboken6 `
           --add-data "shambles/providers/*.json;shambles/providers" `
           --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
           shambles/__main__.py
         pyinstaller --onefile --windowed --name shamblesw `
+          --exclude-module PySide6 --exclude-module shiboken6 `
           --add-data "shambles/providers/*.json;shambles/providers" `
           --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
           shambles/__main__.py
