@@ -400,3 +400,19 @@ def test_the_window_reaches_credentials_only_through_the_service():
                         offenders.append(f"{path.name}: {alias.name}")
 
     assert offenders == []
+
+
+def test_eject_says_what_the_service_plan_says_and_only_once():
+    """The service owns what eject does. The window adding its own lead in
+    front of the plan's said "Nothing is deleted" twice."""
+    plan = SimpleNamespace(warnings=(
+        "Shambles will stop managing your accounts. Nothing is deleted.",
+        "Afterwards:\nPersonal stays on disk."))
+
+    sheet = presenter.eject_sheet(plan)
+
+    assert sheet["message"].count("Nothing is deleted") == 1
+    assert sheet["message"].startswith("Shambles will stop managing")
+    assert "Personal stays on disk." in sheet["message"]
+    assert presenter.eject_sheet(SimpleNamespace(warnings=()))["message"] == \
+        presenter.EJECT_FALLBACK
