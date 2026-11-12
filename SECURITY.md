@@ -27,7 +27,9 @@ Useful context for judging impact. Fuller detail in
 [TECH_SPEC.md](TECH_SPEC.md) §3.
 
 - **Reads and writes OAuth credentials.** `~/.claude/.credentials.json` and
-  per-profile copies under `~/.claude-profiles/`. Files are written `0600`,
+  per-profile copies under `~/.shambles/`, plus one earlier copy per profile
+  (`credentials.json.previous`) when a save replaced a different login.
+  Files are written `0600`,
   directories `0700`, applied to a temp file before an atomic rename so a
   credential is never briefly world-readable. Tokens are copied byte-for-byte
   and never parsed beyond reading an expiry timestamp.

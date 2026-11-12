@@ -314,6 +314,9 @@ class ClaudeProvider:
         token = specmod.pointer(_parse(blob), self.spec["token"]["pointer"])
         return isinstance(token, str) and bool(token.strip())
 
+    def same_login(self, older: bytes | None, newer: bytes | None) -> bool:
+        return specmod.same_lineage(self.spec, _parse(older), _parse(newer))
+
     def liveness(self, blob: bytes | None, *, now_ms: int) -> Liveness:
         if not blob:
             return Liveness(ABSENT)

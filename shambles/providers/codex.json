@@ -112,6 +112,10 @@
     }
   },
   "surfaces_note": "all three share one auth.json. Desktop sharing is strong inference, not documented: ChatGPT.app bundles the identical binary and keeps its non-credential state in ~/.codex",
+  "lineage": {
+    "pointer": "tokens.account_id",
+    "note": "the ChatGPT account the tokens were issued for. Unchanged by a refresh, which rotates the refresh token."
+  },
   "token": {
     "pointer": "tokens.refresh_token",
     "note": "emptied in place when the login is cleared, as with Claude"

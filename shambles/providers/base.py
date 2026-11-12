@@ -114,6 +114,14 @@ class Provider(Protocol):
     def liveness(self, blob: bytes | None, *, now_ms: int) -> Liveness:
         """Whether it still works."""
 
+    def same_login(self, older: bytes | None, newer: bytes | None) -> bool:
+        """Whether ``newer`` is ``older`` refreshed, rather than another login.
+
+        Both vendors rotate the refresh token on use, so when it is, the
+        older one's token is already spent. ``False`` promises nothing:
+        either they differ, or there is nothing to tell them apart by.
+        """
+
     def companion_read(self, *, home) -> dict:
         """Account-scoped state living outside the credential store.
 

@@ -12,10 +12,15 @@ from pathlib import Path
 
 from . import configjson, state, usage as usage_mod
 from .errors import ProfileNameError, ShamblesError
+from .stores import FileStore
+from .stores.base import StoreUnavailableError
 from .providers import (ABSENT, CLOSED, CLOSING, NEEDS_LOGIN, SIGNED_OUT,
                         Liveness)
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
+
+#: One generation of what a stash replaced, beside the profile's login.
+PREVIOUS_CREDENTIALS_NAME = "credentials.json.previous"
 
 #: How loudly the UI draws the attention chip.
 EXPIRY_OK = "ok"
@@ -215,3 +220,44 @@ def validate_profile_name(name, existing) -> str:
     if any(str(other).casefold() == lowered for other in existing):
         raise ProfileNameError(f"A profile named '{cleaned}' already exists.")
     return cleaned
+
+
+def previous_credentials(paths, provider_id: str, name: str) -> Path:
+    """Where :func:`save_credential` keeps the login it last replaced."""
+    return paths.profile_dir(provider_id, name) / PREVIOUS_CREDENTIALS_NAME
+
+
+def save_credential(paths, provider, name: str, blob: bytes) -> None:
+    """Write ``blob`` as profile ``name``'s saved login, keeping what it replaces.
+
+    Every write of a saved login comes through here. The one it replaces is
+    kept as ``credentials.json.previous`` in the same owner-only directory,
+    written first: if it cannot be kept, nothing is replaced. Shambles decides
+    whose a Claude login is partly from an address a running session can
+    rewrite, so a stash can be wrong, and this is what makes a wrong one
+    recoverable by hand.
+
+    One generation, and only of a *different* login. A refresh of the same
+    login (see ``lineage`` in the provider specs) is written over the old one
+    without moving the backup: both vendors rotate the refresh token on use,
+    so the old token is spent, and letting each routine refresh push the
+    backup along would lose the one worth keeping two refreshes after a
+    wrong stash.
+    """
+    path = paths.credentials(provider.id, name)
+    try:
+        held = path.read_bytes()
+    except FileNotFoundError:
+        held = None
+    except OSError as exc:
+        raise StoreUnavailableError(f"Could not read {path}:\n{exc}") from exc
+    if held == blob:
+        return
+    if held and not _same_login(provider, held, blob):
+        FileStore(previous_credentials(paths, provider.id, name),
+                  0o600).write(held)
+    FileStore(path, 0o600).write(blob)
+
+
+def _same_login(provider, older: bytes, newer: bytes) -> bool:
+    return provider.same_login(older, newer)

@@ -6,6 +6,14 @@ Notable changes per release. Dates are the tag date.
 
 ### Added
 
+- **A saved login is no longer replaced without a copy.** When Shambles
+  saves the live login over a profile's saved one and the two are different
+  logins, the old one is kept beside it as `credentials.json.previous`
+  (owner-only, like the rest). Shambles works out whose a Claude login is
+  partly from `~/.claude.json`, which a Claude Code session still running
+  can rewrite, so it can file a login under the wrong profile; this makes
+  that recoverable by renaming the file back. A routine token refresh of the
+  same login does not replace the kept copy.
 - **Sign a lapsed account back in from the window.** A card marked `needs
   login` or `signed out` now offers **Sign in** in place of Switch, the live
   card included. It runs the vendor's own login with the address filled in
