@@ -12,6 +12,7 @@ it, so the check has to unpack the archive and look at each one.
 
 Usage:
     python scripts/check_glibc.py dist/shambles 2.35
+    python scripts/check_glibc.py dist/shambles-window 2.35   (a folder)
 """
 
 import re
@@ -43,7 +44,15 @@ def highest_glibc(text: str):
 
 
 def _shared_libraries(binary: Path, into: Path) -> list:
-    """Unpack the PyInstaller archive and return the libraries inside it."""
+    """The libraries inside a build: an archive to unpack, or a folder.
+
+    The window ships as a directory, so there is nothing to unpack; every
+    shared library in it is already on disk.
+    """
+    if binary.is_dir():
+        return sorted(path for path in binary.rglob("*")
+                      if path.is_file() and ".so" in path.name)
+
     from PyInstaller.archive.readers import CArchiveReader
 
     archive = CArchiveReader(str(binary))

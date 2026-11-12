@@ -40,3 +40,116 @@ def test_install_sh_writes_local_bin(fake_release, monkeypatch):
     dest = Path(os.environ["HOME"]) / ".local/bin/shambles"
     assert dest.is_file()
     assert dest.stat().st_mode & stat.S_IXUSR
+
+
+# -- the window archive -------------------------------------------------------
+
+
+@pytest.fixture
+def release_with_window(fake_release):
+    """The same stand-in ``curl``, now also serving a window archive.
+
+    Anything whose URL ends ``.tar.gz`` gets a real archive holding a
+    ``shambles-window`` folder; set ``WINDOW_BROKEN=1`` to serve junk instead,
+    which is what a release from before the window existed looks like once
+    GitHub's 404 page has been saved to disk.
+    """
+    import tarfile
+
+    bundle = fake_release / "build" / "shambles-window"
+    bundle.mkdir(parents=True)
+    launcher = bundle / "shambles-window"
+    launcher.write_text("#!/bin/sh\necho fake-window\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    (bundle / "_internal").mkdir()
+    (bundle / "_internal" / "marker").write_text("new", encoding="utf-8")
+    archive = fake_release / "window.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(bundle, arcname="shambles-window")
+
+    payload = fake_release / "payload"
+    curl = fake_release / "bin" / "curl"
+    curl.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        out=""; url=""
+        while [ $# -gt 0 ]; do
+          if [ "$1" = "-o" ]; then out=$2; shift 2; continue; fi
+          url=$1; shift
+        done
+        case "$url" in
+          *.tar.gz)
+            if [ -n "$WINDOW_BROKEN" ]; then echo "Not Found" > "$out"; exit 0; fi
+            cp {archive} "$out" ;;
+          *) cp {payload} "$out" ;;
+        esac
+        """), encoding="utf-8")
+    curl.chmod(0o755)
+    return fake_release
+
+
+def _install(monkeypatch, **env):
+    monkeypatch.setenv("SHAMBLES_RELEASE_BASE", "https://example.test")
+    monkeypatch.setenv("SHAMBLES_FORCE_ASSET", "shambles-linux-x86_64")
+    monkeypatch.setenv("SHAMBLES_SKIP_SMOKE", "1")
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    script = Path("scripts/install.sh").resolve()
+    return subprocess.run(["bash", str(script)], check=True,
+                          capture_output=True, text=True)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="bash installer")
+def test_install_sh_unpacks_the_window_where_shambles_looks_for_it(
+        release_with_window, monkeypatch):
+    from shambles.app import launch
+
+    result = _install(monkeypatch)
+
+    home = Path(os.environ["HOME"])
+    window = home / ".local/share/shambles/window/shambles-window"
+    assert window.is_file() and window.stat().st_mode & stat.S_IXUSR
+    assert (home / ".local/share/shambles/window/_internal/marker").is_file()
+    assert "Installed the window" in result.stdout
+    assert launch.window_bundle(env={}, platform="linux",
+                                executable=home / ".local/bin/shambles",
+                                home=home) == window, \
+        "the installer and the launcher disagree about where the window goes"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="bash installer")
+def test_install_sh_replaces_an_older_window_completely(release_with_window,
+                                                        monkeypatch):
+    """A file left over from the previous version must not survive inside the
+    new one, where the new Qt would try to load it."""
+    old = Path(os.environ["HOME"]) / ".local/share/shambles/window"
+    (old / "_internal").mkdir(parents=True)
+    (old / "_internal" / "stale-library.so").write_text("old")
+
+    _install(monkeypatch)
+
+    assert not (old / "_internal" / "stale-library.so").exists()
+    assert (old / "_internal" / "marker").read_text() == "new"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="bash installer")
+def test_a_release_with_no_window_still_installs_and_keeps_the_old_one(
+        release_with_window, monkeypatch):
+    old = Path(os.environ["HOME"]) / ".local/share/shambles/window"
+    old.mkdir(parents=True)
+    (old / "shambles-window").write_text("previous")
+
+    result = _install(monkeypatch, WINDOW_BROKEN="1")
+
+    assert (Path(os.environ["HOME"]) / ".local/bin/shambles").is_file()
+    assert (old / "shambles-window").read_text() == "previous", \
+        "a failed download destroyed the window that was installed"
+    assert "classic window" in result.stdout
+
+
+@pytest.mark.skipif(os.name == "nt", reason="bash installer")
+def test_install_sh_can_skip_the_window(release_with_window, monkeypatch):
+    _install(monkeypatch, SHAMBLES_NO_WINDOW="1")
+
+    home = Path(os.environ["HOME"])
+    assert (home / ".local/bin/shambles").is_file()
+    assert not (home / ".local/share/shambles").exists()

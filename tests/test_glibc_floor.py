@@ -34,3 +34,20 @@ def test_the_highest_version_wins_numerically_not_alphabetically():
 
 def test_a_three_part_version_is_read_in_full():
     assert highest_glibc("GLIBC_2.34.1 GLIBC_2.34") == (2, 34, 1)
+
+
+def test_a_folder_build_is_checked_library_by_library(tmp_path):
+    """The window ships unpacked, so its libraries are read where they lie."""
+    from scripts.check_glibc import _shared_libraries
+
+    bundle = tmp_path / "shambles-window"
+    (bundle / "_internal" / "PySide6").mkdir(parents=True)
+    (bundle / "shambles-window").write_bytes(b"")
+    (bundle / "_internal" / "libpython3.12.so.1.0").write_bytes(b"")
+    (bundle / "_internal" / "PySide6" / "QtCore.abi3.so").write_bytes(b"")
+    (bundle / "_internal" / "notes.txt").write_bytes(b"")
+
+    found = _shared_libraries(bundle, tmp_path / "unused")
+
+    assert [path.name for path in found] == ["QtCore.abi3.so",
+                                             "libpython3.12.so.1.0"]

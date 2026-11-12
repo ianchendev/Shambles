@@ -154,6 +154,16 @@ def cmd_window(args) -> int:
     try:
         run_window = _window_entry()
     except ImportError as exc:
+        # The release binary carries no Qt; the window is its own download.
+        from . import launch
+        bundle = launch.window_bundle()
+        if bundle is not None:
+            passed = []
+            if getattr(args, "home", None):
+                passed += ["--home", args.home]
+            if getattr(args, "no_motion", False):
+                passed.append("--no-motion")
+            launch.replace_with_window(bundle, passed)
         from shambles.__main__ import QT_MISSING
         sys.stderr.write(QT_MISSING.format(reason=exc))
         return EXIT_FAILED

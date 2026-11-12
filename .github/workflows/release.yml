@@ -20,9 +20,11 @@ jobs:
           # Building here targets glibc 2.35, and check_glibc.py holds it.
           - os: ubuntu-22.04
             artifact: shambles-linux-x86_64
+            window: shambles-window-linux-x86_64.tar.gz
             built: dist/shambles
           - os: ubuntu-22.04-arm
             artifact: shambles-linux-arm64
+            window: shambles-window-linux-arm64.tar.gz
             built: dist/shambles
           # macos-15-intel is the last x86_64 macOS image GitHub offers (the
           # macos-13 label was retired in December 2025) and it disappears in
@@ -31,12 +33,15 @@ jobs:
           # the architecture it runs on and does not cross-compile.
           - os: macos-15-intel
             artifact: shambles-macos-x86_64
+            window: shambles-window-macos-x86_64.tar.gz
             built: dist/shambles
           - os: macos-15
             artifact: shambles-macos-arm64
+            window: shambles-window-macos-arm64.tar.gz
             built: dist/shambles
           - os: windows-latest
             artifact: shambles-windows-x64.exe
+            window: shambles-window-windows-x64.zip
             built: dist/shambles.exe
     runs-on: ${{ matrix.os }}
     steps:
@@ -100,6 +105,13 @@ jobs:
         if: runner.os == 'Windows'
         run: python -m pytest --reruns 4 --reruns-delay 1
 
+      # --exclude-module PySide6 on every one-file build. The window is built
+      # further down as its own archive; Qt inside this binary would be
+      # unpacked on every launch and add most of a second to commands that
+      # never open a window. The CLI imports the window lazily and hands over
+      # to the installed bundle when Qt is absent, so excluding it here is
+      # what makes that hand-over happen.
+      #
       # --windowed only on Windows: it suppresses the console window for a GUI
       # app there. On Linux it would swallow the --version and --help output,
       # and on macOS it would produce a .app bundle instead of the single
@@ -129,6 +141,7 @@ jobs:
       - name: Build (Linux, macOS)
         if: runner.os != 'Windows'
         run: pyinstaller --onefile --name shambles
+             --exclude-module PySide6 --exclude-module shiboken6
              --add-data "shambles/providers/*.json:shambles/providers"
              --add-data "shambles/app/tui/*.tcss:shambles/app/tui"
              shambles/__main__.py
@@ -144,10 +157,12 @@ jobs:
         shell: pwsh
         run: |
           pyinstaller --onefile --name shambles `
+            --exclude-module PySide6 --exclude-module shiboken6 `
             --add-data "shambles/providers/*.json;shambles/providers" `
             --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
             shambles/__main__.py
           pyinstaller --onefile --windowed --name shamblesw `
+            --exclude-module PySide6 --exclude-module shiboken6 `
             --add-data "shambles/providers/*.json;shambles/providers" `
             --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
             shambles/__main__.py
@@ -206,6 +221,71 @@ jobs:
           fi
           ls -l out
 
+      # ---- the window ------------------------------------------------------
+      #
+      # Built after the one-file binary and from a separate install, so Qt
+      # cannot leak into the binary above. A folder, not one file: a one-file
+      # build unpacks itself on every launch, and with Qt inside that is most
+      # of a second before anything draws.
+      #
+      # libegl1 has to be on the Linux build machine because the spec copies
+      # libEGL into the bundle; a bare Linux or WSL install has none, and Qt
+      # will not import without it. The xcb libraries are picked up by
+      # PyInstaller from wherever the Qt plugins find them.
+      - name: Install Qt's system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0
+             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
+             libxcb-render-util0 libxcb-xkb1 libdbus-1-3 libfontconfig1
+
+      - name: Build the window
+        shell: bash
+        run: |
+          pip install ".[gui]"
+          python -c "import PySide6; print('PySide6', PySide6.__version__)"
+          pyinstaller --noconfirm packaging/window.spec
+
+      # Same promise as the binary: it must start on more than this runner.
+      - name: Linux window must run on more than this runner
+        if: runner.os == 'Linux'
+        run: python scripts/check_glibc.py dist/shambles-window 2.35
+
+      # Open the real window against an empty home, draw a frame, and keep
+      # the picture. This is the only evidence the bundle works on macOS and
+      # Windows, where nobody on the project can run it by hand. Offscreen so
+      # it needs no display; the frame is what proves QML, fonts and the Qt
+      # plugins all made it into the bundle. On Windows the build has no
+      # console, so the picture is the whole of the evidence there.
+      - name: Smoke-test the window
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SHAMBLES_WINDOW_SMOKE: window-${{ matrix.artifact }}.png
+        run: |
+          home="$(mktemp -d)"
+          ./dist/shambles-window/shambles-window --home "$home" || status=$?
+          cat "window-${{ matrix.artifact }}.png.log" || true
+          test "${status:-0}" = 0
+          test -s "window-${{ matrix.artifact }}.png"
+          ./dist/shambles-window/shambles-window --version || true
+          du -sh dist/shambles-window || true
+
+      - name: Pack the window
+        shell: bash
+        run: |
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip "../out/${{ matrix.window }}" shambles-window
+          else
+            tar -czf "../out/${{ matrix.window }}" shambles-window
+          fi
+          ls -l ../out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: window-frame-${{ matrix.artifact }}
+          path: window-${{ matrix.artifact }}.png*
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -216,8 +296,11 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
+      # shambles-* only: the window-frame-* artifacts are the smoke test's
+      # pictures, kept for review and not part of the release.
       - uses: actions/download-artifact@v4
         with:
+          pattern: shambles-*
           merge-multiple: true
           path: dist
 
@@ -255,6 +338,14 @@ jobs:
             ```bash
             pipx install git+https://github.com/ianchendev/Shambles
             ```
+
+            The scripts also fetch **the window**, a separate archive of
+            about 70 MB named `shambles-window-…` below, and unpack it to
+            `~/.local/share/shambles/window` (or
+            `%LOCALAPPDATA%\Shambles\window`). `shambles gui --new` opens
+            it. It is separate because it carries Qt, which would slow every
+            other command if it were inside the binary. Set
+            `SHAMBLES_NO_WINDOW=1` before running the script to skip it.
 
             ## Check it worked
 

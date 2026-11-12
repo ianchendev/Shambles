@@ -64,6 +64,40 @@ if ($HasWindowed) {
     Write-Host "Also installed $DestW, for a desktop shortcut with no console window."
 }
 
+# The window, unless told not to ($env:SHAMBLES_NO_WINDOW = '1'). It is its
+# own archive because Qt is far larger than everything else, so it is kept
+# out of the binary every command starts. Unpacked to a temporary folder and
+# swapped in, so a download that fails halfway leaves the window that was
+# already there. A release from before the window existed has no such
+# archive, which is reported and is not an error.
+$WindowAsset = 'shambles-window-windows-x64.zip'
+$WindowDir = Join-Path $DestDir 'window'
+if ($env:SHAMBLES_NO_WINDOW -ne '1' -and -not $env:SHAMBLES_FORCE_ASSET) {
+    $WindowTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("shambles-window-" + [guid]::NewGuid())
+    try {
+        New-Item -ItemType Directory -Force -Path $WindowTmp | Out-Null
+        $Zip = Join-Path $WindowTmp 'window.zip'
+        Write-Host "Downloading $WindowAsset…"
+        $From = if ($Version) { "$Base/download/$Version/$WindowAsset" }
+                else { "$Base/latest/download/$WindowAsset" }
+        Invoke-WebRequest -Uri $From -OutFile $Zip -UseBasicParsing
+        Expand-Archive -Path $Zip -DestinationPath $WindowTmp -Force
+        $Unpacked = Join-Path $WindowTmp 'shambles-window'
+        if (-not (Test-Path (Join-Path $Unpacked 'shambles-window.exe'))) {
+            throw 'The archive did not hold a window.'
+        }
+        if (Test-Path $WindowDir) { Remove-Item -Recurse -Force $WindowDir }
+        Move-Item $Unpacked $WindowDir
+        Write-Host "Installed the window to $WindowDir"
+        Write-Host "  shambles gui --new    opens it"
+    } catch {
+        Write-Host 'No window in this release, or it could not be unpacked.'
+        Write-Host "  'shambles gui' still opens the classic window."
+    } finally {
+        if (Test-Path $WindowTmp) { Remove-Item -Recurse -Force $WindowTmp }
+    }
+}
+
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $pathEntries = @()
 if ($userPath) {

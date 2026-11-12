@@ -363,17 +363,31 @@ runs on its own are in [docs/how-it-works.md](docs/how-it-works.md).
 **A redesigned window is in preview.** `shambles gui --new` opens it. It does
 everything above in one resizable window with no separate dialogs, adds light
 and dark themes, and can be driven from the keyboard (`1` to `9` switch,
-`/` filters, `Ctrl+N` adds). It is built on Qt, which is an optional extra
-and not in the release binaries yet:
+`/` filters, `Ctrl+N` adds).
+
+It is built on Qt, which is about 70 MB, so it ships as its own archive
+beside the `shambles` binary instead of inside it. The install scripts fetch
+it for you into `~/.local/share/shambles/window` (or
+`%LOCALAPPDATA%\Shambles\window`); set `SHAMBLES_NO_WINDOW=1` first to skip
+it. It carries the system libraries Qt needs, so there is nothing to
+`apt install`.
+
+From pip or pipx it is an optional extra instead:
 
 ```bash
 pip install 'shambles[gui]'      # or: pipx inject shambles PySide6-Essentials
 shambles gui --new
 ```
 
-On a bare Linux or WSL install Qt also needs three system libraries, and
-says so if they are missing: `sudo apt install libegl1 libxcb-cursor0
-libxkbcommon-x11-0`.
+Installed that way on a bare Linux or WSL machine, Qt needs three system
+libraries and says so if they are missing: `sudo apt install libegl1
+libxcb-cursor0 libxkbcommon-x11-0`.
+
+Because the window's QML engine is linked against Qt's own C++ network
+library, that library is inside the window archive. Nothing in Shambles
+calls it: the window loads only files that ship with it, and the rule that
+no Python module in the package imports a network module is still enforced
+by `tests/test_login.py`.
 
 ### The terminal dashboard
 
