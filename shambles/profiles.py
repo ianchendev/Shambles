@@ -243,6 +243,10 @@ def save_credential(paths, provider, name: str, blob: bytes) -> None:
     so the old token is spent, and letting each routine refresh push the
     backup along would lose the one worth keeping two refreshes after a
     wrong stash.
+
+    A login that holds a token is never replaced by one that does not: a
+    login cleared in place keeps its deadline and would otherwise pass for
+    the same login, refreshed.
     """
     path = paths.credentials(provider.id, name)
     try:
@@ -253,10 +257,35 @@ def save_credential(paths, provider, name: str, blob: bytes) -> None:
         raise StoreUnavailableError(f"Could not read {path}:\n{exc}") from exc
     if held == blob:
         return
+    if held and provider.has_login(held) and not provider.has_login(blob):
+        # A login cleared in place keeps its deadline, so it reads as the
+        # same login and would take no backup. It cannot sign in; the one it
+        # would replace might. Keeping that is never worse.
+        return
+    backup = previous_credentials(paths, provider.id, name)
+    displaced = None
     if held and not _same_login(provider, held, blob):
-        FileStore(previous_credentials(paths, provider.id, name),
-                  0o600).write(held)
-    FileStore(path, 0o600).write(blob)
+        try:
+            displaced = backup.read_bytes()
+        except FileNotFoundError:
+            displaced = b""
+        except OSError:
+            displaced = None
+        FileStore(backup, 0o600).write(held)
+    try:
+        FileStore(path, 0o600).write(blob)
+    except Exception:
+        # The login was not replaced, so the backup should not have moved:
+        # put back the one it held, as far as that is possible.
+        if displaced is not None:
+            try:
+                if displaced:
+                    FileStore(backup, 0o600).write(displaced)
+                else:
+                    backup.unlink(missing_ok=True)
+            except Exception:
+                pass
+        raise
 
 
 def _same_login(provider, older: bytes, newer: bytes) -> bool:

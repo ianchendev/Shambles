@@ -197,11 +197,11 @@ def test_a_wrong_attribution_stays_recoverable_through_later_refreshes(
         write_json(paths.credentials("codex", "Work"),
                    codex_login("w@example.test", "rw"))
         # Codex identity is inside the token, so the address cannot lie
-        # about it. Unknown identity is what lets it through here.
+        # about it. The same address on another ChatGPT account (a second
+        # workspace) is what lets it through here.
         theirs = [codex_login("w@example.test", f"rp{i}") for i in range(3)]
         for blob in theirs:
-            blob["tokens"]["id_token"] = "unreadable"
-            blob["tokens"]["account_id"] = "acct-personal"
+            blob["tokens"]["account_id"] = "acct-other-workspace"
         set_live = set_live_codex
     work = paths.credentials(provider_id, "Work").read_bytes()
 
@@ -250,3 +250,130 @@ def test_two_claude_logins_a_few_minutes_apart_are_different_logins(paths):
                     sleep=lambda _: None)
 
     assert previous(paths, "claude", "Work").read_bytes() == work
+
+
+# -- found by an independent review of the first version ---------------------
+
+def emptied(blob_bytes):
+    data = json.loads(blob_bytes)
+    data["claudeAiOauth"]["refreshToken"] = ""
+    return data
+
+
+def test_an_emptied_login_never_replaces_a_working_one(paths):
+    """A login cleared in place keeps its deadline, so it looked like the
+    same login refreshed: no backup, and the working token was replaced by
+    one that cannot sign in. Keeping the working one is never worse."""
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.test")
+    make_claude_json(paths, email="w@example.test")
+    work = paths.credentials("claude", "Work").read_bytes()
+    set_live_claude(paths, emptied(work))
+
+    switcher.switch(paths, claude(), "Other", platform="linux",
+                    sleep=lambda _: None)
+
+    assert paths.credentials("claude", "Work").read_bytes() == work
+
+
+@pytest.mark.parametrize("apart_ms, same", [
+    (abs(MEASURED_JITTER_MS), True),      # one login, refreshed
+    (10_000, True),                       # the edge of the tolerance
+    (11_000, False),
+    (30_000, False),                      # two sign-ins half a minute apart
+])
+def test_how_far_apart_two_deadlines_may_be_and_still_be_one_login(apart_ms,
+                                                                  same):
+    deadline = healthy_ms(25)
+    older = json.dumps(claude_login("a1", "r1", deadline)).encode()
+    newer = json.dumps(claude_login("a2", "r2", deadline + apart_ms)).encode()
+
+    assert claude().same_login(older, newer) is same
+
+
+@pytest.mark.parametrize("value", ["true", "NaN", "Infinity", '""', "null"])
+def test_a_deadline_that_is_not_a_number_proves_nothing(value):
+    blob = ('{"claudeAiOauth": {"refreshToken": "r", '
+            f'"refreshTokenExpiresAt": {value}}}}}').encode()
+    assert claude().same_login(blob, blob) is False
+
+
+def test_two_codex_logins_in_one_workspace_are_different_logins():
+    """tokens.account_id is the ChatGPT account, which a Team workspace
+    shares among its members. The address in the token tells them apart."""
+    mine = codex_login("w@example.test", "rw")
+    theirs = codex_login("colleague@example.test", "rc")
+    for blob in (mine, theirs):
+        blob["tokens"]["account_id"] = "acct-team"
+
+    assert codex().same_login(json.dumps(mine).encode(),
+                              json.dumps(theirs).encode()) is False
+
+
+def test_a_codex_token_that_names_nobody_proves_nothing():
+    mine = codex_login("w@example.test", "r1")
+    later = codex_login("w@example.test", "r2")
+    later["tokens"]["id_token"] = "unreadable"
+
+    assert codex().same_login(json.dumps(mine).encode(),
+                              json.dumps(later).encode()) is False
+
+
+def test_identical_bytes_are_not_written_again(paths, monkeypatch):
+    """With no deadline there is no lineage, so only the identity check
+    keeps a backup from being written over identical bytes."""
+    from shambles import profiles
+    from shambles.stores import FileStore
+
+    paths.ensure_profile("claude", "Work")
+    blob = json.dumps({"claudeAiOauth": {"accessToken": "a",
+                                         "refreshToken": "r"}}).encode()
+    paths.credentials("claude", "Work").write_bytes(blob)
+    writes = []
+    monkeypatch.setattr(FileStore, "write",
+                        lambda store, payload: writes.append(store.path))
+
+    profiles.save_credential(paths, claude(), "Work", blob)
+
+    assert writes == []
+
+
+def test_an_empty_stash_is_not_kept(paths):
+    from shambles import profiles
+
+    paths.ensure_profile("claude", "Work")
+    paths.credentials("claude", "Work").write_bytes(b"")
+
+    profiles.save_credential(paths, claude(), "Work",
+                             json.dumps(claude_login("a", "r", 1)).encode())
+
+    assert not previous(paths, "claude", "Work").exists()
+
+
+def test_a_failed_write_leaves_the_backup_as_it_was(paths, monkeypatch):
+    """The backup is written first. If the login itself then cannot be
+    written, the backup has been replaced by a copy of what is still there,
+    and the one it held is gone."""
+    from shambles import profiles
+    from shambles.stores import FileStore
+
+    paths.ensure_profile("claude", "Work")
+    write_json(paths.credentials("claude", "Work"),
+               claude_login("aw", "rw", healthy_ms(20)))
+    write_json(previous(paths, "claude", "Work"),
+               claude_login("a0", "r0-kept", healthy_ms(3)))
+    kept = previous(paths, "claude", "Work").read_bytes()
+    real = FileStore.write
+
+    def refuse_login(store, blob):
+        if store.path.name == "credentials.json":
+            raise StoreUnavailableError("locked")
+        return real(store, blob)
+
+    monkeypatch.setattr(FileStore, "write", refuse_login)
+    with pytest.raises(StoreUnavailableError):
+        profiles.save_credential(
+            paths, claude(), "Work",
+            json.dumps(claude_login("ax", "rx", healthy_ms(10))).encode())
+
+    assert previous(paths, "claude", "Work").read_bytes() == kept
