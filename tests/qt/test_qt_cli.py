@@ -46,17 +46,59 @@ def test_a_window_that_cannot_load_says_why_and_what_to_do(
     assert "shambles[gui]" in err and "libegl1" in err
 
 
-def test_plain_gui_still_opens_the_classic_window(monkeypatch, home):
-    """The new window is opt-in until the cutover."""
+def test_plain_gui_opens_the_new_window_when_it_can(monkeypatch, home):
+    from shambles import gui
+
+    seen = {}
+    monkeypatch.setattr(cli, "_window_entry", lambda: (
+        lambda service, *, motion=True: seen.update(home=service.paths.home)
+        or 0))
+    monkeypatch.setattr(gui, "run",
+                        lambda paths=None: pytest.fail("opened the Tk window"))
+
+    assert cli.main(["gui", "--home", str(home)]) == 0
+    assert seen == {"home": home}
+
+
+def test_plain_gui_falls_back_to_the_classic_window_and_says_so(
+        monkeypatch, capsys, home):
+    """A bare pip install has no Qt and no bundle, and must still open."""
     from shambles import gui
 
     opened = []
-    monkeypatch.setattr(gui, "run", lambda paths=None: opened.append(paths) or 0)
-    monkeypatch.setattr(cli, "_window_entry",
-                        lambda: pytest.fail("opened the new window unasked"))
+    monkeypatch.setattr(gui, "run",
+                        lambda paths=None: opened.append(paths.home) or 0)
 
     assert cli.main(["gui", "--home", str(home)]) == 0
-    assert len(opened) == 1
+    assert opened == [home]
+    err = capsys.readouterr().err
+    assert "classic window" in err and "shambles gui --new" in err
+
+
+def test_classic_is_always_the_tk_window_even_where_qt_is_installed(
+        monkeypatch, capsys, home):
+    from shambles import gui
+
+    opened = []
+    monkeypatch.setattr(cli, "_window_entry",
+                        lambda: pytest.fail("opened the new window"))
+    monkeypatch.setattr(gui, "run",
+                        lambda paths=None: opened.append(paths.home) or 0)
+
+    assert cli.main(["gui", "--classic", "--home", str(home)]) == 0
+    assert opened == [home]
+    assert capsys.readouterr().err == ""
+
+
+def test_new_never_falls_back_so_a_missing_qt_is_explained(monkeypatch,
+                                                           capsys, home):
+    from shambles import gui
+
+    monkeypatch.setattr(gui, "run",
+                        lambda paths=None: pytest.fail("fell back to Tk"))
+
+    assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
+    assert "shambles[gui]" in capsys.readouterr().err
 
 
 def test_the_window_package_ships_its_qml_and_fonts():

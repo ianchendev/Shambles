@@ -89,7 +89,7 @@ if ($env:SHAMBLES_NO_WINDOW -ne '1' -and -not $env:SHAMBLES_FORCE_ASSET) {
         if (Test-Path $WindowDir) { Remove-Item -Recurse -Force $WindowDir }
         Move-Item $Unpacked $WindowDir
         Write-Host "Installed the window to $WindowDir"
-        Write-Host "  shambles gui --new    opens it"
+        Write-Host "  shambles gui    opens it"
     } catch {
         Write-Host 'No window in this release, or it could not be unpacked.'
         Write-Host "  'shambles gui' still opens the classic window."

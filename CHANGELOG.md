@@ -25,7 +25,14 @@ Notable changes per release. Dates are the tag date.
   your previous account if the sign-in is cancelled or fails. The profile is
   kept so you can retry without naming it again.
 
-- **A new window, in preview: `shambles gui --new`.** Rebuilt in Qt on the
+- **`shambles gui` opens the new window.** It is the default wherever it is
+  installed: from the release installers, or with the `gui` extra from pip.
+  Where it is not, `shambles gui` opens the classic Tk window and says so in
+  one line. `shambles gui --classic` asks for the Tk window outright, and
+  `shambles gui --new` asks for the new one and explains what is missing
+  instead of falling back. The Tk window will be removed in a later release.
+
+- **A new window: `shambles gui --new`.** Rebuilt in Qt on the
   same service the terminal UI uses. One resizable column: each provider's
   live account on top with its usage, everyone else as rows beneath. What is
   different from the classic window:
@@ -45,8 +52,6 @@ Notable changes per release. Dates are the tag date.
   - While you are signed in as an account that is not saved, switching is
     held back until you save it. The classic window let the click through
     and relied on the core to refuse.
-
-  Plain `shambles gui` still opens the classic window.
 
 - **The installers fetch the new window as its own download.** It carries
   Qt, about 70 MB, so it ships beside the `shambles` binary instead of inside

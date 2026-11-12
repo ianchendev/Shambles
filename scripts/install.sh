@@ -104,7 +104,7 @@ if [ "${SHAMBLES_NO_WINDOW:-0}" != "1" ] && [ -n "$WINDOW_ASSET" ]; then
     rm -rf "$WINDOW_DIR"
     mv "${WINDOW_TMP}/shambles-window" "$WINDOW_DIR"
     echo "Installed the window to ${WINDOW_DIR}"
-    echo "  shambles gui --new    opens it"
+    echo "  shambles gui    opens it"
   else
     echo "No window in this release, or it could not be unpacked."
     echo "  'shambles gui' still opens the classic window."

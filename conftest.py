@@ -61,6 +61,24 @@ def no_thread_outlives_its_test():
         thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
+@pytest.fixture(autouse=True)
+def no_real_window(monkeypatch):
+    """`shambles gui` must never open the real Qt window from a test.
+
+    The Qt window is the default wherever Qt is installed, which includes
+    CI. A test that reaches ``cli.main(["gui"])`` would otherwise start a
+    real event loop and hang the run. Tests about the Qt window replace
+    these two again with stand-ins of their own.
+    """
+    from shambles.app import cli, launch
+
+    def unavailable():
+        raise ImportError("the Qt window is switched off under test")
+
+    monkeypatch.setattr(cli, "_window_entry", unavailable)
+    monkeypatch.setattr(launch, "window_bundle", lambda **_kw: None)
+
+
 @pytest.fixture
 def home(tmp_path):
     """A synthetic home directory. Never the real one."""

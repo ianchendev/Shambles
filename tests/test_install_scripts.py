@@ -2,6 +2,11 @@ import os, stat, subprocess, textwrap
 from pathlib import Path
 import pytest
 
+from shambles.app import launch
+
+#: Taken at import: conftest's ``no_real_window`` replaces it for each test.
+REAL_WINDOW_BUNDLE = launch.window_bundle
+
 @pytest.fixture
 def fake_release(tmp_path, monkeypatch):
     """Minimal static file server stand-in: pre-seed a 'downloaded' binary via
@@ -101,8 +106,6 @@ def _install(monkeypatch, **env):
 @pytest.mark.skipif(os.name == "nt", reason="bash installer")
 def test_install_sh_unpacks_the_window_where_shambles_looks_for_it(
         release_with_window, monkeypatch):
-    from shambles.app import launch
-
     result = _install(monkeypatch)
 
     home = Path(os.environ["HOME"])
@@ -110,7 +113,7 @@ def test_install_sh_unpacks_the_window_where_shambles_looks_for_it(
     assert window.is_file() and window.stat().st_mode & stat.S_IXUSR
     assert (home / ".local/share/shambles/window/_internal/marker").is_file()
     assert "Installed the window" in result.stdout
-    assert launch.window_bundle(env={}, platform="linux",
+    assert REAL_WINDOW_BUNDLE(env={}, platform="linux",
                                 executable=home / ".local/bin/shambles",
                                 home=home) == window, \
         "the installer and the launcher disagree about where the window goes"

@@ -9,6 +9,10 @@ from shambles.app import cli, launch
 
 ROOT = Path(__file__).resolve().parents[2]
 
+#: Taken at import, before conftest's ``no_real_window`` swaps it out for
+#: the run. These tests are about the real one.
+window_bundle = launch.window_bundle
+
 
 def bundle_at(folder: Path, name="shambles-window") -> Path:
     folder.mkdir(parents=True, exist_ok=True)
@@ -23,7 +27,7 @@ def bundle_at(folder: Path, name="shambles-window") -> Path:
 def test_the_bundle_is_found_where_the_installer_puts_it(tmp_path):
     installed = bundle_at(tmp_path / ".local/share/shambles/window")
 
-    assert launch.window_bundle(env={}, platform="linux",
+    assert window_bundle(env={}, platform="linux",
                                 executable=tmp_path / "bin/shambles",
                                 home=tmp_path) == installed
 
@@ -32,7 +36,7 @@ def test_on_windows_the_bundle_lives_under_localappdata(tmp_path):
     installed = bundle_at(tmp_path / "Shambles/window",
                           name="shambles-window.exe")
 
-    assert launch.window_bundle(
+    assert window_bundle(
         env={"LOCALAPPDATA": str(tmp_path)}, platform="win32",
         executable=tmp_path / "elsewhere/shambles.exe") == installed
 
@@ -42,7 +46,7 @@ def test_a_bundle_beside_the_binary_wins_over_the_installed_one(tmp_path):
     bundle_at(tmp_path / ".local/share/shambles/window")
     beside = bundle_at(tmp_path / "bin/shambles-window")
 
-    assert launch.window_bundle(env={}, platform="linux",
+    assert window_bundle(env={}, platform="linux",
                                 executable=tmp_path / "bin/shambles",
                                 home=tmp_path) == beside
 
@@ -51,13 +55,13 @@ def test_an_explicit_path_wins_over_everything(tmp_path):
     bundle_at(tmp_path / "bin/shambles-window")
     chosen = bundle_at(tmp_path / "custom", name="win")
 
-    assert launch.window_bundle(
+    assert window_bundle(
         env={launch.WINDOW_ENV: str(chosen)}, platform="linux",
         executable=tmp_path / "bin/shambles", home=tmp_path) == chosen
 
 
 def test_no_bundle_is_none_not_an_error(tmp_path):
-    assert launch.window_bundle(env={}, platform="linux",
+    assert window_bundle(env={}, platform="linux",
                                 executable=tmp_path / "bin/shambles",
                                 home=tmp_path) is None
 
@@ -66,7 +70,7 @@ def test_the_bundle_never_goes_looking_for_itself(tmp_path):
     """A bundle whose Qt fails to load must say so, not exec itself forever."""
     bundle_at(tmp_path / ".local/share/shambles/window")
 
-    assert launch.window_bundle(
+    assert window_bundle(
         env={launch.IN_WINDOW_ENV: "1"}, platform="linux",
         executable=tmp_path / "bin/shambles", home=tmp_path) is None
 
@@ -91,8 +95,10 @@ def no_qt():
     raise ImportError("No module named 'PySide6'")
 
 
+@pytest.mark.parametrize("flag", [[], ["--new"]])
 def test_without_qt_the_cli_hands_over_to_an_installed_bundle(
-        monkeypatch, tmp_path, home):
+        monkeypatch, tmp_path, home, flag):
+    """The release binary has no Qt, so this is how its `gui` opens at all."""
     bundle = bundle_at(tmp_path / "w")
     handed = {}
     monkeypatch.setattr(cli, "_window_entry", no_qt)
@@ -100,8 +106,9 @@ def test_without_qt_the_cli_hands_over_to_an_installed_bundle(
     monkeypatch.setattr(
         launch, "replace_with_window",
         lambda path, args, **kw: handed.update(path=path, args=args))
+    monkeypatch.setattr("shambles.gui.run", lambda paths=None: 0)
 
-    cli.main(["--no-motion", "gui", "--new", "--home", str(home)])
+    cli.main(["--no-motion", "gui", *flag, "--home", str(home)])
 
     assert handed == {"path": bundle,
                       "args": ["--home", str(home), "--no-motion"]}
