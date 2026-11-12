@@ -82,3 +82,51 @@ def test_a_line_without_a_url_leaves_the_controls_alone(make_app, paths):
     assert dialog._url is None
     assert str(dialog.open_button.cget("state")) == "disabled"
     dialog.destroy()
+
+
+def test_the_dialog_prefills_the_address_and_passes_the_environment(monkeypatch):
+    """Re-login knows whose account this is, so the vendor page should too."""
+    from shambles import gui, providers
+
+    seen = {}
+
+    class FakeProcess:
+        def __init__(self, argv, *, env=None):
+            seen.update(argv=argv, env=env)
+
+        def start(self, *, on_line, on_exit):
+            pass
+
+    monkeypatch.setattr(gui.login, "LoginProcess", FakeProcess)
+    dialog = gui.LoginDialog.__new__(gui.LoginDialog)
+    dialog._email = "o@example.com"
+    dialog._env = {"HOME": "/home/test"}
+
+    gui.LoginDialog._start(dialog, providers.load("claude"))
+
+    assert seen["argv"] == ["claude", "auth", "login", "--email", "o@example.com"]
+    assert seen["env"] == {"HOME": "/home/test"}
+
+
+def test_the_address_survives_the_browser_fallback(make_app, paths):
+    """Under WSL the URL arrives at once and replaces the waiting line. On a
+    re-login that line named the account to use, which is the one thing that
+    stops a browser signed in as somebody else from being reused."""
+    import tkinter as tk
+    from shambles import gui
+
+    app = make_app(paths)
+    dialog = gui.LoginDialog.__new__(gui.LoginDialog)
+    tk.Toplevel.__init__(dialog, app)
+    dialog.theme = app.theme
+    dialog._url = None
+    dialog._email = "o@example.com"
+    dialog.status = tk.Label(dialog, text="")
+    dialog.output = tk.Text(dialog)
+    dialog.open_button = tk.Button(dialog, state="disabled")
+    dialog.copy_button = tk.Button(dialog, state="disabled")
+
+    gui.LoginDialog._append(dialog, "Open https://claude.ai/oauth?x=1 to sign in")
+
+    assert "o@example.com" in dialog.status.cget("text")
+    dialog.destroy()

@@ -318,8 +318,11 @@ menu. Everything sits on screen.
 │ ┃ session ▓▓▓▓▓▓░░░░░░░░░░░░░░░░░  22% ⓘ                         │       no buttons at all
 │ ┃ week    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░  58% ⓘ                         │
 │                                                                  │
-│ │ Personal                    [ Switch ]   ✕                     │  ← every other card
-│ │ personal@example.com   needs login                             │
+│ │ Other                       [ Switch ]   ✕                     │  ← every other card
+│ │ other@example.com                                              │
+│                                                                  │
+│ │ Personal                    [ Sign in ]  ✕                     │  ← a lapsed one signs
+│ │ personal@example.com   needs login                             │       in instead
 │                                                                  │
 │ CODEX                                                            │
 │ Personal                                                         │
@@ -332,15 +335,22 @@ menu. Everything sits on screen.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The live card has **no buttons at all**, so you cannot delete the login you
-are using by misclicking. Each card shows a state chip only when something
-needs you:
+The live card has **no buttons at all** while its login is healthy, and never
+a ✕, so you cannot delete the login you are using by misclicking.
+
+A card whose login has lapsed shows **Sign in** where Switch would be, the
+live card included. It runs the vendor's own browser sign-in with the
+address filled in (Claude), saves the new login under the same profile and
+leaves it live, so there is no need to remove the account and add it back.
+Cancel, and you are put back on the account you were using.
+
+Each card shows a state chip only when something needs you:
 
 | Chip | Meaning |
 |---|---|
 | *(nothing)* | Healthy, or an expiry it cannot read |
 | `soon` (amber) | The refresh window closes within a day (Claude) or two (Codex) |
-| `needs login` (red) | The window closed, or this profile has no credential yet |
+| `needs login` (red) | The window closed, or this profile has no credential yet. Press **Sign in** |
 | `signed out` (red) | The login was cleared. The profile survives, the token is empty |
 
 Usage bars come from what the vendor already wrote to your disk, never from a

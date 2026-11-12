@@ -526,3 +526,165 @@ def test_restash_refuses_a_live_credential_that_is_not_this_profiles(paths):
     assert switcher.restash_active(paths, codex, platform="linux") is False
     assert paths.credentials("codex", "Work").read_bytes() == before, (
         "merely opening the window overwrote a saved token")
+
+
+# -- re-login -----------------------------------------------------------
+
+def lapsed_ms():
+    """An expiry three days behind the real clock: CLOSED for both vendors."""
+    return healthy_ms(-3)
+
+
+def seed_fresh(paths, provider, email):
+    """What a successful vendor login leaves behind: a new, healthy credential
+    distinct from every stash, under ``email``."""
+    if provider.id == "claude":
+        make_claude_json(paths, email=email)
+        return make_live_claude_login(paths, access_token="tok-fresh")
+    return make_live_codex_login(paths, email=email, exp_ms=healthy_ms(5))
+
+
+def live_path(paths, provider):
+    if provider.id == "claude":
+        return paths.claude_dir / ".credentials.json"
+    return paths.home / ".codex" / "auth.json"
+
+
+def parked_lapsed(paths, provider):
+    """Work is live and healthy; Old is parked with a closed window."""
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    make_profile(paths, provider.id, "Old", email="o@example.com",
+                 refresh_expires_ms=lapsed_ms())
+    seed_live(paths, provider, "w@example.com")
+
+
+def test_begin_relogin_switches_and_keeps_the_outgoing_login(paths, provider):
+    parked_lapsed(paths, provider)
+    work = paths.credentials(provider.id, "Work").read_bytes()
+    dead = paths.credentials(provider.id, "Old").read_bytes()
+
+    previous = switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                                      sleep=lambda _: None)
+
+    assert previous == "Work"
+    assert state.read_active(paths, provider.id) == "Old"
+    assert paths.credentials(provider.id, "Work").read_bytes() == work
+    assert live_path(paths, provider).read_bytes() == dead
+
+
+def test_begin_relogin_of_the_live_profile_moves_nothing(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    live = seed_live(paths, provider, "w@example.com")
+    before = live.read_bytes()
+
+    assert switcher.begin_relogin(paths, provider, "Work",
+                                  platform="linux") == "Work"
+    assert live.read_bytes() == before
+
+
+def test_begin_relogin_refuses_to_overwrite_an_unsaved_login(paths, provider):
+    """No profile is marked, so switch() would file the live login nowhere."""
+    make_profile(paths, provider.id, "Old", email="o@example.com",
+                 refresh_expires_ms=lapsed_ms())
+    live = seed_live(paths, provider, "stranger@example.com")
+    before = live.read_bytes()
+
+    with pytest.raises(AlreadyManagedError):
+        switcher.begin_relogin(paths, provider, "Old", platform="linux")
+
+    assert live.read_bytes() == before
+    assert state.read_active(paths, provider.id) is None
+
+
+def test_begin_relogin_of_a_missing_profile_is_refused(paths, provider):
+    with pytest.raises(ProfileNotFoundError):
+        switcher.begin_relogin(paths, provider, "Ghost", platform="linux")
+
+
+def test_judge_relogin_recognises_a_renewed_login(paths, provider):
+    parked_lapsed(paths, provider)
+    switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                           sleep=lambda _: None)
+    seed_fresh(paths, provider, "o@example.com")
+
+    assert switcher.judge_relogin(paths, provider, "Old",
+                                  platform="linux") == switcher.RENEWED
+
+
+def test_judge_relogin_sees_the_dead_token_still_in_place(paths, provider):
+    """The vendor exited cleanly but wrote nothing: not a success."""
+    parked_lapsed(paths, provider)
+    switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                           sleep=lambda _: None)
+
+    assert switcher.judge_relogin(paths, provider, "Old",
+                                  platform="linux") == switcher.UNCHANGED
+
+
+def test_judge_relogin_sees_an_empty_slot(paths, provider):
+    make_profile(paths, provider.id, "New", token=False, active=True)
+
+    assert switcher.judge_relogin(paths, provider, "New",
+                                  platform="linux") == switcher.UNCHANGED
+
+
+def test_judge_relogin_names_a_login_for_somebody_else(paths, provider):
+    parked_lapsed(paths, provider)
+    switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                           sleep=lambda _: None)
+    seed_fresh(paths, provider, "stranger@example.com")
+
+    assert switcher.judge_relogin(paths, provider, "Old",
+                                  platform="linux") == switcher.OTHER_ACCOUNT
+
+
+def test_abandon_relogin_puts_you_back_while_the_dead_token_is_in_place(
+        paths, provider):
+    parked_lapsed(paths, provider)
+    work = paths.credentials(provider.id, "Work").read_bytes()
+    dead = paths.credentials(provider.id, "Old").read_bytes()
+    switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                           sleep=lambda _: None)
+
+    assert switcher.abandon_relogin(paths, provider, "Old", "Work",
+                                    platform="linux", sleep=lambda _: None)
+
+    assert state.read_active(paths, provider.id) == "Work"
+    assert live_path(paths, provider).read_bytes() == work
+    assert paths.credentials(provider.id, "Old").read_bytes() == dead
+
+
+def test_abandon_relogin_puts_you_back_from_an_empty_profile(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    make_profile(paths, provider.id, "New", token=False)
+    seed_live(paths, provider, "w@example.com")
+    switcher.begin_relogin(paths, provider, "New", platform="linux",
+                           sleep=lambda _: None)
+
+    assert switcher.abandon_relogin(paths, provider, "New", "Work",
+                                    platform="linux", sleep=lambda _: None)
+    assert state.read_active(paths, provider.id) == "Work"
+
+
+def test_abandon_relogin_never_discards_a_new_login(paths, provider):
+    """Anything other than the dead token means the vendor wrote something."""
+    parked_lapsed(paths, provider)
+    switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                           sleep=lambda _: None)
+    fresh = seed_fresh(paths, provider, "stranger@example.com").read_bytes()
+
+    assert not switcher.abandon_relogin(paths, provider, "Old", "Work",
+                                        platform="linux")
+    assert state.read_active(paths, provider.id) == "Old"
+    assert live_path(paths, provider).read_bytes() == fresh
+
+
+@pytest.mark.parametrize("previous", [None, "Old", "Gone"])
+def test_abandon_relogin_has_nowhere_to_go_back_to(paths, provider, previous):
+    parked_lapsed(paths, provider)
+    switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                           sleep=lambda _: None)
+
+    assert not switcher.abandon_relogin(paths, provider, "Old", previous,
+                                        platform="linux")
+    assert state.read_active(paths, provider.id) == "Old"

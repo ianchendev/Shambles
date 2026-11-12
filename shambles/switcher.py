@@ -293,6 +293,99 @@ def abandon_new_account(paths, provider, created: str, previous: str | None, *,
     return True
 
 
+#: What :func:`judge_relogin` found in the live slot after a vendor login.
+RENEWED = "renewed"
+UNCHANGED = "unchanged"
+OTHER_ACCOUNT = "other_account"
+
+
+def begin_relogin(paths, provider, name: str, *, platform=sys.platform,
+                  now_ms_fn=now_ms, sleep=time.sleep) -> str | None:
+    """Make ``name`` live so the vendor's login can fill it.
+
+    Returns the profile that was live before, which is what
+    :func:`abandon_relogin` puts back if the sign-in comes to nothing. When
+    ``name`` already is the live profile nothing moves and ``name`` comes back.
+
+    Refuses when no saved profile is live but the vendor holds a login.
+    ``switch`` stashes the outgoing login under the marked profile, so with
+    nothing marked that login would be overwritten and kept nowhere. This is
+    ``add_empty_account``'s guard, widened from an unmanaged machine to any
+    login that no profile holds.
+    """
+    if not paths.profile_dir(provider.id, name).is_dir():
+        raise ProfileNotFoundError(f"Profile '{name}' no longer exists on disk.")
+
+    current = state.inspect(paths, provider, platform=platform)
+    if current.kind == state.MANAGED and current.profile == name:
+        return name
+
+    marked = current.profile
+    if marked and not paths.profile_dir(provider.id, marked).is_dir():
+        marked = None
+    if marked is None and _store(paths, provider, platform).read() is not None:
+        raise AlreadyManagedError(SAVE_FIRST)
+
+    switch(paths, provider, name, platform=platform, now_ms_fn=now_ms_fn,
+           sleep=sleep)
+    return marked
+
+
+def judge_relogin(paths, provider, name: str, *, platform=sys.platform,
+                  now_ms_fn=now_ms) -> str:
+    """What the vendor's login left in the live slot, judged against ``name``.
+
+    :data:`UNCHANGED` when nothing usable arrived: no credential, no token in
+    it, or a token whose window is itself closed. A vendor that exits 0
+    without writing leaves the dead token exactly where ``begin_relogin`` put
+    it, and that must not read as a success.
+
+    :data:`OTHER_ACCOUNT` when the new login is provably somebody else's --
+    the browser was already signed in to a different account. Saving it would
+    overwrite ``name``'s stash with that account's token.
+    """
+    blob = _store(paths, provider, platform).read()
+    if (blob is None or not provider.has_login(blob)
+            or provider.liveness(blob, now_ms=now_ms_fn()).needs_login):
+        return UNCHANGED
+    if not belongs_to(paths, provider, name, platform=platform):
+        return OTHER_ACCOUNT
+    return RENEWED
+
+
+def abandon_relogin(paths, provider, name: str, previous: str | None, *,
+                    platform=sys.platform, now_ms_fn=now_ms,
+                    sleep=time.sleep) -> bool:
+    """Put the user back on ``previous`` after a re-login that produced nothing.
+
+    ``abandon_new_account`` cannot do this: it only rolls back from an empty
+    slot, and a lapsed profile's switch leaves its dead token there instead.
+
+    Returns True when it switched back. Touches nothing, and returns False,
+    unless ``name`` is still the live profile and the live credential is
+    exactly what ``name`` already holds (or nothing at all). Anything else
+    means the vendor wrote a new login, and switching away would throw it out.
+    """
+    if not previous or previous == name:
+        return False
+    if not paths.profile_dir(provider.id, previous).is_dir():
+        return False
+    if state.read_active(paths, provider.id) != name:
+        return False
+
+    try:
+        live = _store(paths, provider, platform).read()
+        if live is not None and (
+                paths.credentials(provider.id, name).read_bytes() != live):
+            return False
+    except (ShamblesError, OSError):
+        return False
+
+    switch(paths, provider, previous, platform=platform, now_ms_fn=now_ms_fn,
+           sleep=sleep)
+    return True
+
+
 def rename_profile(paths, provider, old_name: str, new_name: str, *,
                    sleep=time.sleep) -> str:
     if not paths.profile_dir(provider.id, old_name).is_dir():
