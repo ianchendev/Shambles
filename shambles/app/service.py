@@ -127,9 +127,15 @@ class ShamblesService:
 
     def switch(self, provider_id, account):
         try:
-            switcher.switch(self.paths, self._provider(provider_id), account,
+            provider = self._provider(provider_id)
+            # A stale marker would make switch() refuse, and would file the
+            # outgoing login under the wrong name if it did not.
+            switcher.adopt_live_owner(self.paths, provider,
+                                      platform=self.platform)
+            switcher.switch(self.paths, provider, account,
                             platform=self.platform)
-            return self._result(True, "switch", f"Switched to {account}.")
+            return self._result(True, "switch", f"Switched to {account}.",
+                                warnings=self._switch_warnings(provider))
         except ShamblesError as exc:
             return self._failure("switch", exc)
 
@@ -161,6 +167,11 @@ class ShamblesService:
 
     def refresh(self):
         for provider in self.providers:
+            # Adoption first, as the window does: re-stashing is gated on the
+            # live login belonging to the marked profile, so a stale marker
+            # would leave a rotating token un-stashed.
+            switcher.adopt_live_owner(self.paths, provider,
+                                      platform=self.platform)
             switcher.restash_active(
                 self.paths, provider, platform=self.platform)
         return self._result(True, "refresh")
@@ -308,6 +319,23 @@ class ShamblesService:
         except Exception:
             pass
 
+    def _switch_warnings(self, provider):
+        """What a successful switch did not reach.
+
+        A terminal whose environment points the vendor somewhere else keeps
+        its own login, and "Launch claude here" in the terminal UI would start
+        it on exactly that one. Said with the result, because that is when a
+        person acts on it.
+        """
+        override = state.config_dir_override(
+            provider, home=self.paths.home, env=getattr(provider, "env", None))
+        if not override:
+            return ()
+        variable = (provider.spec.get("config_dir") or {}).get("env", "")
+        return (f"{variable} is set in this environment, so a terminal started "
+                f"from here reads its login from {override}, not the one "
+                "Shambles just switched. VS Code is unaffected.",)
+
     def _live_profile(self, provider):
         """The saved profile that is live right now, if there is one."""
         current = state.inspect(self.paths, provider, platform=self.platform)
@@ -370,9 +398,17 @@ class ShamblesService:
             code, message, f"{where} Sign in to '{name}' to try again."))
 
     def plan_remove(self, provider_id, name):
+        """Ask before deleting a login, and say what getting it back costs."""
+        try:
+            email = state.profile_email(
+                self.paths, self._provider(provider_id), name)
+        except Exception:
+            email = None
+        who = email or "that account"
         return ActionPlan(
             "remove", provider_id, name, True, f"Remove {name}?",
-            ("The saved login will be removed.",),
+            (f"Its saved login is deleted. Signing {who} back in here will "
+             "need a new verification email.",),
         )
 
     def remove(self, plan):
@@ -393,9 +429,14 @@ class ShamblesService:
     def plan_eject(self):
         plan = eject_mod.survey(
             self.paths, self.providers, platform=self.platform)
+        # What eject does comes first. The survey's summary is written for
+        # after the fact, and shown alone it read as if eject had happened.
         return ActionPlan(
             "eject", None, None, True, "Eject Shambles?",
-            (eject_mod.summary(plan),),
+            ("Shambles will stop managing your accounts. Each provider keeps "
+             "the login it has now and goes back to being an ordinary "
+             "install. Nothing is deleted.",
+             "Afterwards:\n" + eject_mod.summary(plan)),
         )
 
     def eject(self, plan):

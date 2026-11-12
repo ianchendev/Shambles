@@ -828,3 +828,60 @@ def test_settle_new_login_puts_you_back_when_nothing_arrived(paths, provider,
     assert state.read_active(paths, provider.id) == "Work"
     assert live_path(paths, provider).read_bytes() == work
     assert paths.profile_dir(provider.id, "Personal").is_dir()
+
+
+# -- a marker left behind by a login made elsewhere ------------------------
+
+def drifted_to_saved(paths, provider):
+    """Work is marked, but the live login is Home's: signed in elsewhere."""
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    make_profile(paths, provider.id, "Home", email="h@example.com")
+    if provider.id == "claude":
+        make_claude_json(paths, email="h@example.com")
+        live = paths.claude_dir / ".credentials.json"
+        live.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        live = paths.home / ".codex" / "auth.json"
+        live.parent.mkdir(parents=True, exist_ok=True)
+    live.write_bytes(paths.credentials(provider.id, "Home").read_bytes())
+    return live
+
+
+def test_adopt_live_owner_points_the_marker_at_whoever_is_signed_in(
+        paths, provider):
+    drifted_to_saved(paths, provider)
+    work = paths.credentials(provider.id, "Work").read_bytes()
+
+    assert switcher.adopt_live_owner(paths, provider, platform="linux") == "Home"
+
+    assert state.read_active(paths, provider.id) == "Home"
+    assert paths.credentials(provider.id, "Work").read_bytes() == work
+
+
+def test_adopt_live_owner_leaves_a_strangers_login_alone(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.com", active=True)
+    seed_fresh(paths, provider, "stranger@example.com")
+
+    assert switcher.adopt_live_owner(paths, provider, platform="linux") is None
+    assert state.read_active(paths, provider.id) == "Work"
+
+
+def test_switching_to_the_account_that_is_already_live_is_not_refused(
+        paths, provider):
+    """Reproduced in the CLI and the terminal UI: signed in as Home with Work
+    marked, 'switch claude Home' was refused with a message telling the user
+    to switch to the profile the login belongs to -- which is Home."""
+    from shambles.app.service import ShamblesService
+
+    live = drifted_to_saved(paths, provider)
+    home = live.read_bytes()
+    work = paths.credentials(provider.id, "Work").read_bytes()
+    service = ShamblesService(paths=paths, providers=[provider],
+                              platform="linux")
+
+    result = service.switch(provider.id, "Home")
+
+    assert result.ok, result.error
+    assert state.read_active(paths, provider.id) == "Home"
+    assert live.read_bytes() == home
+    assert paths.credentials(provider.id, "Work").read_bytes() == work

@@ -12,7 +12,7 @@ from textual.widgets import Static
 
 from ..snapshot import Account, Group, Snapshot
 from .brand import LOCKUP_MIN_HEIGHT, header_kind, header_text
-from .widgets import AccountDetails, AccountList
+from .widgets import AccountDetails, AccountList, notices_text
 
 
 MINIMUM_HEIGHT = 16
@@ -22,12 +22,14 @@ FULL_FOOTER = (
     "j/k move · ⏎ switch · a add · x eject · m menu · "
     "l login · r refresh · ? help · q quit"
 )
-COMPACT_FOOTER = "⏎ switch · a add · x eject · m menu · ? help · q quit"
+# Eject gives way to login at this width: it is rare, still listed under ?,
+# and l is the only key that fixes an account that needs a login.
+COMPACT_FOOTER = "⏎ switch · l login · a add · m menu · ? help · q quit"
 FULL_FOOTER_ASCII = (
     "j/k move | Enter switch | a add | x eject | m menu | "
     "l login | r refresh | ? help | q quit"
 )
-COMPACT_FOOTER_ASCII = "Enter switch | a add | x eject | m menu | ? help | q quit"
+COMPACT_FOOTER_ASCII = "Enter switch | l login | a add | m menu | ? help | q quit"
 
 
 def _paint_footer(text: str) -> str:
@@ -82,6 +84,12 @@ class Dashboard(Widget):
             id="terminal-too-small",
         )
         yield Static(id="dashboard-header", markup=False)
+        # What is true about a provider rather than an account: a login
+        # nobody saved, a stale marker, an override. Hidden when all is well.
+        notices = Static(notices_text(self.snapshot), id="provider-notices",
+                         markup=False)
+        notices.display = bool(notices_text(self.snapshot))
+        yield notices
         with Vertical(id="dashboard-body"):
             with Horizontal(id="main-panes"):
                 yield AccountList(self.snapshot, id="account-list")

@@ -14,7 +14,7 @@ from shambles import login, settings, update_check
 from shambles.app.service import (
     HIDDEN_LINE, ActionError, ActionPlan, ActionResult,
 )
-from shambles.app.snapshot import Account, Group, Snapshot, Surface
+from shambles.app.snapshot import Account, Group, Notice, Snapshot, Surface
 from shambles.app.tui.application import ShamblesTUI
 from shambles.app.tui.brand import BrandVariant, brand_text
 from shambles.app.tui.dashboard import Dashboard
@@ -692,7 +692,7 @@ async def test_rename_failure_shows_the_service_error(service):
 async def test_remove_needs_explicit_confirmation(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await pilot.press("m", "d")
+        await pilot.press("j", "m", "d")
         assert app.screen.id == "confirm-action"
         assert service.remove_calls == []
         await pilot.press("escape")
@@ -723,7 +723,7 @@ async def test_remove_failure_shows_the_service_error(service):
     )
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await pilot.press("m", "d", "enter")
+        await pilot.press("j", "m", "d", "enter")
         await pilot.pause()
         assert app.screen.id == "result"
         assert "Switch away before removing it." in screen_text(app)
@@ -732,7 +732,7 @@ async def test_remove_failure_shows_the_service_error(service):
 async def test_undersized_terminal_refuses_a_confirmed_removal(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await pilot.press("m", "d")
+        await pilot.press("j", "m", "d")
         assert app.screen.id == "confirm-action"
         await pilot.resize_terminal(80, 8)
         await pilot.press("enter")
@@ -745,7 +745,7 @@ async def test_concurrent_mutation_blocks_new_lifecycle_actions_until_released(s
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         try:
-            await pilot.press("m", "d", "enter")
+            await pilot.press("j", "m", "d", "enter")
             assert service.mutation_started.wait(5)
             assert app.mutation_running
             await pilot.press("m")
@@ -1510,3 +1510,132 @@ async def test_the_empty_welcome_says_which_key_adds_an_account(empty_service):
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         assert "Press a to add" in screen_text(app)
+
+
+# --- What is true about a provider, said on screen -------------------------
+#
+# Reproduced against a synthetic home on a first run while already signed in
+# to Claude: the welcome said "Press a to add your first account", a refused
+# with "Save your current account first", and nothing on screen could save
+# it -- m does nothing without an account to act on.
+
+def words(app):
+    """The screen as one line of words, so a wrapped sentence still matches."""
+    return " ".join(screen_text(app).split())
+
+
+UNSAVED = Notice("unsaved_login",
+                 "Signed in as me@example.test, which is not saved yet.",
+                 "Save it as an account.")
+
+
+def signed_in_unsaved():
+    return SnapshotService(Snapshot(1, groups=[
+        Group("claude", "Claude Code", state="unmanaged",
+              live_email="me@example.test", can_save=True,
+              notices=[UNSAVED]),
+        Group("codex", "Codex"),
+    ]))
+
+
+async def test_first_run_while_signed_in_offers_to_save_that_login():
+    service = signed_in_unsaved()
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        text = words(app)
+        assert "me@example.test" in text
+        assert "Press s to save it" in text
+
+        await pilot.press("s")
+        assert app.screen.id == "name-input"
+        assert "me@example.test" in screen_text(app)
+        await pilot.press(*"Mine", "enter")
+        await pilot.pause()
+        assert service.save_calls == [("claude", "Mine")]
+
+
+async def test_the_dashboard_says_what_is_wrong_with_a_provider(service):
+    service.current = Snapshot(1, groups=[
+        Group("claude", "Claude", state="drifted",
+              live_email="stranger@example.test", can_save=True,
+              notices=[Notice(
+                  "unsaved_login",
+                  "Signed in as stranger@example.test, which is not saved "
+                  "yet. 'Personal' is p@example.test.", "Save it.")],
+              accounts=[Account("Personal", active=True,
+                                email="p@example.test")]),
+    ])
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause()
+        text = words(app)
+        assert "stranger@example.test" in text
+        assert "Press s to save it" in text
+
+
+async def test_s_saves_the_provider_that_has_something_to_save(service):
+    """The selected account is Codex's; the unsaved login is Claude's."""
+    service.current = Snapshot(1, groups=[
+        Group("claude", "Claude", can_save=True,
+              live_email="me@example.test", notices=[UNSAVED]),
+        Group("codex", "Codex", accounts=[Account("Personal", active=True)]),
+    ])
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.press("s")
+        assert app.screen.id == "name-input"
+        await pilot.press(*"Mine", "enter")
+        await pilot.pause()
+        assert service.save_calls == [("claude", "Mine")]
+
+
+async def test_s_with_nothing_to_save_says_so(service):
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.press("s")
+        await pilot.pause()
+        assert service.save_calls == []
+        assert "Nothing to save" in screen_text(app)
+
+
+async def test_a_saved_account_signed_in_elsewhere_names_the_account(service):
+    service.current = Snapshot(1, groups=[
+        Group("claude", "Claude", state="drifted",
+              notices=[Notice(
+                  "signed_in_elsewhere",
+                  "Signed in as w@example.test, which is saved as 'Work', "
+                  "but 'Personal' is marked active.", "Switch to it.",
+                  account="Work")],
+              accounts=[Account("Personal", active=True), Account("Work")]),
+    ])
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause()
+        assert "Select 'Work' and press Enter" in words(app)
+
+
+def test_the_terminal_ui_opens_on_a_settled_marker(monkeypatch):
+    """Adoption runs before the first frame, so the list never opens showing
+    the wrong account as active."""
+    from shambles.app.tui import application
+
+    service = SnapshotService(Snapshot(1, groups=[Group("claude", "Claude")]))
+    monkeypatch.setattr(application.ShamblesTUI, "run", lambda self: None)
+
+    application.run_tui(service)
+
+    assert service.refresh_calls == 1
+
+
+async def test_the_active_account_menu_does_not_offer_remove(service):
+    """Reproduced: m then d on the active account asked "Remove Personal?",
+    and only after Enter said it could not be removed."""
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m")
+        assert "Remove" not in screen_text(app)
+        await pilot.press("d")
+        await pilot.pause()
+        assert service.remove_plan_calls == []
+        assert app.screen.id != "confirm-action"

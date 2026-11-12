@@ -195,11 +195,23 @@ def tooltip_position(widget_x, widget_y, widget_height, tip_width,
     return x, y
 
 
+#: Used in place of GROUP_STATES when somebody is signed in that no saved
+#: profile holds. "Not sure which account is live" was false there: the
+#: address was known, and the thing worth saying is that it is not saved.
+UNSAVED_STATES = {
+    state.UNKNOWN: "{warn} Signed in as {live_email}, which is not saved",
+    state.MISSING_PROFILE: "{warn} Signed in as {live_email}, which is not "
+                           "saved. Profile '{profile}' is missing from disk",
+}
+
+
 def group_status(current, warn: str = "⚠") -> str:
     """The second line of a group heading: who is live, or what is wrong."""
     if current.kind == state.MANAGED:
         return current.live_email or ""
     template = GROUP_STATES.get(current.kind, "")
+    if current.live_email and current.kind in UNSAVED_STATES:
+        template = UNSAVED_STATES[current.kind]
     return template.format(warn=warn,
                            profile=current.profile or "",
                            live_email=current.live_email or "unknown",
@@ -860,34 +872,20 @@ class ShamblesApp(tk.Tk):
             if override:
                 self._render_override_banner(provider, override)
 
+            unreadable = self._unreadable_store(provider)
+            if unreadable:
+                self._render_store_banner(provider, unreadable)
+
         # Whatever armed a confirmation has now had its chance to claim it.
         self._confirm = None
 
     def _adopt_live_login(self, provider):
-        """Point the marker at the account actually signed in, when we can.
+        """Point the marker at the saved account actually signed in.
 
-        A token lapses, the user signs in again through the browser, and the
-        machine is now on a different account than the marker names. If that
-        account is one of the saved ones the marker is simply stale, and the
-        honest correction is to move it -- otherwise the card keeps showing
-        somebody else's address under the old profile's name, and the Switch
-        button beside it offers to file that login under the wrong profile.
-
-        Moves the marker and nothing else. No credential is read, copied or
-        written here: adoption is a relabelling, and it stays reversible by
-        switching back. An unrecognised login is left alone for the user to
-        name -- see the save control in the heading.
+        See :func:`shambles.switcher.adopt_live_owner`, which every frontend
+        now shares.
         """
-        try:
-            current = state.inspect(self.paths, provider, platform=self.platform)
-            if current.kind != state.DRIFTED:
-                return
-            owner = state.owner_of_live(self.paths, provider,
-                                        platform=self.platform)
-            if owner and owner != current.profile:
-                state.write_active(self.paths, provider.id, owner)
-        except ShamblesError:
-            return  # an unreadable store is not a reason to refuse the window
+        switcher.adopt_live_owner(self.paths, provider, platform=self.platform)
 
     def _render_group(self, provider, current):
         t = self.theme
@@ -913,7 +911,8 @@ class ShamblesApp(tk.Tk):
                  bg=t["window"], fg=t["faint"], anchor="w").pack(fill="x")
 
         live = current.profile if current.kind == state.MANAGED else None
-        tk.Label(titles, text=elide(live or "Not signed in", t.title,
+        idle = "Not saved" if current.live_email else "Not signed in"
+        tk.Label(titles, text=elide(live or idle, t.title,
                                     WINDOW_WIDTH - 4 * GAP_L),
                  font=t.title if live else t.name,
                  bg=t["window"], fg=t["text"] if live else t["muted"],
@@ -976,7 +975,8 @@ class ShamblesApp(tk.Tk):
         does not say: a machine with no profiles and no credential is
         UNMANAGED too, and the button would refuse the moment it was clicked.
         """
-        if current.kind not in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED):
+        if current.kind not in (state.UNMANAGED, state.UNKNOWN, state.DRIFTED,
+                                state.MISSING_PROFILE):
             return
         if not self._has_live_login(provider):
             return
@@ -1107,6 +1107,37 @@ class ShamblesApp(tk.Tk):
                     f"Shambles runs it to sign you in.\n"
                     f"Switching between accounts you already saved still "
                     f"works."),
+        )
+
+    def _unreadable_store(self, provider):
+        """Where the live login is kept, when it cannot be read; else None."""
+        try:
+            store = provider.store(home=self.paths.home, platform=self.platform)
+        except ShamblesError:
+            return "its credential store"
+        try:
+            store.read()
+        except ShamblesError:
+            return store.describe()
+        return None
+
+    def _render_store_banner(self, provider, where: str):
+        """Say the login cannot be read, instead of failing to open.
+
+        A locked Keychain or a credential file with the wrong permissions
+        used to raise out of the first refresh, so the window never appeared
+        to say what was wrong.
+        """
+        t = self.theme
+        self._expandable_banner(
+            bg=t["chip_gone_bg"], fg=t["chip_gone_fg"],
+            summary=(f"{self.glyph['warn']}  Can't read the "
+                     f"{provider.display_name} login"),
+            detail=(f"Shambles could not read {where}.\n\nUnlock the "
+                    f"credential store or fix the file's permissions, then "
+                    f"press {self.glyph['refresh']}. Switching is unavailable "
+                    f"until it can be read."),
+            summary_font=t.name,
         )
 
     def _render_override_banner(self, provider, target: str):

@@ -48,6 +48,41 @@ Notable changes per release. Dates are the tag date.
 - The terminal UI no longer tells you to "Run 'claude auth login' in a
   terminal" for a parked account. Run that way it signs in whichever account
   is live, not the one you were looking at.
+- **The window opens when the live login cannot be read.** A credential
+  file with the wrong permissions, or a locked Keychain, made the window exit
+  with a traceback before it appeared. It now opens and says which login it
+  cannot read.
+- **A first run while already signed in can save that login from the
+  terminal UI.** The welcome said "Press a to add your first account", `a`
+  refused with "Save your current account first", and nothing on screen could
+  do that. The welcome now names the login and `s` saves it, from any screen.
+- **The terminal UI and `shambles list` say what is true about each
+  provider:** a login nobody saved, the marked profile missing from disk, a
+  saved account signed in under the wrong marker, a credential store that
+  cannot be read, or `CLAUDE_CONFIG_DIR` / `CODEX_HOME` pointing elsewhere.
+  Each comes with the key or command that deals with it. Before, signed in as
+  an unsaved account, both showed the marked profile as active under the
+  stranger's address.
+- **Signed in under a stale marker, switching to the right account works.**
+  If you signed in again through the browser as another saved account, the
+  CLI and terminal UI refused to switch to it, with a message telling you to
+  switch to it. They now correct the marker first, as the window always has.
+- `shambles switch` and the terminal UI's switch result warn when
+  `CLAUDE_CONFIG_DIR` or `CODEX_HOME` means a terminal started from here will
+  not see the switch.
+- `shambles switch claud Work` names the providers that exist instead of
+  printing "claud".
+- The window's heading no longer says "Not signed in" or "Not sure which
+  account is live" while a login it can name is live, and offers to save it
+  when the marked profile has been deleted.
+- At 80 columns the terminal UI's footer shows `l login` instead of
+  `x eject`. The narrow footer had dropped the one key that fixes an account
+  that needs a login; eject is still under `?`.
+- The terminal UI no longer offers Remove for the active account, which it
+  then refused after you confirmed. Removing another account now says what
+  it costs: signing that address back in needs a new verification email.
+- The terminal UI's eject confirmation says what eject does before asking.
+  It used to show only the after-the-fact summary, as if it had happened.
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.

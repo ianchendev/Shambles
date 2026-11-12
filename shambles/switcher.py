@@ -687,6 +687,34 @@ def remove_profile(paths, provider, name: str, *, platform=sys.platform) -> None
             "Close any running sessions and try again.") from exc
 
 
+def adopt_live_owner(paths, provider, *, platform=sys.platform) -> str | None:
+    """Point the marker at the saved account that is actually signed in.
+
+    A token lapses, the user signs in again in the browser, and the machine is
+    now on a different account than the marker names. If that account is one
+    of the saved ones the marker is simply stale. Left alone, every frontend
+    shows the wrong account as active, and ``switch`` refuses to move to the
+    right one with a message telling the user to do exactly that.
+
+    Moves the marker and nothing else: no credential is read into a profile
+    or written anywhere, so it stays reversible by switching back. A login
+    nobody saved is left for the user to name. Returns the profile adopted,
+    or ``None`` when nothing moved. An unreadable store is not a reason to
+    move anything.
+    """
+    try:
+        current = state.inspect(paths, provider, platform=platform)
+        if current.kind != state.DRIFTED:
+            return None
+        owner = state.owner_of_live(paths, provider, platform=platform)
+    except ShamblesError:
+        return None
+    if not owner or owner == current.profile:
+        return None
+    state.write_active(paths, provider.id, owner)
+    return owner
+
+
 def forget_active_marker(paths, provider) -> None:
     """Clear a marker pointing at a profile that no longer exists."""
     state.write_active(paths, provider.id, None)

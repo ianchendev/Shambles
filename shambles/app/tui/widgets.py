@@ -21,6 +21,27 @@ MUTED = "#8b90a0"
 METER_SLOTS = (("5h", ("session", "5h")), ("week", ("week",)))
 
 
+#: The key that answers each provider notice in this interface. The snapshot
+#: says what is true for every frontend; only this one knows its own keys.
+NOTICE_KEYS = {
+    "unsaved_login": "Press s to save it.",
+    "signed_in_elsewhere": "Select '{account}' and press Enter to settle it.",
+    "store_unreadable": "{remedy} Press r to refresh.",
+}
+
+
+def notices_text(snapshot: Snapshot) -> str:
+    """Every provider notice, each with what to press. Empty when all is well."""
+    lines = []
+    for group in snapshot.groups:
+        for notice in getattr(group, "notices", None) or []:
+            action = NOTICE_KEYS.get(notice.code, "{remedy}").format(
+                account=notice.account or "", remedy=notice.remedy)
+            lines.append(f"{group.display_name}: {notice.message} {action}"
+                         .rstrip())
+    return "\n".join(lines)
+
+
 def _chip(account: Account) -> str:
     if account.active:
         return "Active"
