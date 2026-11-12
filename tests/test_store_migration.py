@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from helpers import make_v1_profile
-from shambles import migrate
+from helpers import make_profile, make_v1_profile
+from shambles import migrate, settings
 
 
 def test_not_needed_when_there_is_no_old_store(paths):
@@ -14,12 +14,31 @@ def test_not_needed_once_the_new_store_exists(paths):
     """Having migrated already is not a reason to migrate again, even though
     the source is deliberately left on disk."""
     make_v1_profile(paths, "Work")
-    paths.ensure_store()
+    migrate.migrate_store(paths)
     assert migrate.store_migration_needed(paths) is False
 
 
 def test_needed_when_only_the_old_store_exists(paths):
     make_v1_profile(paths, "Work")
+    assert migrate.store_migration_needed(paths) is True
+
+
+def test_a_setting_saved_first_does_not_strand_the_old_profiles(paths):
+    """Turning update checks on before the window first opened created
+    ~/.shambles, which read as "already migrated". The window then opened
+    empty, with every saved account still sitting in the old store."""
+    make_v1_profile(paths, "Work", email="w@example.test", active=True)
+    settings.set_update_check(paths, True)
+
+    assert migrate.store_migration_needed(paths) is True
+
+
+def test_a_codex_account_saved_first_does_not_strand_the_old_profiles(paths):
+    """Every v1.0 profile is a Claude login. A Codex account in the new
+    store says nothing about whether those were ever brought across."""
+    make_v1_profile(paths, "Work", email="w@example.test", active=True)
+    make_profile(paths, "codex", "Side", email="s@example.test")
+
     assert migrate.store_migration_needed(paths) is True
 
 

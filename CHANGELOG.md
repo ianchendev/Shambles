@@ -41,6 +41,12 @@ Notable changes per release. Dates are the tag date.
   next start completes it. The failure is shown in a dialog instead of a
   traceback, and a login already saved in the new store is never replaced by
   the older copy from the old folder.
+- **Accounts saved with 1.0 are no longer left behind when something else
+  created `~/.shambles` first.** Running `shambles config set update.check
+  true` before the window had opened once, or saving a Codex account, made
+  Shambles believe the move out of `~/.claude-profiles` had already happened.
+  The window then opened with no Claude accounts and never looked again. The
+  move now counts as done only once the Claude accounts are in the new store.
 
 ## 2.1.2 - 2026-09-11
 

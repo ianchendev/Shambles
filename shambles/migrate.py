@@ -349,11 +349,18 @@ class StorePlan:
 def store_migration_needed(paths) -> bool:
     """Whether a v1.0 store exists and has not been migrated yet.
 
-    The presence of ``~/.shambles`` is the "already done" signal, deliberately
-    rather than the absence of the old store: the migration copies, so the old
-    store is still there afterwards and would otherwise retrigger forever.
+    The presence of ``~/.shambles/claude`` is the "already done" signal,
+    deliberately rather than the absence of the old store: the migration
+    copies, so the old store is still there afterwards and would otherwise
+    retrigger forever.
+
+    It is the Claude provider directory and not the library root.
+    ``~/.shambles`` is also created by saving a setting, by the update-check
+    cache and by a Codex account, and none of those says anything about
+    whether the v1.0 profiles, every one a Claude login, were brought across.
     """
-    return paths.legacy_profiles_dir.is_dir() and not paths.library_dir.exists()
+    return (paths.legacy_profiles_dir.is_dir()
+            and not paths.provider_dir(V1_PROVIDER).exists())
 
 
 def migrate_store(paths) -> StorePlan:
