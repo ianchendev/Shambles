@@ -364,3 +364,33 @@ def test_the_config_directory_reaches_the_vendor_exactly_as_typed(paths):
         "claude", env={"USER": "test-user", "CLAUDE_CONFIG_DIR": raw})
     child_env = login.environment(provider, home=paths.home, platform="darwin")
     assert child_env["CLAUDE_CONFIG_DIR"] == raw
+
+
+@posix_only
+def test_the_vendor_is_started_by_the_path_that_was_found(fake_vendor):
+    """Not by its bare name.
+
+    On Windows the two differ: ``shutil.which`` honours PATHEXT and finds
+    ``claude.cmd``, the shim npm installs, while starting a process by name
+    looks for ``claude.exe`` only. Started by name, an npm-installed vendor
+    CLI was reported as on PATH and then failed to start.
+    """
+    script = fake_vendor("claude")
+    seen = []
+
+    class Child:
+        stdout = iter(())
+
+        def wait(self):
+            return 0
+
+    def popen(argv, **kwargs):
+        seen.append(argv)
+        return Child()
+
+    done = threading.Event()
+    process = login.LoginProcess(["claude", "auth", "login"],
+                                 env={"PATH": str(script.parent)}, popen=popen)
+    process.start(on_line=lambda line: None, on_exit=lambda code: done.set())
+    assert done.wait(timeout=5)
+    assert seen == [[str(script), "auth", "login"]]

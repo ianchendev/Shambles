@@ -1003,3 +1003,35 @@ def test_a_locked_keychain_is_reported_as_locked_and_the_file_is_used(tmp_path):
         if default:
             security("default-keychain", "-d", "user", "-s", default)
         security("delete-keychain", scratch)
+
+
+# -- 6. starting the vendor's program -----------------------------------------
+
+
+@pytest.mark.parametrize("name", ["claude", "codex"])
+def test_shambles_can_start_the_vendor_cli_however_it_was_installed(name):
+    """The exact launcher the sign-in flow uses, on a harmless command.
+
+    npm installs a ``.cmd`` shim on Windows. ``shutil.which`` finds it, and
+    a process started by the bare name does not, so Shambles used to offer
+    Add Account and then fail to start the vendor. This runs the real
+    launcher against the real install on each system.
+    """
+    import threading
+
+    from shambles import login
+
+    found = vendor(name)
+    print(f"{name} resolves to {found}")
+    lines, codes, done = [], [], threading.Event()
+
+    def finished(code):
+        codes.append(code)
+        done.set()
+
+    process = login.LoginProcess([name, "--version"], env=vendor_env())
+    process.start(on_line=lines.append, on_exit=finished)
+    assert done.wait(timeout=120), f"{name} --version did not finish"
+    print(f"{name} --version -> exit {codes[0]}: {lines}")
+    assert codes == [0]
+    assert any(line.strip() for line in lines)
