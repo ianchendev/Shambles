@@ -365,7 +365,8 @@ everything above in one resizable window with no separate dialogs, adds light
 and dark themes, and can be driven from the keyboard (`1` to `9` switch,
 `/` filters, `Ctrl+N` adds).
 
-It is built on Qt, which is about 70 MB, so it ships as its own archive
+It is built on Qt, a 36 to 82 MB download depending on the platform, so it
+ships as its own archive
 beside the `shambles` binary instead of inside it. The install scripts fetch
 it for you into `~/.local/share/shambles/window` (or
 `%LOCALAPPDATA%\Shambles\window`); set `SHAMBLES_NO_WINDOW=1` first to skip

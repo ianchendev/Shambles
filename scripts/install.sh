@@ -81,7 +81,8 @@ trap - EXIT
 echo "Installed to ${DEST}"
 
 # The window, unless told not to: SHAMBLES_NO_WINDOW=1 skips it, which saves
-# about 70 MB on a machine that will only ever use the terminal.
+# 36 to 82 MB, depending on the platform, on a machine that will only ever
+# use the terminal.
 #
 # Unpacked beside the old one and swapped in, so a download that fails halfway
 # leaves the window that was already there. A release from before the window

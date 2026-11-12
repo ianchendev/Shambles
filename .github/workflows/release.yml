@@ -340,7 +340,8 @@ jobs:
             ```
 
             The scripts also fetch **the window**, a separate archive of
-            about 70 MB named `shambles-window-…` below, and unpack it to
+            36 to 82 MB depending on the platform, named `shambles-window-…`
+            below, and unpack it to
             `~/.local/share/shambles/window` (or
             `%LOCALAPPDATA%\Shambles\window`). `shambles gui --new` opens
             it. It is separate because it carries Qt, which would slow every
