@@ -7,17 +7,15 @@ what can be read off its text; the real-machine workflow runs it under
 Windows PowerShell 5.1 and PowerShell 7.
 """
 
-import functools
 import hashlib
-import http.server
 import os
 import stat
 import subprocess
-import threading
 from pathlib import Path
 
 import pytest
 
+from release_server import serve
 from shambles import release_assets
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
@@ -33,12 +31,6 @@ def release(tmp_path):
     """A directory served over HTTP, laid out like GitHub Releases."""
     root = tmp_path / "served"
     (root / "latest" / "download").mkdir(parents=True)
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
-                                directory=str(root))
-    handler.log_message = lambda *args, **kwargs: None
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
 
     def publish(binary, *, where="latest/download", sums=True, asset=ASSET):
         folder = root / where
@@ -52,10 +44,9 @@ def release(tmp_path):
         else:
             (folder / "SHA256SUMS").unlink(missing_ok=True)
 
-    publish.base = f"http://127.0.0.1:{server.server_address[1]}"
-    yield publish
-    server.shutdown()
-    thread.join(timeout=5)
+    with serve(root) as base:
+        publish.base = base
+        yield publish
 
 
 def install(release, home, *args, **env):

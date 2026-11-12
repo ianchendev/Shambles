@@ -8,21 +8,19 @@ the script at the real latest release, which is the only check anywhere that
 the binaries actually published start on that system.
 """
 
-import functools
 import hashlib
-import http.server
 import os
 import platform
 import shutil
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
 import pytest
 
 from shambles import release_assets
+from tests.release_server import serve
 
 REAL = (os.environ.get("SHAMBLES_REAL_MACHINE") == "1"
         and os.environ.get("GITHUB_ACTIONS") == "true")
@@ -58,20 +56,6 @@ def release(tmp_path):
     """This job's binary, served the way GitHub Releases serves one."""
     root = tmp_path / "served"
     root.mkdir()
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        # What raw.githubusercontent.com sends for a script. PowerShell
-        # decides whether `irm` hands back text or bytes from this.
-        extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map,
-                          ".ps1": "text/plain; charset=utf-8",
-                          ".sh": "text/plain; charset=utf-8"}
-
-        def log_message(self, *args, **kwargs):
-            pass
-
-    handler = functools.partial(Handler, directory=str(root))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
 
     def publish(*, where="latest/download", names=None, corrupt_sums=False):
         folder = root / where
@@ -101,10 +85,9 @@ def release(tmp_path):
 
     shutil.copy(SCRIPTS / "install.ps1", root / "install.ps1")
     shutil.copy(SCRIPTS / "install.sh", root / "install.sh")
-    publish.base = f"http://127.0.0.1:{server.server_address[1]}"
-    yield publish
-    server.shutdown()
-    thread.join(timeout=5)
+    with serve(root) as base:
+        publish.base = base
+        yield publish
 
 
 # -- macOS and Linux ----------------------------------------------------------
