@@ -75,12 +75,15 @@ def test_handing_over_marks_the_new_process_and_passes_the_options():
     seen = {}
     env = {}
 
+    bundle = Path("/opt/w/shambles-window")
     launch.replace_with_window(
-        Path("/opt/w/shambles-window"), ["--home", "/tmp/x"],
+        bundle, ["--home", "/tmp/x"],
         execv=lambda path, argv: seen.update(path=path, argv=argv), env=env)
 
-    assert seen == {"path": "/opt/w/shambles-window",
-                    "argv": ["/opt/w/shambles-window", "--home", "/tmp/x"]}
+    # str(bundle), not the literal: Windows spells the same path with
+    # backslashes, and it is the spelling the OS is handed that matters.
+    assert seen == {"path": str(bundle),
+                    "argv": [str(bundle), "--home", "/tmp/x"]}
     assert env[launch.IN_WINDOW_ENV] == "1"
 
 

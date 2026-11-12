@@ -49,5 +49,7 @@ def test_a_folder_build_is_checked_library_by_library(tmp_path):
 
     found = _shared_libraries(bundle, tmp_path / "unused")
 
-    assert [path.name for path in found] == ["QtCore.abi3.so",
-                                             "libpython3.12.so.1.0"]
+    # As a set: paths sort case-insensitively on Windows, so the order the
+    # two come back in differs there, and the order is not what is promised.
+    assert {path.name for path in found} == {"QtCore.abi3.so",
+                                             "libpython3.12.so.1.0"}
