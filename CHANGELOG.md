@@ -57,6 +57,25 @@ Notable changes per release. Dates are the tag date.
   `resets_at_ms`. All additions; nothing existing changed, and the contract
   version stays at 1.
 
+- **`shambles doctor`.** Checks whether switching can work on this machine
+  and says why not, without changing anything. It reports an environment
+  variable that makes the vendor ignore its stored login (`ANTHROPIC_API_KEY`
+  and friends, `CODEX_ACCESS_TOKEN`), a `claude` inside WSL that is really
+  the Windows install, Codex not keeping its login in `auth.json`, a
+  relocated config directory, a missing vendor program, and where each login
+  is kept. Exits 1 on a problem; `--json` for scripts.
+
+- **A native Windows on Arm binary**, `shambles-windows-arm64.exe`, and an
+  installer that picks it. On releases without one the installer falls back
+  to the x64 build, which Windows 11 on Arm runs under emulation.
+
+- **macOS and native Windows are now exercised on every pull request.** A
+  `real-machine` workflow installs the current Claude Code and Codex on
+  GitHub's macOS, Windows and Linux machines, drives Shambles against the
+  real Keychain and Credential Manager with made-up credentials, and asks the
+  vendors' own commands who is signed in after each switch. The README's
+  support table now says what that established and what it did not.
+
 ### Fixed
 
 - **A cancelled or failed sign-in in the terminal UI puts you back where you
@@ -115,26 +134,6 @@ Notable changes per release. Dates are the tag date.
   it costs: signing that address back in needs a new verification email.
 - The terminal UI's eject confirmation says what eject does before asking.
   It used to show only the after-the-fact summary, as if it had happened.
-- **`shambles doctor`.** Checks whether switching can work on this machine
-  and says why not, without changing anything. It reports an environment
-  variable that makes the vendor ignore its stored login (`ANTHROPIC_API_KEY`
-  and friends, `CODEX_ACCESS_TOKEN`), a `claude` inside WSL that is really
-  the Windows install, Codex not keeping its login in `auth.json`, a
-  relocated config directory, a missing vendor program, and where each login
-  is kept. Exits 1 on a problem; `--json` for scripts.
-
-- **A native Windows on Arm binary**, `shambles-windows-arm64.exe`, and an
-  installer that picks it. On releases without one the installer falls back
-  to the x64 build, which Windows 11 on Arm runs under emulation.
-
-- **macOS and native Windows are now exercised on every pull request.** A
-  `real-machine` workflow installs the current Claude Code and Codex on
-  GitHub's macOS, Windows and Linux machines, drives Shambles against the
-  real Keychain and Credential Manager with made-up credentials, and asks the
-  vendors' own commands who is signed in after each switch. The README's
-  support table now says what that established and what it did not.
-
-### Fixed
 
 - **Switching Claude accounts on native Windows did nothing.** Shambles read
   and wrote the Credential Manager there, always, in a layout Claude Code
