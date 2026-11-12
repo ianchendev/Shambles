@@ -60,6 +60,19 @@ Notable changes per release. Dates are the tag date.
 - Saving a login that one of your profiles already holds now marks that
   profile as the active one, instead of making a second copy under a new
   name.
+- **A login file that cannot be read no longer stops Shambles opening.** When
+  the vendor's credential store was locked or unreadable (a locked Keychain,
+  a file held by another program), the window failed to start and the
+  terminal UI could not refresh. Both now show what they can from the saved
+  profiles. Switching is still refused until the store can be read, because
+  the outgoing login could not be copied out first.
+  A store that is busy for one read and free for the next can no longer get
+  a login filed under the wrong profile: whose login it is gets decided from
+  the same bytes that are about to be saved.
+- A `~/.claude.json` caught halfway through being written, a damaged active
+  marker, or a value in a vendor file that is not a real number (an expiry of
+  `NaN`, a reset time no calendar reaches) no longer crashes the account
+  list. The affected field is shown as unknown instead.
 
 ## 2.1.2 - 2026-09-11
 

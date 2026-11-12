@@ -15,6 +15,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import ShamblesError
 from .providers import spec as specmod
 
 #: The marker names a profile, and the live identity matches it.
@@ -69,7 +70,9 @@ def config_dir_override(provider, *, home, env=None) -> str | None:
 def read_active(paths, provider_id: str) -> str | None:
     try:
         name = paths.active_marker(provider_id).read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError is a marker that is not text: a torn write. It names
+        # nobody, which is what no marker means.
         return None
     return name or None
 
@@ -97,10 +100,17 @@ def profile_names(paths, provider_id: str) -> list[str]:
 
 
 def live_email(paths, provider, *, platform: str) -> str | None:
-    """Who the provider's live store says is signed in."""
+    """Who the provider's live store says is signed in.
+
+    ``None`` when the store cannot be read. A locked Keychain or a credential
+    file with the wrong permissions is not evidence of anybody, and raising
+    here took the window down on startup before it could say what was wrong.
+    The operations that would actually move a credential read the store
+    themselves, and still refuse.
+    """
     try:
         blob = provider.store(home=paths.home, platform=platform).read()
-    except OSError:
+    except (OSError, ShamblesError):
         return None
     return provider.identity(blob, home=paths.home, active=True).email
 
@@ -140,12 +150,22 @@ def holders_of_live_credential(paths, provider, *,
         live = provider.store(home=paths.home, platform=platform).read()
     except Exception:
         return []  # an unreadable store is not evidence of anything
-    if not live:
+    return profiles_holding(paths, provider.id, live)
+
+
+def profiles_holding(paths, provider_id: str, blob) -> list[str]:
+    """Every profile whose stashed credential is exactly ``blob``.
+
+    For a caller that already has the bytes in hand and is about to act on
+    them. Asking the store a second time would be asking about a different
+    moment: the answer that matters is the one about *these* bytes.
+    """
+    if not blob:
         return []
     found = []
-    for name in profile_names(paths, provider.id):
+    for name in profile_names(paths, provider_id):
         try:
-            if paths.credentials(provider.id, name).read_bytes() == live:
+            if paths.credentials(provider_id, name).read_bytes() == blob:
                 found.append(name)
         except OSError:
             continue

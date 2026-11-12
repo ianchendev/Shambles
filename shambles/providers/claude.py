@@ -169,9 +169,11 @@ class ClaudeProvider:
             return Liveness(SIGNED_OUT)
 
         expires = specmod.pointer(parsed, block["pointer"])
-        if not isinstance(expires, (int, float)):
+        if not specmod.finite(expires):
             # The VS Code extension writes credentials without this field.
-            # Reporting CLOSED would strand a perfectly good account.
+            # Reporting CLOSED would strand a perfectly good account. A value
+            # that is not a usable number is no better known than a missing
+            # one.
             return Liveness(UNKNOWN)
 
         expires = int(expires)
