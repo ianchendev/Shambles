@@ -43,12 +43,16 @@ def deferred_login(monkeypatch):
 
     monkeypatch.setattr("shambles.app.service.login.LoginProcess",
                         DeferredLoginProcess)
+    # The service looks for the vendor's CLI before it moves anything; the
+    # stand-in process needs no binary.
+    monkeypatch.setattr("shambles.app.service.login.available",
+                        lambda provider: True)
     return processes
 
 
 def test_public_service_operations_are_present():
     expected = {
-        "snapshot", "plan_switch", "switch", "save_current", "add",
+        "snapshot", "plan_switch", "switch", "save_current", "add", "start_add",
         "rename", "refresh", "plan_remove", "remove", "start_login",
         "plan_eject", "eject",
     }
@@ -160,7 +164,7 @@ def test_eject_plan_lists_profiles_without_mutation(paths):
     make_profile(paths, "claude", "Work", active=True)
     plan = service(paths).plan_eject()
     assert plan.requires_confirmation is True
-    assert "Work" in plan.warnings[0]
+    assert any("Work" in warning for warning in plan.warnings)
     assert state.read_active(paths, "claude") == "Work"
 
 
@@ -348,21 +352,19 @@ def test_login_preserves_supported_authorization_parameters(endpoint):
     assert _safe_login_line(f"Visit {url}).") == url
 
 
-@posix_only
 def test_login_activates_the_requested_account_before_launch(
-        paths, fake_vendor):
+        paths, deferred_login):
     make_profile(paths, "codex", "Work", email="work@example.com",
                  active=True)
     make_live_codex_login(paths, email="work@example.com",
                           exp_ms=healthy_ms())
     make_profile(paths, "codex", "Personal")
-    fake_vendor("codex", exit_code=1)
 
-    handle = service(paths).start_login(
+    service(paths).start_login(
         "codex", "Personal", on_line=lambda line: None,
         on_done=lambda result: None)
 
-    assert handle.wait(timeout=10)
+    assert deferred_login[0].running
     assert state.read_active(paths, "codex") == "Personal"
 
 
@@ -404,6 +406,8 @@ def test_login_does_not_accept_a_different_active_account(
 
     monkeypatch.setattr(
         "shambles.app.service.login.LoginProcess", DeferredLoginProcess)
+    monkeypatch.setattr("shambles.app.service.login.available",
+                        lambda provider: True)
     app = service(paths)
     done = []
     handle = app.start_login(
@@ -561,7 +565,8 @@ def test_login_rejects_a_live_identity_mismatch(paths, deferred_login,
 
     assert handle.wait(timeout=1)
     assert done[0].ok is False
-    assert done[0].error.code == "login_not_written"
+    assert done[0].error.code == "login_other_account"
+    assert "stranger@example.com" in done[0].error.message
     assert paths.credentials(provider_id, "Personal").read_bytes() == saved
 
 
@@ -635,7 +640,7 @@ def test_login_handle_cancel_finishes_and_stops_running(paths, deferred_login):
     assert handle.wait(timeout=1)
     assert handle.running is False
     assert len(done) == 1
-    assert done[0].error.code == "login_failed"
+    assert done[0].error.code == "login_cancelled"
 
 
 @pytest.mark.parametrize("failure", [OSError, ConfigUnreadableError, ValueError])
@@ -851,3 +856,261 @@ def test_open_sign_in_url_does_not_claim_success_when_no_opener_worked(
         paths, monkeypatch):
     monkeypatch.setattr(login, "open_url", lambda url: False)
     assert service(paths).open_sign_in_url("https://example.test/x") is False
+
+
+# --- Signing in puts you back when it comes to nothing --------------------
+#
+# Reproduced in the terminal UI against a synthetic home: pressing l on a
+# lapsed account and then Esc left the dead token live and the working account
+# signed out, with "The vendor login command failed. Review the output and
+# retry." on screen. The window has rolled back since PR #13; these hold the
+# service to the same standard, because the terminal UI has no other route.
+
+def seed_work_and_lapsed(paths, provider_id):
+    """Work is live and healthy; Old is parked with a closed window."""
+    make_profile(paths, provider_id, "Work", email="work@example.com",
+                 active=True)
+    make_profile(paths, provider_id, "Old", email="old@example.com",
+                 refresh_expires_ms=NOW - 3 * 86_400_000)
+    if provider_id == "claude":
+        make_claude_json(paths, email="work@example.com")
+        live = make_live_claude_login(paths, access_token="tok-Work")
+    else:
+        live = paths.home / ".codex" / "auth.json"
+        live.parent.mkdir(parents=True, exist_ok=True)
+        live.write_bytes(paths.credentials("codex", "Work").read_bytes())
+    return live
+
+
+def fresh_login(paths, provider_id, email):
+    if provider_id == "claude":
+        make_claude_json(paths, email=email)
+        return make_live_claude_login(paths, access_token="tok-fresh")
+    return make_live_codex_login(paths, email=email, exp_ms=healthy_ms(5))
+
+
+@pytest.mark.parametrize("provider_id", ["claude", "codex"])
+def test_cancelled_login_puts_you_back_on_the_previous_account(
+        paths, deferred_login, provider_id):
+    live = seed_work_and_lapsed(paths, provider_id)
+    work = live.read_bytes()
+    done = []
+    handle = service(paths).start_login(provider_id, "Old",
+                                        lambda line: None, done.append)
+    assert state.read_active(paths, provider_id) == "Old"
+
+    handle.cancel()
+
+    assert handle.wait(timeout=1)
+    assert done[0].error.code == "login_cancelled"
+    assert state.read_active(paths, provider_id) == "Work"
+    assert live.read_bytes() == work
+    assert "Work" in done[0].error.recovery
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_login_that_writes_nothing_puts_you_back(paths, deferred_login, code):
+    live = seed_work_and_lapsed(paths, "codex")
+    work = live.read_bytes()
+    done = []
+    handle = service(paths).start_login("codex", "Old",
+                                        lambda line: None, done.append)
+
+    deferred_login[0].finish(code)
+
+    assert handle.wait(timeout=1)
+    assert done[0].ok is False
+    assert state.read_active(paths, "codex") == "Work"
+    assert live.read_bytes() == work
+    assert "Work" in done[0].error.recovery
+
+
+def test_login_without_the_vendor_cli_moves_nothing(paths, monkeypatch):
+    """Reproduced: with no claude on PATH, l switched to the lapsed account and
+    then reported that the CLI was missing, leaving the user on it."""
+    live = seed_work_and_lapsed(paths, "claude")
+    work = live.read_bytes()
+    monkeypatch.setenv("PATH", "")
+    done = []
+
+    handle = service(paths).start_login("claude", "Old",
+                                        lambda line: None, done.append)
+
+    assert handle.wait(timeout=1)
+    assert done[0].error.code == "login_unavailable"
+    assert "claude" in done[0].error.message
+    assert state.read_active(paths, "claude") == "Work"
+    assert live.read_bytes() == work
+
+
+def test_login_start_failure_after_the_switch_puts_you_back(
+        paths, deferred_login, monkeypatch):
+    seed_work_and_lapsed(paths, "codex")
+
+    def broken(*args, **kwargs):
+        raise OSError("start-private-sentinel")
+
+    monkeypatch.setattr("shambles.app.service.login.LoginProcess.start",
+                        broken)
+    done = []
+    handle = service(paths).start_login("codex", "Old",
+                                        lambda line: None, done.append)
+
+    assert handle.wait(timeout=1)
+    assert done[0].ok is False
+    assert state.read_active(paths, "codex") == "Work"
+
+
+def test_login_for_a_saved_account_moves_you_to_it(paths, deferred_login):
+    """The browser reused Work's session while signing in to Old."""
+    seed_work_and_lapsed(paths, "codex")
+    dead = paths.credentials("codex", "Old").read_bytes()
+    done = []
+    handle = service(paths).start_login("codex", "Old",
+                                        lambda line: None, done.append)
+    fresh_login(paths, "codex", "work@example.com")
+
+    deferred_login[0].finish()
+
+    assert handle.wait(timeout=1)
+    assert done[0].error.code == "login_other_account"
+    assert "work@example.com" in done[0].error.message
+    assert "Work" in done[0].error.recovery
+    assert state.read_active(paths, "codex") == "Work"
+    assert paths.credentials("codex", "Old").read_bytes() == dead
+
+
+def test_login_prefills_the_profiles_address(paths, monkeypatch):
+    seed_work_and_lapsed(paths, "claude")
+    argvs = []
+
+    class Recording:
+        running = True
+
+        def __init__(self, argv, **kwargs):
+            argvs.append(argv)
+
+        def start(self, *, on_line, on_exit):
+            self.on_exit = on_exit
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr("shambles.app.service.login.LoginProcess", Recording)
+    monkeypatch.setattr("shambles.app.service.login.available",
+                        lambda provider: True)
+    service(paths).start_login("claude", "Old", lambda line: None,
+                               lambda result: None)
+
+    assert argvs[0][-2:] == ["--email", "old@example.com"]
+
+
+# --- Adding an account signs it in -----------------------------------------
+
+def test_add_signs_in_and_files_the_new_account(paths, deferred_login):
+    seed_work_and_lapsed(paths, "codex")
+    done = []
+    handle = service(paths).start_add("codex", "Personal",
+                                      lambda line: None, done.append)
+    assert state.read_active(paths, "codex") == "Personal"
+    fresh = fresh_login(paths, "codex", "personal@example.com").read_bytes()
+
+    deferred_login[0].finish()
+
+    assert handle.wait(timeout=1)
+    assert done[0].ok is True
+    assert "Personal" in done[0].summary
+    assert paths.credentials("codex", "Personal").read_bytes() == fresh
+
+
+@pytest.mark.parametrize("provider_id", ["claude", "codex"])
+def test_add_refuses_an_account_that_is_already_saved(paths, deferred_login,
+                                                      provider_id):
+    """Reproduced in the window: adding 'Personal' with the browser still
+    signed in to Work said "'Personal' is signed in and active" and saved a
+    second copy of Work."""
+    seed_work_and_lapsed(paths, provider_id)
+    done = []
+    handle = service(paths).start_add(provider_id, "Personal",
+                                      lambda line: None, done.append)
+    fresh_login(paths, provider_id, "work@example.com")
+
+    deferred_login[0].finish()
+
+    assert handle.wait(timeout=1)
+    assert done[0].error.code == "login_duplicate"
+    assert "work@example.com" in done[0].error.message
+    assert "'Work'" in done[0].error.message
+    assert state.read_active(paths, provider_id) == "Work"
+    assert not paths.credentials(provider_id, "Personal").exists()
+
+
+def test_cancelled_add_puts_you_back_and_keeps_the_profile(paths,
+                                                           deferred_login):
+    live = seed_work_and_lapsed(paths, "codex")
+    work = live.read_bytes()
+    done = []
+    handle = service(paths).start_add("codex", "Personal",
+                                      lambda line: None, done.append)
+
+    handle.cancel()
+
+    assert handle.wait(timeout=1)
+    assert done[0].error.code == "login_cancelled"
+    assert state.read_active(paths, "codex") == "Work"
+    assert live.read_bytes() == work
+    assert paths.profile_dir("codex", "Personal").is_dir()
+    assert "Personal" in done[0].error.recovery
+
+
+def test_add_without_the_vendor_cli_creates_nothing(paths, monkeypatch):
+    """Reproduced: with no CLI, a in the terminal UI said "Added Third." and
+    left the user signed out, on a profile nothing could sign in to."""
+    seed_work_and_lapsed(paths, "codex")
+    monkeypatch.setenv("PATH", "")
+    done = []
+
+    handle = service(paths).start_add("codex", "Personal",
+                                      lambda line: None, done.append)
+
+    assert handle.wait(timeout=1)
+    assert done[0].error.code == "login_unavailable"
+    assert not paths.profile_dir("codex", "Personal").exists()
+    assert state.read_active(paths, "codex") == "Work"
+
+
+def test_add_refuses_to_replace_an_unsaved_login(paths, deferred_login):
+    make_live_codex_login(paths, email="me@example.com")
+    done = []
+
+    handle = service(paths).start_add("codex", "Personal",
+                                      lambda line: None, done.append)
+
+    assert handle.wait(timeout=1)
+    assert deferred_login == []
+    assert done[0].ok is False
+    assert "Save your current account first" in done[0].error.message
+
+
+def test_the_remove_plan_says_what_removing_costs(paths):
+    """Reproduced: the terminal UI confirmed with only "The saved login will
+    be removed." Getting it back costs a verification email, which is the
+    one thing a person deciding needs to know."""
+    make_profile(paths, "claude", "Old", email="old@example.com")
+
+    plan = service(paths).plan_remove("claude", "Old")
+    said = " ".join(plan.warnings)
+
+    assert "old@example.com" in said
+    assert "verification email" in said
+
+
+def test_the_eject_plan_says_what_eject_does_before_asking(paths):
+    """Reproduced: the confirmation showed only the past-tense summary of an
+    eject that had not happened yet."""
+    make_profile(paths, "claude", "Work", active=True)
+
+    first = service(paths).plan_eject().warnings[0]
+
+    assert "stop managing" in first
+    assert "Nothing is deleted" in first

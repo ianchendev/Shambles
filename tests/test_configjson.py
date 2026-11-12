@@ -6,8 +6,14 @@ import pytest
 
 from conftest import posix_modes_only
 from helpers import NOW, account, make_claude_json, write_json
-from shambles import configjson
+from shambles import configjson, providers
 from shambles.errors import ConfigUnreadableError
+
+
+def splice(paths, account_keys):
+    """The live splice: what a switch does to ~/.claude.json."""
+    providers.load("claude", env={}).companion_write(account_keys,
+                                                     home=paths.home)
 
 
 def test_load_missing_file_returns_empty(tmp_path):
@@ -37,11 +43,8 @@ def test_apply_preserves_every_other_key_and_order(paths):
     make_claude_json(paths, email="old@example.com")
     before = json.loads(paths.claude_json.read_text(encoding="utf-8"))
 
-    configjson.apply_account_keys(
-        paths.claude_json,
-        {"oauthAccount": account("new@example.com"),
-         "cachedUsageUtilization": {"accountUuid": "uuid-b"}},
-    )
+    splice(paths, {"oauthAccount": account("new@example.com"),
+                   "cachedUsageUtilization": {"accountUuid": "uuid-b"}})
 
     after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
     assert after["numStartups"] == before["numStartups"]
@@ -50,13 +53,13 @@ def test_apply_preserves_every_other_key_and_order(paths):
     assert after["oauthAccount"]["emailAddress"] == "new@example.com"
     # A usage cache is never carried across a switch: restored, it would
     # describe whatever the incoming account was doing when it was last
-    # active and read as current. See configjson.STALE_ON_SWITCH.
+    # active and read as current. See stale_on_switch in claude.json.
     assert "cachedUsageUtilization" not in after
 
 
 def test_apply_with_empty_account_deletes_both_keys(paths):
     make_claude_json(paths)
-    configjson.apply_account_keys(paths.claude_json, {})
+    splice(paths, {})
     after = json.loads(paths.claude_json.read_text(encoding="utf-8"))
     assert "oauthAccount" not in after
     assert "cachedUsageUtilization" not in after
@@ -65,7 +68,7 @@ def test_apply_with_empty_account_deletes_both_keys(paths):
 
 def test_apply_leaves_no_temp_file(paths):
     make_claude_json(paths)
-    configjson.apply_account_keys(paths.claude_json, {})
+    splice(paths, {})
     leftovers = list(paths.home.glob(".claude.json.*"))
     assert leftovers == []
 
@@ -118,7 +121,7 @@ def test_refuses_to_splice_onto_an_unparseable_config(paths):
     before = paths.claude_json.read_text()
 
     with pytest.raises(ConfigUnreadableError):
-        configjson.apply_account_keys(paths.claude_json, {"oauthAccount": {"x": 1}})
+        splice(paths, {"oauthAccount": {"x": 1}})
 
     assert paths.claude_json.read_text() == before, "config was modified anyway"
 
@@ -126,19 +129,19 @@ def test_refuses_to_splice_onto_an_unparseable_config(paths):
 def test_refuses_when_the_config_is_a_json_array(paths):
     paths.claude_json.write_text('["not", "an", "object"]')
     with pytest.raises(ConfigUnreadableError):
-        configjson.apply_account_keys(paths.claude_json, {})
+        splice(paths, {})
 
 
 def test_still_creates_a_config_that_does_not_exist(paths):
     """Absent is not the same as corrupt: a fresh machine must still work."""
     assert not paths.claude_json.exists()
-    configjson.apply_account_keys(paths.claude_json, {"oauthAccount": {"e": 1}})
+    splice(paths, {"oauthAccount": {"e": 1}})
     assert configjson.load(paths.claude_json)["oauthAccount"] == {"e": 1}
 
 
 def test_treats_an_empty_file_as_absent(paths):
     paths.claude_json.write_text("")
-    configjson.apply_account_keys(paths.claude_json, {"oauthAccount": {"e": 2}})
+    splice(paths, {"oauthAccount": {"e": 2}})
     assert configjson.load(paths.claude_json)["oauthAccount"] == {"e": 2}
 
 
@@ -151,8 +154,7 @@ def test_preserves_every_unrelated_key_when_splicing(paths):
     }
     paths.claude_json.write_text(json.dumps(original))
 
-    configjson.apply_account_keys(
-        paths.claude_json, {"oauthAccount": {"emailAddress": "new@example.com"}})
+    splice(paths, {"oauthAccount": {"emailAddress": "new@example.com"}})
 
     after = configjson.load(paths.claude_json)
     assert after["projects"] == original["projects"], "prompt history lost"
@@ -228,3 +230,18 @@ def test_a_loose_source_does_not_produce_a_loose_backup(paths):
     dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
 
     assert oct(os.stat(dest).st_mode)[-3:] == "600"
+
+
+def test_write_atomic_leaves_no_temp_file(tmp_path):
+    """The splice tests above now drive the provider's own writer. This is
+    the writer behind every profile's account.json, the usage capture, the
+    settings and the update cache, and it needs the property stated for
+    itself: a write that only copied the temp file into place would pass
+    everything else here."""
+    target = tmp_path / "account.json"
+
+    configjson.write_atomic(target, {"oauthAccount": {"e": 1}})
+    configjson.write_atomic(target, {"oauthAccount": {"e": 2}})
+
+    assert configjson.load(target) == {"oauthAccount": {"e": 2}}
+    assert [p.name for p in tmp_path.iterdir()] == ["account.json"]
