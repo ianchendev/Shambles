@@ -9,10 +9,13 @@ them -- verify, back up, stash outgoing, restore incoming, splice, record --
 and only its steps differ, which is exactly the split DD-4 describes.
 """
 
+import os
 import shutil
+import stat
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import configjson, migrate, profiles, state
 from .errors import (AlreadyManagedError, DriftedLoginError,
@@ -269,6 +272,13 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     # anything else reaches the user as a stderr traceback and looks like the
     # switch silently did nothing.
     try:
+        # Decided again now the lock is held. A refresh that landed while
+        # this waited changed the live bytes, and the answer made before
+        # (whose login is live, where it goes) was about the old ones.
+        current = state.inspect(paths, provider, platform=platform)
+        outgoing = _outgoing_profile(paths, provider, current,
+                                     platform=platform, target=target_name)
+
         if companion_path is not None:
             configjson.backup(companion_path, paths.backup_dir, stamp)
 
@@ -279,10 +289,13 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
         # beside them: when the marker is wrong that address usually is too.
         # A profile whose login this *continues* (refreshed since it was
         # saved) does need the copy -- its own stash is now a spent token.
+        _touch(held)
         exact = state.profiles_holding(paths, provider.id, store.read())
         if outgoing and (outgoing == current.profile or outgoing not in exact):
             stash_live_login(paths, provider, outgoing, platform=platform,
                              now_ms_fn=lambda: stamp, sleep=sleep)
+
+        _touch(held)
 
         incoming = paths.credentials(provider.id, target_name)
         if incoming.exists():
@@ -327,6 +340,40 @@ REFRESH_IN_PROGRESS = (
 )
 
 
+class _HeldLock:
+    """One lock directory this switch created, and the timestamp it left.
+
+    Claude Code treats a lock untouched for its stale interval as abandoned
+    and takes it over by removing and recreating it. Removing "our" lock on
+    release after that would remove Claude Code's. So the lock is touched as
+    the switch works, and removed only if it still carries the last touch.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.stamp = self._read()
+
+    def _read(self):
+        try:
+            return self.path.lstat().st_mtime_ns
+        except OSError:
+            return None
+
+    def touch(self) -> None:
+        try:
+            os.utime(self.path)
+        except OSError:
+            return
+        self.stamp = self._read()
+
+    def release(self) -> None:
+        if self.stamp is not None and self._read() == self.stamp:
+            try:
+                self.path.rmdir()
+            except OSError:
+                pass
+
+
 def _hold_refresh_locks(provider, paths) -> list:
     """Take the lock the vendor refreshes under, waiting for it if held.
 
@@ -336,11 +383,12 @@ def _hold_refresh_locks(provider, paths) -> list:
     stored one, so the save was refused and the new token was lost with the
     process. Holding the same lock makes a refresh in flight land first.
 
-    A lock not touched for the vendor's stale interval belongs to a client
-    that died; it is cleared, as the vendor itself would. One that is still
-    held after ``REFRESH_LOCK_WAIT_S`` refuses the switch, before anything
-    has moved. A lock that cannot be created at all -- no config directory,
-    nothing to coordinate with -- is skipped.
+    A lock directory not touched for the vendor's stale interval belongs to a
+    client that died; it is removed, as the vendor itself would. Anything
+    else in the way -- a live lock, or something that is not a directory and
+    cannot be removed -- is waited on, and still there after
+    ``REFRESH_LOCK_WAIT_S`` it refuses the switch before anything has moved.
+    No config directory means no client to coordinate with, and no lock.
     """
     block = provider.spec.get("refresh_lock") or {}
     stale_s = block.get("stale_ms", 60_000) / 1000
@@ -351,36 +399,51 @@ def _hold_refresh_locks(provider, paths) -> list:
             while True:
                 try:
                     lock.mkdir()
-                    held.append(lock)
+                    held.append(_HeldLock(lock))
                     break
                 except FileExistsError:
-                    try:
-                        age = time.time() - lock.stat().st_mtime
-                    except FileNotFoundError:
-                        continue          # released while we looked
-                    if age > stale_s:
-                        try:
-                            lock.rmdir()
-                        except OSError:
-                            pass
+                    if _remove_if_abandoned(lock, stale_s):
                         continue
-                    if time.monotonic() >= deadline:
-                        raise SwitchFailedError(REFRESH_IN_PROGRESS)
-                    time.sleep(0.05)
-                except OSError:
-                    break                 # nowhere to put it: no client there
+                except FileNotFoundError:
+                    break                 # its directory is gone: no client
+                if time.monotonic() >= deadline:
+                    raise SwitchFailedError(REFRESH_IN_PROGRESS)
+                time.sleep(0.05)
     except BaseException:
         _release(held)
         raise
     return held
 
 
+def _remove_if_abandoned(lock: Path, stale_s: float) -> bool:
+    """Remove a lock directory nobody has touched for ``stale_s``.
+
+    True only when it was removed. A symlink or a file in its place is
+    never removed: it is not a lock this protocol made.
+    """
+    try:
+        info = lock.lstat()
+    except FileNotFoundError:
+        return True                       # released while we looked
+    except OSError:
+        return False
+    if not stat.S_ISDIR(info.st_mode) or time.time() - info.st_mtime <= stale_s:
+        return False
+    try:
+        lock.rmdir()
+    except OSError:
+        return False
+    return True
+
+
+def _touch(held) -> None:
+    for lock in held:
+        lock.touch()
+
+
 def _release(held) -> None:
     for lock in reversed(held):
-        try:
-            lock.rmdir()
-        except OSError:
-            pass
+        lock.release()
 
 
 def _outgoing_profile(paths, provider, current, *, platform,

@@ -801,8 +801,14 @@ switch landing between the post and the save stashed the spent token and
 replaced the stored one, so the save was refused and the new token was lost.
 `switcher.switch` now takes the same locks before it reads the outgoing login
 and releases them once the incoming one is in place (`_hold_refresh_locks`):
-a refresh in flight lands first. A lock untouched for 60 s is cleared as the
-client would; one still held after 15 s refuses the switch with nothing moved.
+a refresh in flight lands first. Whose login is live, and where it goes, is
+decided again once the locks are held, because a refresh that landed during
+the wait changed the bytes that answer was about. A lock directory untouched
+for 60 s is cleared as the client would; anything else in the way is waited
+on, and still there after 15 s refuses the switch with nothing moved. The
+switch touches its locks as it works and removes them only if they still
+carry its last touch, so a lock the client has since taken over is left
+alone. With no config directory there is no client and no lock.
 
 ### 4.4 Known edge case — the 8-hour access token
 

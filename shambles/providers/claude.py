@@ -356,6 +356,8 @@ class ClaudeProvider:
             directory = Path(self.env[dir_env] or Path(home) / ".claude")
         else:
             directory = specmod.config_dir(self.spec, home=home, env=self.env)
+        if not Path(directory).is_dir():
+            return []    # no client has run here: nothing to coordinate with
         try:
             legacy = Path(os.path.realpath(directory))
         except OSError:
