@@ -81,6 +81,16 @@ jobs:
           test "${status:-0}" = 0
           test -s "sheet-${{ matrix.os }}.png"
 
+      # Qt is LGPL. A download without the licence texts is one the project
+      # may not distribute, so their absence fails the build.
+      - name: The licences are in the folder
+        shell: bash
+        run: |
+          ls dist/shambles-window/licenses
+          for f in LGPL-3.0.txt GPL-3.0.txt NOTICE.txt OFL-Inter.txt LICENSE-Shambles.txt; do
+            test -s "dist/shambles-window/licenses/$f"
+          done
+
       - name: Size
         shell: bash
         run: |

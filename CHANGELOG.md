@@ -62,6 +62,11 @@ Notable changes per release. Dates are the tag date.
   there. Set `SHAMBLES_NO_WINDOW=1` to skip it. From pip or pipx it is an
   optional extra instead: `pip install 'shambles[gui]'`.
 
+  The archive has a `licenses` folder: Qt and PySide6 are LGPL-3.0, so it
+  carries that text, the GPL-3.0 it incorporates, and a notice saying where
+  Qt's source is. Qt stays as separate, unmodified shared libraries that you
+  can replace.
+
   The Linux window needs glibc 2.35, the same as the binary. It brings its
   own copy of the few system libraries Qt needs, so it starts on a bare
   Linux or WSL install with nothing to `apt install`.

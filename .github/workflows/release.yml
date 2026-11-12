@@ -267,6 +267,9 @@ jobs:
           cat "window-${{ matrix.artifact }}.png.log" || true
           test "${status:-0}" = 0
           test -s "window-${{ matrix.artifact }}.png"
+          # Qt is LGPL: the archive must carry the licence texts.
+          test -s dist/shambles-window/licenses/LGPL-3.0.txt
+          test -s dist/shambles-window/licenses/NOTICE.txt
           ./dist/shambles-window/shambles-window --version || true
           du -sh dist/shambles-window || true
 
