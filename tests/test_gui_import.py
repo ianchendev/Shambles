@@ -8,7 +8,7 @@ from conftest import posix_only
 from helpers import (DAY_MS, NOW, healthy_ms, make_claude_json,
                      make_live_claude_login, make_live_codex_login,
                      make_profile, make_v1_profile)
-from shambles import gui, motion, profiles, providers, state, widgets
+from shambles import gui, motion, profiles, providers, state, switcher, widgets
 
 
 def test_explicit_gui_reports_missing_tkinter(monkeypatch, capsys):
@@ -1448,3 +1448,268 @@ def test_a_cleared_login_shows_no_expiry_date(paths, claude):
     found = profiles.discover(paths, claude, None, NOW, platform="linux")[0]
     assert gui.expiry_line(found) is None
     assert profiles.needs_login(found)
+
+
+# -- signing a lapsed account back in ----------------------------------
+
+def _card(app, name):
+    """The card whose name label reads ``name``."""
+    for child in app.rows.winfo_children():
+        if isinstance(child, widgets.Card) and any(
+                str(label.cget("text")) == name for label in _labels(child)):
+            return child
+    raise AssertionError(f"no card named {name!r}")
+
+
+def _button_texts(widget):
+    return [str(button.cget("text")) for button in _buttons(widget)]
+
+
+def _vendor_installed(monkeypatch, installed=True):
+    monkeypatch.setattr(gui.login, "available", lambda _provider: installed)
+
+
+def _parked_lapsed(paths):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Old", email="o@example.com",
+                 refresh_expires_ms=healthy_ms(-3))
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+
+def test_a_lapsed_card_offers_sign_in_instead_of_switch(paths, make_app,
+                                                        monkeypatch):
+    _vendor_installed(monkeypatch)
+    _parked_lapsed(paths)
+
+    app = make_app(paths)
+    texts = _button_texts(_card(app, "Old"))
+
+    assert "Sign in" in texts
+    assert "Switch" not in texts
+    assert app.glyph["remove"] in texts
+
+
+def test_a_lapsed_active_card_offers_sign_in_but_no_remove(paths, make_app,
+                                                           monkeypatch):
+    _vendor_installed(monkeypatch)
+    make_profile(paths, "claude", "Old", email="o@example.com",
+                 refresh_expires_ms=healthy_ms(-3), active=True)
+    make_claude_json(paths, email="o@example.com")
+    make_live_claude_login(paths, refresh_expires_ms=healthy_ms(-3),
+                           access_token="tok-Old")
+
+    app = make_app(paths)
+
+    assert _button_texts(_card(app, "Old")) == ["Sign in"]
+
+
+def test_without_the_vendor_cli_a_lapsed_card_keeps_switch(paths, make_app,
+                                                           monkeypatch):
+    _vendor_installed(monkeypatch, installed=False)
+    _parked_lapsed(paths)
+
+    texts = _button_texts(_card(make_app(paths), "Old"))
+
+    assert "Switch" in texts and "Sign in" not in texts
+
+
+def test_a_healthy_card_keeps_switch(paths, make_app, monkeypatch):
+    _vendor_installed(monkeypatch)
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Other", email="x@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+    texts = _button_texts(_card(make_app(paths), "Other"))
+
+    assert "Switch" in texts and "Sign in" not in texts
+
+
+def test_an_expired_tooltip_says_to_sign_in_not_to_use_it(paths, claude):
+    """A closed window cannot be renewed by using the account."""
+    make_profile(paths, "claude", "Old", email="o@example.com",
+                 refresh_expires_ms=healthy_ms(-3))
+    found = profiles.discover(paths, claude, None, switcher.now_ms(),
+                              platform="linux")[0]
+
+    tip = gui.expiry_tooltip(found)
+
+    assert "Sign in again to renew it." in tip
+    assert "Using the account renews it." not in tip
+
+
+def test_a_closing_tooltip_still_says_using_it_renews_it(paths, claude):
+    make_profile(paths, "claude", "Soon", email="s@example.com",
+                 refresh_expires_ms=healthy_ms(1))
+    found = profiles.discover(paths, claude, None, switcher.now_ms(),
+                              platform="linux")[0]
+
+    assert "Using the account renews it." in gui.expiry_tooltip(found)
+
+
+def _said(monkeypatch):
+    """Every message box shown, as (kind, text), instead of blocking on it."""
+    said = []
+    for kind in ("showinfo", "showwarning", "showerror"):
+        monkeypatch.setattr(
+            gui.messagebox, kind,
+            lambda _title, message, kind=kind, **_k: said.append((kind, message)))
+    return said
+
+
+def _vendor(monkeypatch, *, succeeded, writes=None):
+    """Stand in for LoginDialog. ``writes`` is what the real CLI would have
+    left on disk before exiting."""
+    seen = {}
+
+    class FakeLogin:
+        def __init__(self, _parent, _provider, profile_name, _theme, **kwargs):
+            seen.update(kwargs, name=profile_name)
+            if writes:
+                writes()
+            self.succeeded = succeeded
+
+    monkeypatch.setattr(gui, "LoginDialog", FakeLogin)
+    return seen
+
+
+def _found(paths, provider, name):
+    active = state.read_active(paths, provider.id)
+    return next(p for p in profiles.discover(paths, provider, active,
+                                             switcher.now_ms(), platform="linux")
+                if p.name == name)
+
+
+def _live_claude(paths):
+    return (paths.claude_dir / ".credentials.json").read_bytes()
+
+
+def test_signing_in_again_renews_the_profile_and_makes_it_active(
+        paths, make_app, monkeypatch, claude):
+    _parked_lapsed(paths)
+    said = _said(monkeypatch)
+
+    def vendor_writes():
+        make_claude_json(paths, email="o@example.com")
+        make_live_claude_login(paths, access_token="tok-fresh")
+
+    seen = _vendor(monkeypatch, succeeded=True, writes=vendor_writes)
+    app = make_app(paths)
+
+    app.on_relogin(claude, _found(paths, claude, "Old"))
+
+    assert seen["email"] == "o@example.com"
+    assert seen["env"]["HOME"] == str(paths.home.resolve())
+    assert state.read_active(paths, "claude") == "Old"
+    assert b"tok-fresh" in paths.credentials("claude", "Old").read_bytes()
+    assert said[-1][0] == "showinfo"
+    assert "signed in again" in said[-1][1]
+
+
+def test_a_cancelled_sign_in_puts_you_back_where_you_were(
+        paths, make_app, monkeypatch, claude):
+    _parked_lapsed(paths)
+    said = _said(monkeypatch)
+    _vendor(monkeypatch, succeeded=False)
+    dead = paths.credentials("claude", "Old").read_bytes()
+    work = paths.credentials("claude", "Work").read_bytes()
+    app = make_app(paths)
+
+    app.on_relogin(claude, _found(paths, claude, "Old"))
+
+    assert state.read_active(paths, "claude") == "Work"
+    assert _live_claude(paths) == work
+    assert paths.credentials("claude", "Old").read_bytes() == dead
+    assert said[-1][0] == "showwarning"
+    assert "back on 'Work'" in said[-1][1]
+
+
+def test_a_clean_exit_that_wrote_nothing_is_not_a_success(
+        paths, make_app, monkeypatch, claude):
+    _parked_lapsed(paths)
+    said = _said(monkeypatch)
+    _vendor(monkeypatch, succeeded=True)
+    app = make_app(paths)
+
+    app.on_relogin(claude, _found(paths, claude, "Old"))
+
+    assert state.read_active(paths, "claude") == "Work"
+    assert said[-1][0] == "showwarning"
+    assert "still needs a login" in said[-1][1]
+
+
+def test_signing_in_as_somebody_else_saves_nothing_over_the_profile(
+        paths, make_app, monkeypatch, claude):
+    _parked_lapsed(paths)
+    said = _said(monkeypatch)
+    dead = paths.credentials("claude", "Old").read_bytes()
+
+    def vendor_writes():
+        make_claude_json(paths, email="stranger@example.com")
+        make_live_claude_login(paths, access_token="tok-stranger")
+
+    _vendor(monkeypatch, succeeded=True, writes=vendor_writes)
+    app = make_app(paths)
+
+    app.on_relogin(claude, _found(paths, claude, "Old"))
+
+    assert paths.credentials("claude", "Old").read_bytes() == dead
+    kind, message = said[-1]
+    assert kind == "showwarning"
+    assert "stranger@example.com" in message and "o@example.com" in message
+
+
+def test_signing_in_as_the_account_you_left_lands_you_back_on_it(
+        paths, make_app, monkeypatch, claude):
+    """The likeliest wrong account: the browser is still signed in as Work.
+    The window's own adoption files that login under Work."""
+    _parked_lapsed(paths)
+    _said(monkeypatch)
+    dead = paths.credentials("claude", "Old").read_bytes()
+
+    def vendor_writes():
+        make_claude_json(paths, email="w@example.com")
+        make_live_claude_login(paths, access_token="tok-work-again")
+
+    _vendor(monkeypatch, succeeded=True, writes=vendor_writes)
+    app = make_app(paths)
+
+    app.on_relogin(claude, _found(paths, claude, "Old"))
+
+    assert paths.credentials("claude", "Old").read_bytes() == dead
+    assert state.read_active(paths, "claude") == "Work"
+
+
+def test_cancelling_a_lapsed_active_account_leaves_it_as_it_was(
+        paths, make_app, monkeypatch, claude):
+    make_profile(paths, "claude", "Old", email="o@example.com",
+                 refresh_expires_ms=healthy_ms(-3), active=True)
+    make_claude_json(paths, email="o@example.com")
+    make_live_claude_login(paths, refresh_expires_ms=healthy_ms(-3),
+                           access_token="tok-Old")
+    said = _said(monkeypatch)
+    _vendor(monkeypatch, succeeded=False)
+    app = make_app(paths)
+
+    app.on_relogin(claude, _found(paths, claude, "Old"))
+
+    assert state.read_active(paths, "claude") == "Old"
+    assert said[-1][0] == "showwarning"
+    assert claude.login_hint() in said[-1][1]
+
+
+def test_a_refused_start_opens_no_browser(paths, make_app, monkeypatch, claude):
+    """An unsaved live login with nothing marked: the switch would lose it."""
+    make_profile(paths, "claude", "Old", email="o@example.com",
+                 refresh_expires_ms=healthy_ms(-3))
+    make_claude_json(paths, email="stranger@example.com")
+    make_live_claude_login(paths, access_token="tok-stranger")
+    said = _said(monkeypatch)
+    seen = _vendor(monkeypatch, succeeded=True)
+    app = make_app(paths)
+
+    app.on_relogin(claude, _found(paths, claude, "Old"))
+
+    assert seen == {}
+    assert said[-1][0] == "showerror"

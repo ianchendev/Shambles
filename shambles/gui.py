@@ -30,10 +30,44 @@ CHIP_STYLES = {
 EXPIRY_TOOLTIP = (
     "Refresh token {verb} {date}.\n\n"
     "This rolling window is what lets Shambles switch to this account without "
-    "a verification email. Using the account renews it."
+    "a verification email. {remedy}"
 )
+#: A closing window is renewed by using the account; a closed one is not, and
+#: saying otherwise sent people to Switch, which installs the dead token.
+RENEW_BY_USE = "Using the account renews it."
+RENEW_BY_SIGN_IN = "Sign in again to renew it."
+
+SIGN_IN_TOOLTIP = "Sign in as {who} in your browser and save the new login here."
 
 RENAME_HINT = "Double-click to rename"
+
+#: Shown while the vendor's login runs. Re-login knows whose account this
+#: is, and naming it is the best defence against a browser already signed in
+#: as somebody else.
+SIGN_IN_WAITING = "Your browser should have opened. Complete the sign-in there."
+SIGN_IN_AS = "Your browser should have opened. Sign in as {email} there."
+NO_BROWSER = "Your browser did not open. Use the button below."
+NO_BROWSER_AS = ("Your browser did not open. Use the button below, and sign "
+                 "in as {email}.")
+ADD_FAILED = ("Sign-in did not complete. The profile was created but has no "
+              "login yet.")
+RELOGIN_FAILED = "Sign-in did not complete. '{name}' still needs a login."
+
+RELOGIN_DONE = (
+    "'{name}' is signed in again and active.\n\n"
+    "Start a new session to pick it up. A running one keeps the token it "
+    "loaded at startup."
+)
+#: The browser was already signed in to the vendor as somebody else, which
+#: is the usual way this goes wrong: the vendor's page reuses that session.
+RELOGIN_OTHER_ACCOUNT = (
+    "Your browser signed in as {live}, but '{name}' is {expected}. Nothing "
+    "was saved over '{name}'.\n\n"
+    "Sign out of the vendor's site in your browser, or use a private window, "
+    "then press Sign in again."
+)
+RELOGIN_STILL_LAPSED = "'{name}' still needs a login.\n\n{tail}"
+RELOGIN_BACK = "You are back on '{previous}', nothing was lost."
 
 #: DD-1 keeps durations off a card's face but says the raw timestamps stay
 #: available in a tooltip. A healthy account renders no chip, so without this
@@ -236,8 +270,11 @@ def expiry_tooltip(profile) -> str:
     if when is None:
         return profiles.warning(profile) or ""
     days = profile.liveness.days_left
-    verb = "expired" if days is not None and days < 0 else "expires"
-    return EXPIRY_TOOLTIP.format(verb=verb, date=when.strftime("%d %b %Y, %H:%M"))
+    expired = days is not None and days < 0
+    return EXPIRY_TOOLTIP.format(
+        verb="expired" if expired else "expires",
+        date=when.strftime("%d %b %Y, %H:%M"),
+        remedy=RENEW_BY_SIGN_IN if expired else RENEW_BY_USE)
 
 
 def chip_tooltip(profile) -> str:
@@ -418,7 +455,13 @@ class LoginDialog(tk.Toplevel):
     ``succeeded`` is True only on a clean exit.
     """
 
-    def __init__(self, parent, provider, profile_name, theme):
+    #: The address to sign in as, when the caller knows it. A class default
+    #: as well as an instance one, so a dialog built without ``__init__``
+    #: still reads as "no address" rather than raising.
+    _email = None
+
+    def __init__(self, parent, provider, profile_name, theme, *, email=None,
+                 env=None, failure_text=None):
         super().__init__(parent)
         self.title(f"Sign in to {provider.display_name}")
         self.resizable(False, False)
@@ -426,6 +469,10 @@ class LoginDialog(tk.Toplevel):
         self.configure(bg=theme["window"])
         self.succeeded = False
         self._process = None
+        #: Pre-fills the vendor's sign-in page where its CLI has a flag for it.
+        self._email = email
+        self._env = env
+        self._failure_text = failure_text or ADD_FAILED
 
         body = tk.Frame(self, bg=theme["window"], padx=GAP_L, pady=GAP_L)
         body.pack(fill="both", expand=True)
@@ -435,7 +482,7 @@ class LoginDialog(tk.Toplevel):
         self.status = tk.Label(
             body, font=theme.body, bg=theme["window"], fg=theme["muted"],
             anchor="w", justify="left", wraplength=360,
-            text="Your browser should have opened. Complete the sign-in there.")
+            text=SIGN_IN_AS.format(email=email) if email else SIGN_IN_WAITING)
         self.status.pack(fill="x", pady=(GAP_XS, GAP_S))
 
         self.output = tk.Text(body, height=6, width=52, font=theme.body,
@@ -473,7 +520,8 @@ class LoginDialog(tk.Toplevel):
 
     def _start(self, provider):
         try:
-            self._process = login.LoginProcess(login.command(provider))
+            self._process = login.LoginProcess(
+                login.command(provider, email=self._email), env=self._env)
             # Both callbacks fire on a worker thread; `after` marshals them
             # back. Touching Tk from that thread would corrupt the interpreter
             # lock and hang the window.
@@ -489,8 +537,11 @@ class LoginDialog(tk.Toplevel):
         self._url = url
         self.open_button.config(state="normal")
         self.copy_button.config(state="normal")
-        self.status.config(
-            text="Your browser did not open. Use the button below.")
+        # Keeps the address: under WSL this line replaces the one that named
+        # it almost at once, and it is what stops a browser already signed in
+        # as somebody else from being reused without a second look.
+        self.status.config(text=NO_BROWSER_AS.format(email=self._email)
+                           if self._email else NO_BROWSER)
 
     def _open_url(self):
         """Hand the URL to a browser, and leave it on the clipboard regardless.
@@ -554,8 +605,7 @@ class LoginDialog(tk.Toplevel):
             self.destroy()
             return
         try:
-            self.status.config(text="Sign-in did not complete. The profile was "
-                                    "created but has no login yet.")
+            self.status.config(text=self._failure_text)
             self.close.config(text="Close", command=self.destroy)
         except tk.TclError:
             pass
@@ -898,7 +948,7 @@ class ShamblesApp(tk.Tk):
             return
 
         for profile in found:
-            self._render_card(provider, profile)
+            self._render_card(provider, profile, vendor_ready=usable)
 
         if current.kind == state.MISSING_PROFILE:
             ttk.Button(self.rows, text="Forget that profile",
@@ -1208,7 +1258,7 @@ class ShamblesApp(tk.Tk):
             lambda p: grown.place_configure(relwidth=target * p)))
         return grown
 
-    def _render_card(self, provider, profile):
+    def _render_card(self, provider, profile, vendor_ready=False):
         """One profile as a rounded card, accented when it is the active one.
 
         Drawn on a Canvas rather than built from Frames: Tk reliefs are square
@@ -1246,6 +1296,13 @@ class ShamblesApp(tk.Tk):
                 f"{profile.name}\n\n{hint}" if shown != profile.name else hint,
                 t)
 
+        # A lapsed login is signed back in rather than switched to: switching
+        # would install a dead token and leave the vendor prompting for the
+        # very login this button runs. Offered only when the vendor's CLI is
+        # there to run; without it the card keeps Switch, and the banner above
+        # the group says why.
+        renew = vendor_ready and profiles.needs_login(profile)
+
         if not profile.active:
             # Inactive profiles only. The active one has no remove control at
             # all, so the login in use cannot be deleted by a misclick. The gap
@@ -1255,11 +1312,21 @@ class ShamblesApp(tk.Tk):
                                 style="Danger.TButton", width=2,
                                 command=lambda p=profile: self.on_remove(provider, p.name))
             remove.pack(side="right")
-            ttk.Button(top, text="Switch", style="Switch.TButton",
-                       command=lambda p=profile: self.on_switch(provider, p.name)
-                       ).pack(side="right", padx=(0, GAP_M))
             Tooltip(remove, f"Remove '{profile.name}'. Its saved login is "
                             "deleted and that account needs a new sign-in.", t)
+
+        gap = (0, 0) if profile.active else (0, GAP_M)
+        if renew:
+            sign_in = ttk.Button(
+                top, text="Sign in", style="Switch.TButton",
+                command=lambda p=profile: self.on_relogin(provider, p))
+            sign_in.pack(side="right", padx=gap)
+            Tooltip(sign_in, SIGN_IN_TOOLTIP.format(
+                who=profile.email or f"'{profile.name}'"), t)
+        elif not profile.active:
+            ttk.Button(top, text="Switch", style="Switch.TButton",
+                       command=lambda p=profile: self.on_switch(provider, p.name)
+                       ).pack(side="right", padx=gap)
 
         bottom = tk.Frame(card, bg=bg)
         bottom.pack(fill="x", pady=(GAP_XS, 0))
@@ -1387,6 +1454,78 @@ class ShamblesApp(tk.Tk):
             return False
         return self.paths.credentials(provider.id, name).exists()
 
+    def login_environment(self, provider):
+        """The vendor's environment, pinned to the home this window reads."""
+        return login.environment(provider, home=self.paths.home,
+                                 platform=self.platform)
+
+    def on_relogin(self, provider, profile):
+        """Sign a lapsed profile back in, and leave it active.
+
+        The vendor writes to the one live location, so the profile has to be
+        live before its login runs. If the sign-in comes to nothing the user
+        goes back to the account they were on. If it brings back somebody
+        else's login, nothing is saved over this profile, and the refresh
+        below files that login under whoever it belongs to -- or offers to
+        save it, exactly as for any login the window does not recognise.
+        """
+        name = profile.name
+        try:
+            try:
+                previous = switcher.begin_relogin(self.paths, provider, name,
+                                                  platform=self.platform)
+            except ShamblesError as exc:
+                messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
+                return
+
+            session = LoginDialog(
+                self, provider, name, self.theme, email=profile.email,
+                env=self.login_environment(provider),
+                failure_text=RELOGIN_FAILED.format(name=name))
+
+            outcome = switcher.UNCHANGED
+            if session.succeeded:
+                try:
+                    outcome = switcher.judge_relogin(self.paths, provider, name,
+                                                     platform=self.platform)
+                    if outcome == switcher.RENEWED:
+                        switcher.stash_live_login(self.paths, provider, name,
+                                                  platform=self.platform)
+                except ShamblesError as exc:
+                    # The live slot may now hold a new login, so no rollback:
+                    # switching away would throw it out.
+                    messagebox.showerror(WINDOW_TITLE, str(exc), parent=self)
+                    return
+
+            if outcome == switcher.RENEWED:
+                messagebox.showinfo(WINDOW_TITLE,
+                                    RELOGIN_DONE.format(name=name), parent=self)
+            elif outcome == switcher.OTHER_ACCOUNT:
+                live = state.live_email(self.paths, provider,
+                                        platform=self.platform)
+                expected = state.profile_email(self.paths, provider, name)
+                messagebox.showwarning(
+                    WINDOW_TITLE,
+                    RELOGIN_OTHER_ACCOUNT.format(
+                        live=live or "another account", name=name,
+                        expected=expected or "a different account"),
+                    parent=self)
+            else:
+                try:
+                    restored = switcher.abandon_relogin(
+                        self.paths, provider, name, previous,
+                        platform=self.platform)
+                except ShamblesError:
+                    restored = False
+                tail = (RELOGIN_BACK.format(previous=previous) if restored
+                        else provider.login_hint())
+                messagebox.showwarning(
+                    WINDOW_TITLE,
+                    RELOGIN_STILL_LAPSED.format(name=name, tail=tail),
+                    parent=self)
+        finally:
+            self.refresh()
+
     def on_add(self, provider=None):
         """Add an account, optionally starting on a chosen provider.
 
@@ -1418,7 +1557,8 @@ class ShamblesApp(tk.Tk):
             return
 
         # The profile is active and empty. The vendor's own command fills it.
-        session = LoginDialog(self, provider, created, self.theme)
+        session = LoginDialog(self, provider, created, self.theme,
+                              env=self.login_environment(provider))
         if session.succeeded and self.stash_after_login(provider, created):
             messagebox.showinfo(
                 WINDOW_TITLE,

@@ -2,6 +2,28 @@
 
 Notable changes per release. Dates are the tag date.
 
+## Unreleased
+
+### Added
+
+- **Sign a lapsed account back in from the window.** A card marked `needs
+  login` or `signed out` now offers **Sign in** in place of Switch, the live
+  card included. It runs the vendor's own login with the address filled in
+  (Claude), saves the renewed login under the same profile and leaves it
+  active. Until now the only way back was to remove the profile and add it
+  again, which also threw away its name and usage history.
+
+  A cancelled or failed sign-in puts you back on the account you were using.
+  A sign-in that comes back as a different account, usually because the
+  browser was still signed in as someone else, saves nothing over the profile
+  and says which address the browser used.
+
+### Fixed
+
+- The tooltip on an expired account no longer says that using the account
+  renews it. A closed window cannot be renewed that way; it now says to sign
+  in again.
+
 ## 2.1.2 - 2026-09-11
 
 ### Fixed
