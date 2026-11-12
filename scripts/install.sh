@@ -261,10 +261,16 @@ Shambles itself is installed. Run the installer again to retry the window." >&2
   echo "  shambles gui    opens it"
 
   # A launcher entry, so the window is in the applications menu and not
-  # only behind a command. Linux only: macOS has no such file, and there the
-  # window is a plain folder until it is packaged as an .app. Rewritten on
-  # every install, because it names the window by path.
-  # SHAMBLES_NO_DESKTOP=1 skips it.
+  # only behind a command. Rewritten on every install, because it names the
+  # window by path. SHAMBLES_NO_DESKTOP=1 skips it.
+  #
+  # Linux only. A .desktop file is an XDG convention that nothing on macOS
+  # reads, and there the window is a plain folder, not an .app that
+  # Launchpad could list. Writing one would put a file in the user's home
+  # that does nothing, so macOS gets a sentence instead.
+  if [ "$os" = "Darwin" ] && [ "${SHAMBLES_NO_DESKTOP:-0}" != "1" ]; then
+    echo "On macOS the window is not in Launchpad yet; open it with 'shambles gui'."
+  fi
   if [ "$os" = "Linux" ] && [ "${SHAMBLES_NO_DESKTOP:-0}" != "1" ]; then
     local apps="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
     if mkdir -p "$apps" 2>/dev/null; then

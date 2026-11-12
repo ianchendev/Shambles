@@ -343,8 +343,16 @@ def test_the_window_and_its_launcher_can_be_skipped(release, tmp_path):
     assert not window_dir(other).exists()
 
 
+#: What install.sh keys its launcher on: ``uname -s``, the same value read
+#: the same way. sys.platform would agree today, but the script is the
+#: thing under test.
+UNAME = os.uname().sysname if hasattr(os, "uname") else ""
+
+
 @bash_only
-def test_install_sh_adds_a_launcher_entry_for_the_window(release, tmp_path):
+@pytest.mark.skipif(UNAME != "Linux", reason="a .desktop entry is Linux's")
+def test_install_sh_adds_a_launcher_entry_for_the_window_on_linux(
+        release, tmp_path):
     release(GOOD_BINARY)
     publish_window(release, window_archive(tmp_path))
     home = tmp_path / "hôme with spaces"
@@ -353,6 +361,7 @@ def test_install_sh_adds_a_launcher_entry_for_the_window(release, tmp_path):
     done = install(release, home)
 
     assert done.returncode == 0, done.stderr
+    assert "Added Shambles to your applications menu." in done.stdout
     entry = dict(line.split("=", 1) for line in
                  desktop_entry(home).read_text().splitlines() if "=" in line)
     assert entry["Type"] == "Application" and entry["Name"] == "Shambles"
@@ -361,6 +370,27 @@ def test_install_sh_adds_a_launcher_entry_for_the_window(release, tmp_path):
     assert entry["Exec"] == f'"{window_dir(home)}/shambles-window"'
     assert Path(entry["Exec"].strip('"')).is_file()
     assert Path(entry["Icon"]).is_file()
+
+
+@bash_only
+@pytest.mark.skipif(UNAME != "Darwin", reason="what macOS gets instead")
+def test_install_sh_on_macos_writes_no_launcher_and_says_how_to_open(
+        release, tmp_path):
+    """Nothing on macOS reads a .desktop file, and the window is a plain
+    folder rather than an .app Launchpad could list. So no file is left in
+    the home that would do nothing, and the installer says how to open it."""
+    release(GOOD_BINARY)
+    publish_window(release, window_archive(tmp_path))
+    home = tmp_path / "hôme with spaces"
+    home.mkdir()
+
+    done = install(release, home)
+
+    assert done.returncode == 0, done.stderr
+    assert (window_dir(home) / "shambles-window").is_file()
+    assert not (home / ".local" / "share" / "applications").exists()
+    assert "not in Launchpad yet; open it with 'shambles gui'" in done.stdout
+    assert "applications menu" not in done.stdout
 
 
 def test_every_binary_has_its_window_named_by_its_installer():
