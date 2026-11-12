@@ -191,7 +191,8 @@ def test_the_contract_exposes_every_field_a_shell_renders(paths):
                 {"kind": "session", "percent": 5, "severity": "normal"}]}}})
 
     group = snap.to_dict(build(paths))["groups"][0]
-    assert set(group) == {"provider", "display_name", "surfaces", "accounts"}
+    assert set(group) == {"provider", "display_name", "surfaces", "accounts",
+                          "state", "live_email", "can_save", "notices"}
     assert set(group["surfaces"][0]) == {"id", "label", "detail"}
     assert set(group["accounts"][0]) == {
         "name", "email", "display_name", "plan", "active", "state",
@@ -346,3 +347,198 @@ def test_an_unknown_provider_still_exits_non_zero(paths, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error"]["code"] == "unknown_provider"
+
+
+# -- what is true about the provider, not only its accounts --------------------
+#
+# Reproduced with `shambles list` and the terminal UI: signed in as an account
+# nobody saved, both showed the marked profile as active under the stranger's
+# address, and neither said anything was wrong. On a first run with a login
+# already present they said "no accounts yet" and nothing about the login.
+
+def notice_codes(group):
+    return [n.code for n in group.notices]
+
+
+def test_a_live_login_nobody_saved_can_be_saved(paths):
+    make_claude_json(paths, email="me@example.com")
+    make_live_claude_login(paths)
+
+    group = group_of(paths, "claude")
+
+    assert group.state == state.UNMANAGED
+    assert group.live_email == "me@example.com"
+    assert group.can_save is True
+    assert notice_codes(group) == ["unsaved_login"]
+    assert "me@example.com" in group.notices[0].message
+
+
+def test_nothing_to_save_on_a_clean_machine(paths):
+    group = group_of(paths, "claude")
+    assert group.can_save is False
+    assert group.notices == []
+
+
+def test_a_managed_provider_has_nothing_to_say(paths):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+    group = group_of(paths, "claude")
+
+    assert group.state == state.MANAGED
+    assert group.can_save is False
+    assert group.notices == []
+
+
+def test_a_stranger_signed_in_is_named_and_not_shown_as_the_profile(paths):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="stranger@example.com")
+    make_live_claude_login(paths, access_token="tok-stranger")
+
+    group = group_of(paths, "claude")
+    work = group.accounts[0]
+
+    assert group.state == state.DRIFTED
+    assert group.can_save is True
+    assert notice_codes(group) == ["unsaved_login"]
+    assert "stranger@example.com" in group.notices[0].message
+    assert "'Work'" in group.notices[0].message
+    # The card is Work's; the stranger belongs in the notice.
+    assert work.email == "w@example.com"
+
+
+def test_a_saved_account_signed_in_under_the_wrong_marker_says_how_to_settle(
+        paths):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Home", email="h@example.com")
+    make_claude_json(paths, email="h@example.com")
+    (paths.claude_dir).mkdir(parents=True, exist_ok=True)
+    (paths.claude_dir / ".credentials.json").write_bytes(
+        paths.credentials("claude", "Home").read_bytes())
+
+    group = group_of(paths, "claude")
+
+    assert notice_codes(group) == ["signed_in_elsewhere"]
+    assert group.notices[0].account == "Home"
+    assert group.can_save is False
+
+
+def test_a_marker_naming_a_deleted_profile_offers_to_save_the_live_login(
+        paths):
+    make_profile(paths, "claude", "Work", email="w@example.com")
+    make_claude_json(paths, email="gone@example.com")
+    make_live_claude_login(paths, access_token="tok-gone")
+    paths.active_marker("claude").write_text("Gone\n", encoding="utf-8")
+
+    group = group_of(paths, "claude")
+
+    assert group.state == state.MISSING_PROFILE
+    assert group.can_save is True
+    assert notice_codes(group) == ["missing_profile", "unsaved_login"]
+    assert "'Gone'" in group.notices[0].message
+
+
+def test_an_unreadable_store_is_said_rather_than_hidden(paths, monkeypatch):
+    from shambles.stores import FileStore
+    from shambles.stores.base import StoreUnavailableError
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+    def locked(self):
+        if self.path.name == ".credentials.json":
+            raise StoreUnavailableError("Permission denied")
+        return original(self)
+
+    original = FileStore.read
+    monkeypatch.setattr(FileStore, "read", locked)
+
+    group = group_of(paths, "claude")
+
+    assert notice_codes(group) == ["store_unreadable"]
+    assert ".credentials.json" in group.notices[0].message
+    assert "Permission denied" not in group.notices[0].message
+    assert group.notices[0].remedy
+
+
+def test_a_config_dir_override_is_said(paths, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(paths.home / "elsewhere"))
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+
+    group = group_of(paths, "claude")
+
+    assert "config_override" in notice_codes(group)
+    notice = next(n for n in group.notices if n.code == "config_override")
+    assert "CLAUDE_CONFIG_DIR" in notice.message
+    assert "elsewhere" in notice.message
+
+
+def test_notices_reach_the_wire(paths):
+    make_claude_json(paths, email="me@example.com")
+    make_live_claude_login(paths)
+
+    group = snap.to_dict(build(paths))["groups"][0]
+
+    assert group["can_save"] is True
+    assert group["live_email"] == "me@example.com"
+    assert set(group["notices"][0]) == {"code", "message", "remedy", "account"}
+
+
+def test_list_says_an_unsaved_login_is_there_and_how_to_keep_it(paths,
+                                                                 capsys):
+    """Reproduced on a first run while signed in: 'no accounts yet', and
+    nothing about the login that was right there to save."""
+    make_claude_json(paths, email="me@example.com")
+    make_live_claude_login(paths)
+
+    assert cli.main(["--home", str(paths.home), "list"]) == 0
+    out = capsys.readouterr().out
+
+    assert "Signed in as me@example.com, which is not saved yet." in out
+    assert "Run 'shambles' and press s to save it." in out
+
+
+def test_list_names_the_command_that_settles_a_stale_marker(paths, capsys):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Home", email="h@example.com")
+    make_claude_json(paths, email="h@example.com")
+    paths.claude_dir.mkdir(parents=True, exist_ok=True)
+    (paths.claude_dir / ".credentials.json").write_bytes(
+        paths.credentials("claude", "Home").read_bytes())
+
+    assert cli.main(["--home", str(paths.home), "list"]) == 0
+    out = capsys.readouterr().out
+
+    assert "shambles switch claude Home" in out
+    # And the command it names works, rather than being refused with advice
+    # to run it.
+    assert cli.main(["--home", str(paths.home), "switch", "claude",
+                     "Home"]) == 0
+    assert state.read_active(paths, "claude") == "Home"
+
+
+def test_switch_warns_when_this_terminal_reads_another_login(paths, capsys,
+                                                             monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(paths.home / "elsewhere"))
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Home", email="h@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+    assert cli.main(["--home", str(paths.home), "switch", "claude",
+                     "Home"]) == 0
+    out = capsys.readouterr().out
+
+    assert "CLAUDE_CONFIG_DIR is set" in out
+
+
+def test_an_unknown_provider_names_the_ones_that_exist(paths, capsys):
+    """Reproduced: 'shambles switch claud Work' printed only "claud"."""
+    assert cli.main(["--home", str(paths.home), "switch", "claud",
+                     "Work"]) == 1
+    err = capsys.readouterr().err
+
+    assert "Unknown provider 'claud'" in err
+    assert "claude, codex" in err

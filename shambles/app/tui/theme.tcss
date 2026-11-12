@@ -21,6 +21,13 @@ Dashboard {
     content-align: left top;
 }
 
+#provider-notices {
+    width: 100%;
+    height: auto;
+    padding: 0 2;
+    color: #d9a441;
+}
+
 #shortcut-footer {
     width: 100%;
     height: 1;
