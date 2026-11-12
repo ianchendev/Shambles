@@ -381,3 +381,21 @@ def test_install_ps1_adds_a_per_user_start_menu_shortcut():
     assert "GetFolderPath('Programs')" in block, "must be the per-user menu"
     assert "shambles-window.exe" in block and "Shambles.lnk" in block
     assert "SHAMBLES_NO_DESKTOP" in block
+
+
+
+def test_install_ps1_can_write_a_shortcut_to_a_path_the_code_page_cannot_hold():
+    """WScript.Shell is ANSI and refuses such a path ("Value does not fall
+    within the expected range"), which real Windows runners showed. The
+    fallback is IShellLinkW, in a child PowerShell so the caller's session
+    keeps no loaded type, with the paths passed through its environment."""
+    text = (SCRIPTS / "install.ps1").read_text(encoding="utf-8")
+    start = text.index("function Save-Shortcut")
+    block = text[start:text.index("$Asset = $null", start)]
+    assert "WScript.Shell" in block
+    assert "IShellLinkW" in block and "IPersistFile" in block
+    assert "-EncodedCommand" in block
+    assert "EnvironmentVariables['SHAMBLES_LNK']" in block
+    assert "$env:SHAMBLES_LNK" in block
+    assert "$env:SHAMBLES_LNK =" not in text, \
+        "set in the caller's session, where it would be left behind"

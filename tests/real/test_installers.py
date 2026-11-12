@@ -407,16 +407,27 @@ def publish_window(release, name):
         sums.write(f"{digest}  {name}\n")
 
 
-def start_menu_shortcut(shell):
-    """``(path, target)`` of the per-user Shambles shortcut, read back
-    through the same COM object that wrote it."""
+def start_menu_shortcut(shell, expected):
+    """``"MATCH"``, ``"OTHER"`` or ``"MISSING"``: whether the per-user
+    Shambles shortcut points at ``expected``.
+
+    Compared inside PowerShell, with the expected path handed over in the
+    environment, so neither direction depends on the console's code page --
+    the point of one of these tests is a path that code page cannot hold.
+    Read through Shell.Application, which is Unicode, not WScript.Shell,
+    which is not.
+    """
+    env = dict(os.environ)
+    env["SHAMBLES_EXPECT"] = str(expected)
     done = run_ps(shell, (
         "$p = Join-Path ([Environment]::GetFolderPath('Programs')) "
-        "'Shambles.lnk'; if (Test-Path $p) { $s = (New-Object -ComObject "
-        "WScript.Shell).CreateShortcut($p); Write-Output $p; "
-        "Write-Output $s.TargetPath }"), dict(os.environ))
-    lines = [line.strip() for line in done.stdout.splitlines() if line.strip()]
-    return (lines[0], lines[1]) if len(lines) >= 2 else (None, None)
+        "'Shambles.lnk'; if (-not (Test-Path -LiteralPath $p)) { "
+        "'MISSING'; return }; $l = (New-Object -ComObject "
+        "Shell.Application).NameSpace((Split-Path $p)).ParseName("
+        "'Shambles.lnk').GetLink; if ($l.Path -eq $env:SHAMBLES_EXPECT) "
+        "{ 'MATCH' } else { 'OTHER' }"), env)
+    words = done.stdout.split()
+    return words[-1] if words else "MISSING"
 
 
 @windows_only
@@ -437,9 +448,8 @@ def test_the_start_menu_shortcut_in_a_plain_folder(release, tmp_path, shell):
 
     assert done.returncode == 0
     assert "Could not add a Start menu shortcut" not in done.stdout
-    path, target = start_menu_shortcut(shell)
-    assert path, "no Start menu shortcut was written"
-    assert Path(target) == local / "Shambles" / "window" / "shambles-window.exe"
+    assert start_menu_shortcut(
+        shell, local / "Shambles" / "window" / "shambles-window.exe") == "MATCH"
 
 
 @windows_only
@@ -470,9 +480,10 @@ def test_install_ps1_installs_the_window_and_a_start_menu_shortcut(
                  if p.name not in ("shambles.exe", "shamblesw.exe", "window")]
     assert leftovers == [], f"left behind: {leftovers}"
 
-    path, target = start_menu_shortcut(shell)
-    assert path, "no Start menu shortcut was written"
-    assert Path(target) == installed_window
+    # The folder name holds characters outside the ANSI code page, which is
+    # the case WScript.Shell refuses and the IShellLinkW fallback exists for.
+    assert "Could not add a Start menu shortcut" not in done.stdout
+    assert start_menu_shortcut(shell, installed_window) == "MATCH"
 
     # The shortcut is left for the next parametrisation to overwrite; the
     # runner is thrown away afterwards.
