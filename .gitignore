@@ -23,3 +23,7 @@ macos/Resources/AppIcon.icns
 
 # Internal planning and design notes. Kept locally, never published.
 docs/superpowers/
+
+# PyInstaller writes throwaway .spec files; this one is the build recipe for
+# the window bundle and is kept.
+!packaging/*.spec
