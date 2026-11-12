@@ -120,6 +120,12 @@ Notable changes per release. Dates are the tag date.
   Code then threw the new one away because the file had changed under it:
   the account needed signing in again. Shambles now waits for a renewal in
   progress to finish, using Claude Code's own lock, before it switches.
+- **The terminal interface and `shambles list` / `shambles switch` now bring
+  an old setup up to date themselves**, as the windows always did. Upgrading
+  from 1.0 and using only the terminal used to show no accounts at all, and on
+  the layout from before 1.0 every Claude switch was refused with "run the
+  migration", which no command could do. What was moved is said once, in the
+  terminal interface's status line or on stderr.
 - **A cancelled or failed sign-in in the terminal UI puts you back where you
   were.** Pressing `l` and then Esc, or a sign-in that wrote nothing, left the
   expired account live and the working one signed out, with "The vendor
