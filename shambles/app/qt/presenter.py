@@ -411,16 +411,21 @@ def remove_sheet(account: dict) -> dict:
     }
 
 
+#: Said only when the service's plan says nothing. The plan's own words
+#: come first otherwise: what eject does belongs to the service, and adding a
+#: sentence of the window's own in front of them said it twice.
+EJECT_FALLBACK = ("Every account keeps its current login, history and "
+                  "settings and goes back to being an ordinary install. "
+                  "Nothing is deleted.")
+
+
 def eject_sheet(plan) -> dict:
-    detail = " ".join(plan.warnings)
+    parts = [part.strip() for part in plan.warnings if part and part.strip()]
     return {
         "kind": "confirm",
         "action": "eject",
         "title": "Stop using Shambles?",
-        "message": "Every account keeps its current login, history and "
-                   "settings and goes back to being an ordinary install. "
-                   "Nothing is deleted."
-                   + (f" {detail}" if detail else ""),
+        "message": "\n\n".join(parts) if parts else EJECT_FALLBACK,
         "confirmLabel": "Eject",
         "provider": "",
         "name": "",
