@@ -363,3 +363,40 @@ def test_migration_notices_say_whether_they_worked():
 
     assert presenter.notice_sheet([done])["tone"] == "ok"
     assert presenter.notice_sheet([done, failed])["tone"] == "bad"
+
+
+# -- the boundary -------------------------------------------------------------------
+
+
+def test_the_window_reaches_credentials_only_through_the_service():
+    """Nothing under ``shambles/app/qt`` may import a module that moves a
+    credential, spawns the vendor, or reads the store directly.
+
+    Every one of those has to go through ``ShamblesService``. The Tk window
+    never did, which is why its safety rules had to be re-proved one dialog
+    at a time; a single stray ``from ... import switcher`` here is how the
+    new window would start down the same road.
+    """
+    import ast
+    from pathlib import Path
+
+    forbidden = {"switcher", "login", "state", "profiles", "eject", "migrate",
+                 "usage", "configjson", "stores", "providers", "settings"}
+    package = Path(presenter.__file__).resolve().parent
+    offenders = []
+    for path in sorted(package.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                names = {alias.name for alias in node.names}
+                module = (node.module or "").split(".")
+                if node.level >= 2 or "shambles" in module:
+                    hit = forbidden & (names | set(module))
+                    if hit:
+                        offenders.append(f"{path.name}: {sorted(hit)}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    parts = set(alias.name.split("."))
+                    if "shambles" in parts and forbidden & parts:
+                        offenders.append(f"{path.name}: {alias.name}")
+
+    assert offenders == []
