@@ -302,12 +302,21 @@ class LoginProcess:
         return self._process is not None and self._process.poll() is None
 
     def start(self, *, on_line, on_exit) -> None:
-        if shutil.which(self._argv[0], path=(self._env.get("PATH", os.defpath)
-                                           if self._env is not None else None)) is None:
+        resolved = shutil.which(
+            self._argv[0], path=(self._env.get("PATH", os.defpath)
+                                 if self._env is not None else None))
+        if resolved is None:
             raise LoginUnavailableError(NOT_ON_PATH.format(binary=self._argv[0]))
+        # Started by the path that was found, not by the bare name. On
+        # Windows the two are different questions: ``which`` honours PATHEXT
+        # and finds ``claude.cmd``, the shim npm installs, while the system
+        # call that starts a process looks for ``claude.exe`` and nothing
+        # else. Started by name, a vendor CLI installed through npm was
+        # reported as on PATH and then could not be started.
+        argv = [resolved, *self._argv[1:]]
         try:
             self._process = self._popen(
-                self._argv,
+                argv,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
