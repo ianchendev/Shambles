@@ -43,6 +43,8 @@ Notable changes per release. Dates are the tag date.
   account's, when `~/.claude.json` is briefly out of step with the login. An
   empty profile is no longer labelled with the previous account's address
   after a cancelled Add Account.
+- Removing a profile is now refused when it is the one whose login is live,
+  even if the active marker names a different profile.
 - A refused Add Account no longer leaves an empty profile behind.
 - Saving a login that one of your profiles already holds now names that
   profile, instead of making a second copy under a new name.

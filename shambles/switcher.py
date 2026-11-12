@@ -478,9 +478,15 @@ def remove_profile(paths, provider, name: str, *, platform=sys.platform) -> None
 
     Refuses the active profile even though the UI hides the control for it.
     Hiding a button is not a safety property.
+
+    Active means the marker names it *or* it holds the live credential. The
+    second matters when the two disagree: its stash is then the only thing
+    showing whose login is live, and with it gone the next switch would file
+    that login under whichever profile the marker names.
     """
     current = state.inspect(paths, provider, platform=platform)
-    if name == current.profile:
+    if name == current.profile or name in state.holders_of_live_credential(
+            paths, provider, platform=platform):
         raise AlreadyManagedError(REMOVE_ACTIVE.format(name=name))
 
     target = paths.profile_dir(provider.id, name)

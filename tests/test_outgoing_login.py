@@ -334,3 +334,38 @@ def test_login_keeps_a_live_login_that_is_saved_nowhere(paths, deferred_login,
         "the vendor was started anyway")
     assert live.read_bytes() == before
     assert state.read_active(paths, "codex") is None
+
+
+# ---- removing the profile that holds the live login ----------------------
+
+def test_removing_the_profile_that_holds_the_live_login_is_refused(paths):
+    """The marker says Work; the bytes in the store are Personal's. Remove
+    checked only the marker, so it deleted the one saved copy of the login
+    that was actually live -- and with that copy gone nothing could tell the
+    live login was not Work's, so the next switch filed it under Work."""
+    claude = providers.load("claude")
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Personal", email="p@example.test")
+    make_claude_json(paths, email="w@example.test")
+    live_path(paths, claude).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, claude).write_bytes(
+        paths.credentials("claude", "Personal").read_bytes())
+
+    with pytest.raises(AlreadyManagedError) as raised:
+        switcher.remove_profile(paths, claude, "Personal", platform="linux")
+
+    assert "signed in as" in str(raised.value)
+    assert paths.credentials("claude", "Personal").exists()
+
+
+def test_a_parked_profile_can_still_be_removed(paths, provider):
+    make_profile(paths, provider.id, "Work", email="w@example.test",
+                 active=True)
+    make_profile(paths, provider.id, "Personal", email="p@example.test")
+    live_path(paths, provider).parent.mkdir(parents=True, exist_ok=True)
+    live_path(paths, provider).write_bytes(
+        paths.credentials(provider.id, "Work").read_bytes())
+
+    switcher.remove_profile(paths, provider, "Personal", platform="linux")
+
+    assert state.profile_names(paths, provider.id) == ["Work"]
