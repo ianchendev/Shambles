@@ -1,64 +1,73 @@
-"""Credentials in the Windows Credential Manager, split across chunks.
+"""Credentials in the Windows Credential Manager, in Claude Code's own layout.
 
-Claude Code reaches this through ``Bun.secrets``. A credential blob exceeds the
-per-entry size cap, so it is split at 2000 characters and written as a family of
-entries -- ``<account>#p``, ``<account>#m``, then ``<account>#0`` through
-``<account>#n-1``. **A reader that assumes one entry gets a truncated
-credential**, which is the whole reason this module exists.
+Claude Code reaches Credential Manager through ``Bun.secrets``, and only for
+accounts where it has been switched on -- by a server-side rollout flag, or by
+``CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1``. Everybody else on Windows still has a
+plain ``.credentials.json``. Deciding which applies is the provider's job; this
+module only knows the layout, which has to be matched exactly or the vendor
+reads nothing.
+
+**The layout**, read out of the shipping Windows binary (2.1.322) and Bun's
+``SecretsWindows.cpp``:
+
+* Every entry is a generic credential whose target is ``<service>/<name>``,
+  with the UTF-8 bytes of the value as its blob.
+* A value of 2400 bytes or fewer is **one** entry, named for the account
+  alone, holding the JSON as it is.
+* Anything larger is base64-encoded and cut into 2400-character pieces,
+  ``<account>#0`` onwards, with ``<account>#m`` holding
+  ``{"n": pieces, "l": base64 length}``. The base64 step is what makes the
+  split safe: a cut can never land inside a multi-byte character.
+* ``<account>#p`` is a marker written before the pieces and removed after
+  them. It records how many pieces may exist, so an interrupted write can
+  still be cleaned up by whoever comes next.
+
+A reader that assumes one entry gets nothing for a large credential, and one
+that assumes pieces gets nothing for a small one. Both are handled here.
 
 Bound with ``ctypes`` against ``advapi32`` rather than the ``keyring`` package,
-because this project ships with no third-party dependencies and a single-file
-binary; adding one for a platform path most users never touch is a poor trade.
-
-.. warning::
-
-   **The chunk split and join below are verified; the target-name format is
-   not.** How ``Bun.secrets`` maps a (service, name) pair onto a Windows
-   ``TargetName`` is an implementation detail that could not be observed --
-   there was no Windows host available, and the mapping is not in the parts of
-   Claude Code that could be read. :data:`TARGET_TEMPLATE` is the assumption,
-   and it is isolated on one line so that correcting it is a one-line change.
-
-   Until it is checked against a real install, treat Windows support as
-   unproven. The pure functions :func:`split_payload` and :func:`join_chunks`
-   are exercised by the test suite on every platform and are not in doubt.
+because this project ships with no third-party dependencies beyond its
+terminal UI and as a single-file binary; adding one for a store most Windows
+users do not have switched on yet is a poor trade.
 """
 
+import base64
+import binascii
 import ctypes
+import json
+import math
 from ctypes import wintypes
 from dataclasses import dataclass, field
 
 from .base import StoreUnavailableError
 
-#: Claude Code's chunk width, in characters.
-CHUNK_SIZE = 2000
+#: Claude Code's piece width, in bytes for a whole value and in base64
+#: characters for a split one. Credential Manager caps a blob at 2560 bytes.
+CHUNK_SIZE = 2400
 
-#: Entries that carry metadata rather than payload.
-PREFIX_MARKER = "#p"
+#: The most pieces Claude Code will write or believe.
+MAX_CHUNKS = 256
+
+#: Entries that carry bookkeeping rather than payload.
+PENDING_MARKER = "#p"
 META_MARKER = "#m"
 
-#: UNVERIFIED. See the module warning.
-TARGET_TEMPLATE = "{service}/{account}{suffix}"
+#: How ``Bun.secrets`` turns (service, name) into a Windows target name.
+TARGET_TEMPLATE = "{service}/{name}"
 
 CRED_TYPE_GENERIC = 1
 CRED_PERSIST_LOCAL_MACHINE = 2
 ERROR_NOT_FOUND = 1168
 
 
-def split_payload(payload: bytes, chunk_size: int = CHUNK_SIZE) -> list[bytes]:
-    """Cut a blob into the chunks the credential manager will accept.
-
-    An empty payload yields a single empty chunk rather than no chunks, so that
-    "stored, and empty" stays distinguishable from "not stored".
-    """
-    if not payload:
-        return [b""]
-    return [payload[i:i + chunk_size]
-            for i in range(0, len(payload), chunk_size)]
+def split_payload(encoded: bytes, chunk_size: int = CHUNK_SIZE) -> list[bytes]:
+    """Cut base64 text into the pieces Credential Manager will accept."""
+    return [encoded[i:i + chunk_size]
+            for i in range(0, len(encoded), chunk_size)]
 
 
 def join_chunks(chunks) -> bytes:
-    """Reassemble chunks written by :func:`split_payload`.
+    """Reassemble pieces written by :func:`split_payload`.
 
     Takes an ordered sequence; ordering is the caller's job because the entry
     names carry the index.
@@ -66,12 +75,37 @@ def join_chunks(chunks) -> bytes:
     return b"".join(chunks)
 
 
+def parse_meta(raw: bytes | None, *, chunk_size: int = CHUNK_SIZE):
+    """``(pieces, base64 length)`` from a ``#m`` entry, or ``None``.
+
+    The same acceptance test Claude Code applies. Anything it would reject is
+    rejected here too, so both programs agree on whether a credential is
+    split -- an entry one side honours and the other ignores is how the two
+    end up reading different logins.
+    """
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    count, length = data.get("n"), data.get("l")
+    for value in (count, length):
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+    if not (0 < count <= MAX_CHUNKS and 0 < length <= count * chunk_size):
+        return None
+    return count, length
+
+
 @dataclass(frozen=True)
 class CredmanStore:
     service: str
     account: str
     chunk_size: int = CHUNK_SIZE
-    #: Injected so the chunking can be tested without Windows.
+    #: Injected so the layout can be tested without Windows.
     backend: object = field(default=None, compare=False)
 
     def _api(self):
@@ -84,54 +118,126 @@ class CredmanStore:
                 "The Windows Credential Manager is not available on this "
                 f"system:\n{exc}") from exc
 
-    def _target(self, suffix: str) -> str:
-        return TARGET_TEMPLATE.format(
-            service=self.service, account=self.account, suffix=suffix)
+    def _name(self, suffix="") -> str:
+        return f"{self.account}{suffix}"
+
+    def _target(self, suffix="") -> str:
+        return TARGET_TEMPLATE.format(service=self.service,
+                                      name=self._name(suffix))
+
+    def _meta(self, api):
+        return parse_meta(api.read(self._target(META_MARKER)),
+                          chunk_size=self.chunk_size)
 
     def read(self) -> bytes | None:
         api = self._api()
-        head = api.read(self._target(META_MARKER))
-        if head is None:
-            return None
-        try:
-            count = int(head.decode("ascii"))
-        except ValueError as exc:
-            raise StoreUnavailableError(
-                f"Credential '{self.service}' has an unreadable chunk count; "
-                "it may have been written by a different version.") from exc
+        meta = self._meta(api)
+        if meta is None:
+            return api.read(self._target())
 
-        chunks = []
-        for index in range(count):
-            piece = api.read(self._target(f"#{index}"))
-            if piece is None:
-                raise StoreUnavailableError(
-                    f"Credential '{self.service}' is missing chunk {index} of "
-                    f"{count}. Refusing to return a truncated credential.")
-            chunks.append(piece)
-        return join_chunks(chunks)
+        count, length = meta
+        pieces = [api.read(self._target(f"#{index}")) for index in range(count)]
+        missing = [index for index, piece in enumerate(pieces) if piece is None]
+        encoded = join_chunks(piece or b"" for piece in pieces)
+        if missing or len(encoded) != length:
+            raise StoreUnavailableError(
+                f"Credential '{self.service}' is incomplete in the Windows "
+                f"Credential Manager: {len(encoded)} of {length} characters "
+                f"across {count} pieces. Refusing to return a truncated "
+                "credential.")
+        try:
+            return base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise StoreUnavailableError(
+                f"Credential '{self.service}' in the Windows Credential "
+                "Manager is not readable; it may have been written by a "
+                "different version.") from exc
 
     def write(self, payload: bytes) -> None:
         api = self._api()
-        chunks = split_payload(payload, self.chunk_size)
-        # Payload first, count last: a reader that arrives mid-write sees the
-        # old count and the old chunks, never a new count with missing pieces.
-        for index, piece in enumerate(chunks):
-            api.write(self._target(f"#{index}"), piece)
-        api.write(self._target(META_MARKER), str(len(chunks)).encode("ascii"))
+        old = self._meta(api)
+        old_count = old[0] if old else 0
+
+        if len(payload) <= self.chunk_size:
+            api.write(self._target(), payload, username=self._name())
+            if old:
+                # The whole entry now wins every read, so the pieces behind
+                # it are leftovers. Marked before they go so that a crash in
+                # the middle still says how many there were.
+                api.write(self._target(PENDING_MARKER),
+                          str(old_count).encode("ascii"),
+                          username=self._name(PENDING_MARKER))
+                api.delete(self._target(META_MARKER))
+                for index in range(old_count):
+                    _quietly(api.delete, self._target(f"#{index}"))
+                _quietly(api.delete, self._target(PENDING_MARKER))
+            return
+
+        encoded = base64.b64encode(payload)
+        count = math.ceil(len(encoded) / self.chunk_size)
+        if count > MAX_CHUNKS:
+            raise StoreUnavailableError(
+                f"This credential is too large for the Windows Credential "
+                f"Manager ({len(payload)} bytes).")
+
+        api.write(self._target(PENDING_MARKER),
+                  str(max(old_count, count)).encode("ascii"),
+                  username=self._name(PENDING_MARKER))
+        for index, piece in enumerate(split_payload(encoded, self.chunk_size)):
+            api.write(self._target(f"#{index}"), piece,
+                      username=self._name(f"#{index}"))
+        # The count goes last: until it lands, a reader still sees whatever
+        # described the previous credential.
+        api.write(self._target(META_MARKER),
+                  json.dumps({"n": count, "l": len(encoded)},
+                             separators=(",", ":")).encode("ascii"),
+                  username=self._name(META_MARKER))
+
+        _quietly(api.delete, self._target())
+        for index in range(count, old_count):
+            _quietly(api.delete, self._target(f"#{index}"))
+        _quietly(api.delete, self._target(PENDING_MARKER))
 
     def delete(self) -> None:
         api = self._api()
-        head = api.read(self._target(META_MARKER))
-        count = int(head.decode("ascii")) if head else 0
+        meta = self._meta(api)
+        known = meta[0] if meta else 0
+
+        api.delete(self._target())
         # Count first, so a crash mid-delete leaves no count pointing at
-        # chunks that are already gone.
+        # pieces that are already gone.
         api.delete(self._target(META_MARKER))
-        for index in range(count):
+        for index in range(known):
             api.delete(self._target(f"#{index}"))
 
+        # An interrupted write leaves pieces no count describes. The marker
+        # says how many; without one, walk until a gap.
+        total = max(known, _pending_count(api.read(self._target(PENDING_MARKER))))
+        if total == 0:
+            while (total < MAX_CHUNKS
+                   and api.read(self._target(f"#{total}")) is not None):
+                total += 1
+        for index in range(known, total):
+            api.delete(self._target(f"#{index}"))
+        api.delete(self._target(PENDING_MARKER))
+
     def describe(self) -> str:
-        return (f"Windows Credential Manager entry '{self.service}' "
-                f"(account '{self.account}')")
+        return (f"Windows Credential Manager entry '{self._target()}'")
+
+
+def _pending_count(raw: bytes | None) -> int:
+    try:
+        return min(max(int((raw or b"0").decode("ascii")), 0), MAX_CHUNKS)
+    except (UnicodeDecodeError, ValueError):
+        return 0
+
+
+def _quietly(action, *args) -> None:
+    """Run a clean-up step whose failure changes nothing a reader sees."""
+    try:
+        action(*args)
+    except StoreUnavailableError:
+        pass
 
 
 class _CREDENTIAL(ctypes.Structure):
@@ -160,17 +266,31 @@ class _Advapi32:
 
     def __init__(self):
         self._dll = ctypes.WinDLL("advapi32", use_last_error=True)
+        # Declared rather than left to ctypes' int defaults: a pointer passed
+        # as a 32-bit int is truncated on 64-bit Windows.
+        pointer = ctypes.POINTER(_CREDENTIAL)
+        self._dll.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                        wintypes.DWORD, ctypes.POINTER(pointer)]
+        self._dll.CredReadW.restype = wintypes.BOOL
+        self._dll.CredWriteW.argtypes = [pointer, wintypes.DWORD]
+        self._dll.CredWriteW.restype = wintypes.BOOL
+        self._dll.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                          wintypes.DWORD]
+        self._dll.CredDeleteW.restype = wintypes.BOOL
+        self._dll.CredFree.argtypes = [ctypes.c_void_p]
+        self._dll.CredFree.restype = None
 
     def read(self, target: str) -> bytes | None:
         pointer = ctypes.POINTER(_CREDENTIAL)()
         ok = self._dll.CredReadW(target, CRED_TYPE_GENERIC, 0,
                                  ctypes.byref(pointer))
         if not ok:
-            if ctypes.get_last_error() == ERROR_NOT_FOUND:
+            code = ctypes.get_last_error()
+            if code == ERROR_NOT_FOUND:
                 return None
             raise StoreUnavailableError(
-                f"CredRead failed for '{target}': "
-                f"error {ctypes.get_last_error()}")
+                f"Windows Credential Manager could not read '{target}': "
+                f"{_describe(code)}")
         try:
             blob = pointer.contents
             return ctypes.string_at(blob.CredentialBlob,
@@ -178,22 +298,32 @@ class _Advapi32:
         finally:
             self._dll.CredFree(pointer)
 
-    def write(self, target: str, payload: bytes) -> None:
+    def write(self, target: str, payload: bytes, *, username=None) -> None:
         buffer = ctypes.create_string_buffer(payload, len(payload))
         cred = _CREDENTIAL(
             Flags=0, Type=CRED_TYPE_GENERIC, TargetName=target, Comment=None,
             CredentialBlobSize=len(payload),
             CredentialBlob=ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte)),
             Persist=CRED_PERSIST_LOCAL_MACHINE, AttributeCount=0,
-            Attributes=None, TargetAlias=None, UserName=None)
+            Attributes=None, TargetAlias=None, UserName=username)
         if not self._dll.CredWriteW(ctypes.byref(cred), 0):
             raise StoreUnavailableError(
-                f"CredWrite failed for '{target}': "
-                f"error {ctypes.get_last_error()}")
+                f"Windows Credential Manager could not write '{target}': "
+                f"{_describe(ctypes.get_last_error())}")
 
     def delete(self, target: str) -> None:
         if not self._dll.CredDeleteW(target, CRED_TYPE_GENERIC, 0):
-            if ctypes.get_last_error() != ERROR_NOT_FOUND:
+            code = ctypes.get_last_error()
+            if code != ERROR_NOT_FOUND:
                 raise StoreUnavailableError(
-                    f"CredDelete failed for '{target}': "
-                    f"error {ctypes.get_last_error()}")
+                    f"Windows Credential Manager could not remove "
+                    f"'{target}': {_describe(code)}")
+
+
+def _describe(code: int) -> str:
+    """A Windows error as a sentence, falling back to its number."""
+    try:
+        text = ctypes.FormatError(code).strip()
+    except (AttributeError, OSError):
+        text = ""
+    return f"{text} (error {code})" if text else f"error {code}"

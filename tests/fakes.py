@@ -12,6 +12,7 @@ assumed ``-w`` was byte-transparent, which is exactly the bug this fake exists
 to prevent regressing.
 """
 
+import shlex
 import subprocess
 
 PRINTABLE = set(range(0x20, 0x7F))
@@ -25,12 +26,34 @@ def _security_prints_hex(payload: bytes) -> bool:
 class FakeSecurity:
     """A ``subprocess.run`` replacement that behaves like ``security``."""
 
-    def __init__(self):
+    def __init__(self, *, locked=False, interactive=True):
         self.items = {}
         self.calls = []
+        #: Every command line read from standard input in interactive mode,
+        #: already split -- what ``calls`` would have held had it been sent
+        #: as arguments.
+        self.stdin_commands = []
+        #: A keychain with no session to unlock it in: every request is
+        #: refused with exit 36, which is what SSH into a Mac looks like.
+        self.locked = locked
+        #: Whether ``security -i`` acts on what it is sent. Turned off, it
+        #: exits 0 having done nothing, which is the failure a writer that
+        #: trusted the exit status would never notice.
+        self.interactive = interactive
 
-    def __call__(self, args, capture_output=False, **kwargs):
+    def __call__(self, args, capture_output=False, input=None, **kwargs):
         self.calls.append(list(args))
+        if self.locked:
+            return _done(36, stderr=b"security: SecKeychainSearchCopyNext: "
+                                    b"User interaction is not allowed.\n")
+        if args[1] == "-i":
+            # Interactive mode: the command arrives on standard input, one
+            # line, quoted the way a shell would quote it.
+            if not self.interactive:
+                return _done(0)
+            line = (input or b"").decode("utf-8")
+            args = [args[0], *shlex.split(line)]
+            self.stdin_commands.append(args)
         verb = args[1]
         flags = _parse_flags(args[2:])
         key = (flags.get("-s"), flags.get("-a"))
@@ -65,12 +88,17 @@ class FakeCredman:
 
     def __init__(self):
         self.entries = {}
+        self.usernames = {}
 
     def read(self, target):
         return self.entries.get(target)
 
-    def write(self, target, payload):
-        self.entries[target] = payload
+    def write(self, target, payload, *, username=None):
+        if len(payload) > 2560:
+            raise AssertionError(
+                f"{len(payload)} bytes exceeds the real per-entry limit")
+        self.entries[target] = bytes(payload)
+        self.usernames[target] = username
 
     def delete(self, target):
         self.entries.pop(target, None)

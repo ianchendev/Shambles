@@ -692,7 +692,7 @@ async def test_rename_failure_shows_the_service_error(service):
 async def test_remove_needs_explicit_confirmation(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await pilot.press("m", "d")
+        await pilot.press("j", "m", "d")
         assert app.screen.id == "confirm-action"
         assert service.remove_calls == []
         await pilot.press("escape")
@@ -723,7 +723,7 @@ async def test_remove_failure_shows_the_service_error(service):
     )
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await pilot.press("m", "d", "enter")
+        await pilot.press("j", "m", "d", "enter")
         await pilot.pause()
         assert app.screen.id == "result"
         assert "Switch away before removing it." in screen_text(app)
@@ -732,7 +732,7 @@ async def test_remove_failure_shows_the_service_error(service):
 async def test_undersized_terminal_refuses_a_confirmed_removal(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
-        await pilot.press("m", "d")
+        await pilot.press("j", "m", "d")
         assert app.screen.id == "confirm-action"
         await pilot.resize_terminal(80, 8)
         await pilot.press("enter")
@@ -745,7 +745,7 @@ async def test_concurrent_mutation_blocks_new_lifecycle_actions_until_released(s
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         try:
-            await pilot.press("m", "d", "enter")
+            await pilot.press("j", "m", "d", "enter")
             assert service.mutation_started.wait(5)
             assert app.mutation_running
             await pilot.press("m")
@@ -1626,3 +1626,16 @@ def test_the_terminal_ui_opens_on_a_settled_marker(monkeypatch):
     application.run_tui(service)
 
     assert service.refresh_calls == 1
+
+
+async def test_the_active_account_menu_does_not_offer_remove(service):
+    """Reproduced: m then d on the active account asked "Remove Personal?",
+    and only after Enter said it could not be removed."""
+    app = ShamblesTUI(service)
+    async with app.run_test() as pilot:
+        await pilot.press("m")
+        assert "Remove" not in screen_text(app)
+        await pilot.press("d")
+        await pilot.pause()
+        assert service.remove_plan_calls == []
+        assert app.screen.id != "confirm-action"

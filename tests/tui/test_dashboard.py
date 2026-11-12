@@ -625,3 +625,12 @@ async def test_details_are_not_truncated_to_a_width_the_pane_no_longer_has(
         screen = screen_text(app)
     assert "work@example.test" in screen
     assert "22%" in screen
+
+
+async def test_an_80_column_footer_still_names_the_sign_in_key(snapshot):
+    """At 80x24, the commonest terminal, the compact footer dropped l login,
+    so the one key that fixes a lapsed account was not on screen."""
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        assert "l login" in screen_text(app)

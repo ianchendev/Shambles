@@ -226,18 +226,16 @@ def environment(provider, *, home, platform) -> dict[str, str]:
     child = dict(os.environ)
     provider_env = provider.env
     child.update(provider_env)
-    config_key = provider.spec.get("config_dir", {}).get("env")
-    selectors = {config_key} if config_key else set()
-    for block in provider.spec.get("store", {}).values():
-        selectors.update(value for key, value in block.items()
-                         if key.endswith("_env"))
-    for key in selectors:
+    # Every variable that decides *where* the vendor keeps its login comes
+    # from the provider's environment or not at all. The config directory is
+    # passed through exactly as it was written: Claude Code hashes that raw
+    # string into its Keychain item name, so a tidied copy -- a trailing
+    # slash dropped, separators flipped -- would sign in to a different item
+    # from the one the user's own shell reads.
+    for key in _store_selectors(provider.spec):
         child.pop(key, None)
         if key in provider_env:
             child[key] = provider_env[key]
-    if config_key and provider_env.get(config_key):
-        child[config_key] = str(specmod.config_dir(
-            provider.spec, home=home, env=provider_env))
     resolved_home = str(Path(home).resolve())
     child["HOME"] = resolved_home
     child["USERPROFILE"] = resolved_home
@@ -246,6 +244,34 @@ def environment(provider, *, home, platform) -> dict[str, str]:
         child["HOMEDRIVE"] = drive
         child["HOMEPATH"] = tail
     return child
+
+
+def _store_selectors(spec: dict) -> set[str]:
+    """Names of the environment variables a spec says relocate the login.
+
+    Collected from the spec rather than listed here, so a variable the
+    research turns up later is honoured the moment it is written down: the
+    config directory, and anything under ``store`` or ``secure_dir`` whose
+    key is ``env`` or ends in ``_env``.
+    """
+    found = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, str) and (key == "env"
+                                               or key.endswith("_env")):
+                    found.add(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    for section in ("config_dir", "secure_dir", "store"):
+        walk(spec.get(section))
+    found.discard("")
+    return found
 
 
 class LoginProcess:
@@ -276,12 +302,21 @@ class LoginProcess:
         return self._process is not None and self._process.poll() is None
 
     def start(self, *, on_line, on_exit) -> None:
-        if shutil.which(self._argv[0], path=(self._env.get("PATH", os.defpath)
-                                           if self._env is not None else None)) is None:
+        resolved = shutil.which(
+            self._argv[0], path=(self._env.get("PATH", os.defpath)
+                                 if self._env is not None else None))
+        if resolved is None:
             raise LoginUnavailableError(NOT_ON_PATH.format(binary=self._argv[0]))
+        # Started by the path that was found, not by the bare name. On
+        # Windows the two are different questions: ``which`` honours PATHEXT
+        # and finds ``claude.cmd``, the shim npm installs, while the system
+        # call that starts a process looks for ``claude.exe`` and nothing
+        # else. Started by name, a vendor CLI installed through npm was
+        # reported as on PATH and then could not be started.
+        argv = [resolved, *self._argv[1:]]
         try:
             self._process = self._popen(
-                self._argv,
+                argv,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,

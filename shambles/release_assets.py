@@ -22,6 +22,8 @@ _WIN = {
     "AMD64": "shambles-windows-x64.exe",
     "x86_64": "shambles-windows-x64.exe",
     "amd64": "shambles-windows-x64.exe",
+    "ARM64": "shambles-windows-arm64.exe",
+    "arm64": "shambles-windows-arm64.exe",
 }
 
 #: The windowed twin of the Windows binary. ``shambles.exe`` is
@@ -30,9 +32,11 @@ _WIN = {
 #: exists to avoid. Not in the platform table above because it is never the
 #: answer to "which binary runs here", only an extra file to fetch alongside.
 WINDOWED_WINDOWS = "shamblesw-windows-x64.exe"
+WINDOWED_WINDOWS_ARM64 = "shamblesw-windows-arm64.exe"
 
 ARTIFACTS = (frozenset(_LINUX.values()) | frozenset(_DARWIN.values())
-             | frozenset(_WIN.values()) | {WINDOWED_WINDOWS})
+             | frozenset(_WIN.values())
+             | {WINDOWED_WINDOWS, WINDOWED_WINDOWS_ARM64})
 
 def release_asset(*, sys_platform: str, machine: str) -> str:
     table = {"linux": _LINUX, "darwin": _DARWIN, "win32": _WIN}.get(sys_platform)

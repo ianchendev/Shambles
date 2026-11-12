@@ -117,14 +117,26 @@ PATH:
 irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex
 ```
 
-Two things to know first:
+That line works in Windows PowerShell 5.1 and PowerShell 7, at the default
+execution policy. From `cmd.exe`, wrap it:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex"
+```
+
+To pin a release, set `$env:SHAMBLES_VERSION = 'v2.1.2'` before the line.
+
+Three things to know first:
 
 1. The binaries are **unsigned**, so Windows SmartScreen warns you the first
-   time. Every release ships a `SHA256SUMS` file if you want to check your
-   download.
-2. **Installing is not the same as switching.** The script fetches a binary
-   for your machine. Whether Shambles can swap an account there is a separate
-   question, answered by the [support table](#will-it-work-for-you).
+   time, and some antivirus products quarantine unsigned single-file programs
+   outright. If the file vanishes after download, that is what happened; use
+   pipx below instead.
+2. Both scripts check the download against the release's `SHA256SUMS` and
+   refuse to install on a mismatch. That list is served from the same place
+   as the binary, so it catches a broken download, not a tampered release.
+3. Both scripts run the binary once before installing it. If it cannot start
+   on your system, nothing is installed and the script says why.
 
 ### Check it worked
 
@@ -198,32 +210,88 @@ is designed and waiting on the macOS and Windows credential work below.
 
 | Where you run it | Claude Code | Codex |
 |---|---|---|
-| Linux desktop | **Supported**, glibc 2.35 or newer | **Unverified** |
-| WSL (Ubuntu and friends) | **Supported**, using the **Linux** build **inside** WSL | **Unverified** |
-| Windows, not WSL | **Unverified, probably not working** | **Unverified** |
-| macOS | **Not supported** | **Unverified** |
+| Linux desktop | **Works.** In daily use, and checked by CI | **Works in CI** |
+| WSL (Ubuntu and friends) | **Works**, using the **Linux** build **inside** WSL | **Works in CI** (as Linux) |
+| macOS 15 and 26, Apple Silicon and Intel | **Works in CI** | **Works in CI** |
+| Windows, not WSL, x64 and Arm | **Works in CI** | **Works in CI** |
 
-**macOS.** Claude Code keeps credentials in the system Keychain, so there is
-no file for Shambles to swap.
+**What "works in CI" means, exactly.** On throwaway GitHub machines with the
+current Claude Code and Codex installed and made-up credentials, Shambles
+saved two accounts, switched, switched back and cleared the login. After each
+step the vendor's own command (`claude auth status`, `codex login status`)
+was asked who was signed in, and named the account Shambles had just put
+there. That runs on every pull request, from source and from the released
+binary, on macOS 15 and 26, Windows Server 2022 and 2025, Windows 11 on Arm
+and Linux.
 
-**Windows.** On Linux, Claude Code writes `~/.claude/.credentials.json`, the
-file Shambles swaps. On Windows it looks like it uses the Credential Manager
-instead. If so, that file never exists and switching would do nothing. The
-Windows binary is built and tested, which only proves the app runs. Nobody has
-confirmed a switch takes effect. See [docs/token-storage.md](docs/token-storage.md).
+**What it does not mean.** Nobody has yet signed in with a real account
+through Shambles on macOS or native Windows, and nobody has used Codex with a
+real account on any system. Signing in is the vendor's own command, which
+Shambles only starts, so there is little of ours to go wrong, but it has not
+been seen to work. If you try it, please
+[say how it went](https://github.com/ianchendev/Shambles/issues), either way.
 
-**Codex.** Built and tested against fixtures only, because no Codex install
-was available. It swaps `~/.codex/auth.json`, the same path everywhere. Treat
-it as unverified until someone confirms a real switch.
+**macOS.** Claude Code keeps its login in the Keychain. When the Keychain
+refuses a write, which is what happens over SSH, it uses
+`~/.claude/.credentials.json` instead. Shambles follows both. With the
+Keychain locked and no file to fall back on, it says the Keychain is locked
+instead of guessing that you are signed out.
+
+**Windows.** Claude Code keeps its login in
+`%USERPROFILE%\.claude\.credentials.json`. It also has a Credential Manager
+store that Anthropic is switching on account by account. Shambles reads the
+same switch Claude Code reads and follows it. Versions up to 2.1.2 used
+Credential Manager regardless, in a layout Claude Code does not read, so a
+switch on Windows changed the name on screen and left the old login in place.
+Upgrade before using it there.
+
+**Codex.** Shambles swaps `~/.codex/auth.json`, the same path on every
+system. That only works while Codex keeps its login in that file, which is
+its default. If your `config.toml` sets `cli_auth_credentials_store` to
+`keyring` or `auto`, Codex does not read the file, and Shambles refuses to
+switch and tells you the line to change.
+
+**Never sign out, or sign in by hand, while a saved account is the live
+one.** `codex login`, `codex logout`, `claude auth logout` and `/logout` all
+tell the vendor's servers to revoke the login that is currently stored. The
+copy Shambles saved is the same login, so it dies too, and that account then
+needs a new verification email. To add an account, use **Add Account**: it
+empties the live slot first, so there is nothing for the vendor to revoke.
 
 **WSL is the sharp edge.** A Windows `.exe` manages `C:\Users\<you>\.claude`.
 That is a *different* Claude Code install from the one in your WSL home
-directory. If you use Claude Code inside WSL, install inside WSL.
+directory. If you use Claude Code inside WSL, install Shambles inside WSL.
+WSL also puts the Windows PATH after its own, so `claude` inside WSL can turn
+out to be the Windows program. `shambles doctor` tells you if it is.
+
+**What cannot work, and what Shambles says instead.**
+
+| Situation | What happens |
+|---|---|
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or a Bedrock, Vertex or Foundry switch is set; or `CODEX_ACCESS_TOKEN` or `CODEX_API_KEY` for Codex | The vendor signs in from the variable and ignores its stored login. A switch succeeds and changes nothing. `shambles doctor` names the variable |
+| Codex set to `keyring`, `auto` or `ephemeral` storage | Shambles refuses to switch Codex and names the setting |
+| Claude inside WSL is really the Windows install | `shambles doctor` says so. Install Claude Code inside WSL, or use Shambles for Windows |
+| `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set in a shell | Shambles started from that shell manages that directory. Programs started without the variable, VS Code from the desktop for one, use the default directory and are not affected. A banner and `shambles doctor` both say so |
+| A Mac's Keychain is locked and there is no fallback file (some SSH sessions) | Shambles reports the Keychain as locked. Unlock it with `security unlock-keychain`, or run Shambles at the Mac itself |
+| The Claude desktop app, and ChatGPT's own chat login | Separate logins that Shambles does not manage |
+| Alpine and other musl systems, or glibc older than 2.35 | The binaries cannot start. The install script says so before downloading; install with pipx |
+| 32-bit Windows | No binary. Install with pipx |
+
+If a switch seems to do nothing, run this first:
+
+```bash
+shambles doctor
+```
+
+It checks the machine without changing anything and lists what would stop a
+switch taking effect.
 
 ### Try it without risking your real accounts
 
 Every command takes `--home`, which points the whole program at another
-directory. Shambles reads and writes nothing outside it.
+directory. Shambles reads and writes nothing outside it. That includes the
+macOS Keychain and the Windows Credential Manager, which belong to you and
+not to a directory: for any home but your real one, only files are used.
 
 ```bash
 shambles list --home /tmp/scratch      # an empty pretend home
@@ -267,6 +335,8 @@ usage and changes nothing.
 | `shambles list` | Every account and its state, as text |
 | `shambles list --json` | The same thing, for scripts |
 | `shambles switch <provider> <account>` | Switch without opening anything |
+| `shambles doctor` | Check whether switching can work on this machine, and say why not. Changes nothing. Exits 1 if it finds a problem |
+| `shambles doctor --json` | The same findings, for scripts |
 | `shambles config get update.check` | Prints `true` or `false` |
 | `shambles config set update.check true` | Turn release notices on or off |
 | `shambles --version` | The version, one line on stdout |
@@ -453,9 +523,10 @@ after you enable [update checks](#update-checks). That split is not a promise.
 build on any networking import, allowing `urllib` in that one file and nowhere
 else.
 
-**It runs exactly one kind of external program:** the vendor's own login
-command, and only when you add an account. **Shambles implements no part of
-signing in.** That command opens your browser and runs its own callback
+**It runs two kinds of external program.** The vendor's own login command,
+when you add or renew an account. And, on macOS only, `/usr/bin/security`,
+the system tool Claude Code itself uses to read and write its Keychain item.
+**Shambles implements no part of signing in.** That command opens your browser and runs its own callback
 server. Shambles waits for it to finish, then files the credential it wrote.
 No password, no token in flight, and nothing held that was not already on your
 disk.
@@ -511,7 +582,10 @@ Session history, plugins and settings are shared and live elsewhere.
 | `Shambles needs Tkinter` | Only the window needs it. Run `sudo apt install python3-tk`, or use `shambles tui` instead |
 | `shambles: command not found` after the install script | `~/.local/bin` is not on your PATH. The script prints the line to add |
 | Switching seems to do nothing | A session that was already running keeps its old token. Start a new one, or run *Developer: Reload Window* in VS Code |
-| Switching does nothing, even in new sessions | `CLAUDE_CONFIG_DIR` is set, or you are on Windows or macOS. See [the support table](#will-it-work-for-you) |
+| Switching does nothing, even in new sessions | Run `shambles doctor`. The usual causes are an environment variable supplying its own login, `CLAUDE_CONFIG_DIR` set in one place and not another, or Shambles 2.1.2 or older on Windows. See [the support table](#will-it-work-for-you) |
+| `Codex is set to keep its login in the system keyring` | Codex is not using `auth.json`, so there is nothing for Shambles to swap. Set `cli_auth_credentials_store = "file"` in `~/.codex/config.toml` and sign in again |
+| `The macOS Keychain is locked` | Usually an SSH session. Run `security unlock-keychain`, or use Shambles at the Mac itself |
+| An account needs a new login right after you signed out of another | Signing out revokes the stored login on the vendor's servers, and Shambles' saved copy is the same login. Use **Add Account** instead of signing out |
 | The window will not close | `Ctrl+C` in the launching terminal works, and so does `kill <pid>`. If it is stopped rather than frozen, run `pkill -CONT -f shambles && pkill -f shambles` |
 | A provider is greyed out in Add Account | Its CLI is not on your PATH. Shambles runs the vendor's own login command, so it needs `claude` or `codex` installed |
 | Windows SmartScreen warns you | The binaries are unsigned. Use pipx if you would rather not click through it |
@@ -534,13 +608,22 @@ none reads or writes your real `~/.claude`. Nothing runs a real `claude` or
 `codex` either. The login tests drive a `/bin/sh` stand-in on `PATH`, so no
 browser opens and nothing authenticates.
 
-CI runs the suite on Linux and Windows across Python 3.10 and 3.12, under
-`xvfb` so the window tests run instead of skipping.
+CI runs the suite on Linux and Windows across Python 3.10 and 3.12, and on
+macOS, under `xvfb` on Linux so the window tests run instead of skipping.
 
-Tagging `v*` builds unsigned binaries for five targets: Linux x86_64 and
-arm64, macOS Intel and Apple Silicon, and Windows x64. It attaches them to a
-Release with a `SHA256SUMS` file. Each binary is built only after the suite
-passes on that platform, and nothing is published unless all five build.
+A second workflow, `real-machine`, answers what the suite cannot from behind
+its fakes. On macOS, Windows and Linux runners it installs the current Claude
+Code and Codex, then drives Shambles against the real Keychain and the real
+Credential Manager with made-up credentials, and asks the vendors' own
+commands who is signed in after each switch. It also runs both install
+scripts for real. It runs on every pull request and once a week, so a vendor
+moving its login is noticed without anyone opening a pull request.
+
+Tagging `v*` builds unsigned binaries for six targets: Linux x86_64 and
+arm64, macOS Intel and Apple Silicon, and Windows x64 and arm64. It attaches
+them to a Release with a `SHA256SUMS` file. Each binary is built only after
+the suite passes on that platform, and nothing is published unless all six
+build.
 
 The load-bearing test is
 `tests/test_switch.py::test_credentials_survive_a_round_trip_unmodified`. It
@@ -548,9 +631,10 @@ asserts that `Work → Personal → Work` leaves the credential byte-identical,
 refresh token and expiry included. If it regresses, the tool stops solving the
 problem it exists for.
 
-Developed and tested on WSL2 Ubuntu with WSLg, Python 3.12, Tk 8.6. The
-Windows code paths are written to spec but **have not been exercised**,
-because no Windows-side Claude Code install was available.
+Developed on WSL2 Ubuntu with WSLg, Python 3.12, Tk 8.6. macOS and native
+Windows are exercised by the `real-machine` workflow and by nobody's daily
+use yet; see [the support table](#will-it-work-for-you) for exactly what
+that does and does not establish.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
