@@ -20,6 +20,7 @@ import argparse
 import json
 import sys
 
+from .. import diagnose
 from .. import providers as registry
 from .. import settings
 from ..paths import Paths
@@ -193,6 +194,27 @@ def cmd_switch(args) -> int:
     return EXIT_OK
 
 
+def cmd_doctor(args) -> int:
+    """Say why switching might not work on this machine.
+
+    Exits non-zero when something would stop a switch taking effect, so a
+    script can ask the same question a person would.
+    """
+    findings = diagnose.diagnose(_paths(args), registry.all_providers(),
+                                 platform=sys.platform)
+    problems = any(f.level == diagnose.PROBLEM for f in findings)
+    if args.json:
+        json.dump({"version": snapshot_mod.CONTRACT_VERSION,
+                   "ok": not problems,
+                   "findings": [{"level": f.level, "provider": f.provider,
+                                 "code": f.code, "message": f.message}
+                                for f in findings]}, sys.stdout)
+        sys.stdout.write("\n")
+    else:
+        sys.stdout.write(diagnose.render(findings))
+    return EXIT_FAILED if problems else EXIT_OK
+
+
 def cmd_config(args) -> int:
     """``config`` with no action is not a command; say what the two are."""
     sys.stderr.write(CONFIG_USAGE)
@@ -296,6 +318,13 @@ def build_parser() -> argparse.ArgumentParser:
     switching.add_argument("--json", action="store_true",
                            help="emit the machine-readable result")
     switching.set_defaults(func=cmd_switch)
+
+    checking = sub.add_parser(
+        "doctor", parents=[common],
+        help="check whether switching can work on this machine, and why not")
+    checking.add_argument("--json", action="store_true",
+                          help="emit the machine-readable findings")
+    checking.set_defaults(func=cmd_doctor)
 
     # `config` carries a func of its own so a bare `shambles config` explains
     # its two actions rather than printing the whole program's help; parsing a
