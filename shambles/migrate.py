@@ -43,6 +43,12 @@ MERGE_JSONL = ("history.jsonl",)
 #: ~/.claude should look exactly like a stock install.
 LEGACY_SIDECAR = ".shambles.json"
 
+#: Where a pre-1.0 profile, and so the merged ``~/.claude``, keeps its login.
+LEGACY_CREDENTIALS = ".credentials.json"
+
+#: Suffix of a file still being written. Renamed away on success.
+TMP_SUFFIX = ".shambles-tmp"
+
 #: The provider every pre-1.0 and v1.0 profile belongs to. There was only one;
 #: both migrations file everything they find under it.
 V1_PROVIDER = "claude"
@@ -73,28 +79,33 @@ class Plan:
 
 
 def needed(paths) -> bool:
-    """Whether ``~/.claude`` is the pre-1.0 layout: a link to an old profile.
+    """Whether ``~/.claude`` is the pre-1.0 layout: a link into the old store.
 
     A symlink alone is not evidence. People link ``~/.claude`` themselves,
     from a dotfile manager or to keep it on another drive, and that link is
-    not ours to replace. Only one that resolves to a profile directory
-    directly inside ``~/.claude-profiles`` is the layout this module converts,
-    which is the same test the pre-1.0 code used to call a link its own.
+    not ours to replace. Only one that points at a profile's place directly
+    inside ``~/.claude-profiles`` is the layout this module converts.
 
-    Both sides are resolved, so a relative link, or a home that is itself
-    reached through a link, still compares equal. A link that dangles or loops
-    cannot be resolved and is not the old layout either: False, not an error.
+    At a profile's *place*, not at a profile that still exists. A link left
+    dangling because its profile directory was removed is still the old
+    layout, and the logins in the store beside it still have to be brought
+    across: answering no hands that store to :func:`migrate_store`, which
+    looks for the v1.0 file names, finds none, and declares the job done
+    with every login left behind. A hidden name was never a profile.
+
+    Both sides are resolved as far as they go, so a relative link, or a home
+    that is itself reached through a link, still compares. With no profile
+    left in the store there is nothing to convert, and the answer is no.
     """
     try:
         if not paths.claude_dir.is_symlink():
             return False
-        target = paths.claude_dir.resolve(strict=True)
-        store = paths.legacy_profiles_dir.resolve(strict=True)
-    except (OSError, RuntimeError):  # RuntimeError: a link loop, before 3.13
+        target = Path(os.path.realpath(paths.claude_dir))
+        store = Path(os.path.realpath(paths.legacy_profiles_dir))
+    except OSError:
         return False
-    # The dot rule is legacy_names': a hidden directory was never a profile.
-    return (target.parent == store and target.is_dir()
-            and not target.name.startswith("."))
+    return (target.parent == store and not target.name.startswith(".")
+            and bool(legacy_names(paths)))
 
 
 def _session_count(profile_dir: Path) -> int:
@@ -158,7 +169,12 @@ def survey(paths) -> Plan:
 
 
 def _merge_tree(src: Path, dest: Path) -> tuple[int, int]:
-    """Copy files that are not already at ``dest``. Never overwrites."""
+    """Copy files that are not already at ``dest``. Never overwrites.
+
+    Each file arrives under a temporary name and is renamed into place. A
+    copy cut short by a full disk would otherwise leave a truncated file at
+    the real name, and "already there" is exactly what the retry skips.
+    """
     merged = skipped = 0
     for path in src.rglob("*"):
         if not path.is_file():
@@ -168,7 +184,13 @@ def _merge_tree(src: Path, dest: Path) -> tuple[int, int]:
             skipped += 1
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
+        tmp = target.with_name(target.name + TMP_SUFFIX)
+        try:
+            shutil.copy2(path, tmp)
+            os.replace(tmp, target)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
         merged += 1
     return merged, skipped
 
@@ -186,6 +208,10 @@ def _merge_jsonl(src: Path, dest: Path) -> int:
     and ``str.splitlines`` breaks a line at U+2028, which JSON allows inside a
     string, leaving two halves that are no longer JSON. Bytes split only at
     the newline the writer put there.
+
+    Written beside ``dest`` and renamed over it. ``dest`` is the base
+    profile's own history, the only copy of it, and writing in place empties
+    it first: a full disk at that moment lost every prompt it held.
     """
     if not src.is_file():
         return 0
@@ -196,7 +222,13 @@ def _merge_jsonl(src: Path, dest: Path) -> int:
     if not added:
         return 0
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(b"\n".join(existing + added).rstrip(b"\n") + b"\n")
+    tmp = dest.with_name(dest.name + TMP_SUFFIX)
+    try:
+        tmp.write_bytes(b"\n".join(existing + added).rstrip(b"\n") + b"\n")
+        os.replace(tmp, dest)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
     return len(added)
 
 
@@ -207,6 +239,11 @@ def run(paths, *, now_ms: int) -> Plan:
     link comes after. Until that happens :func:`needed` stays true, so a run
     cut short by a full disk or a crash is simply run again at the next
     start, and everything before the swap is safe to repeat.
+
+    The user ends up signed in as the account they were signed in as. The
+    merged directory is the richest profile's, and it arrives with that
+    profile's login inside it, so when the link pointed somewhere else the
+    linked login is put in its place straight after the swap.
     """
     if not needed(paths):
         raise MigrationError(
@@ -219,10 +256,12 @@ def run(paths, *, now_ms: int) -> Plan:
         raise MigrationError(f"Base profile '{plan.base}' is missing.")
 
     try:
-        _prepare(paths, plan, base_dir, now_ms)
+        active, live_login = _prepare(paths, plan, base_dir, now_ms)
         link_target = os.readlink(paths.claude_dir)
         paths.claude_dir.unlink()
-    except (OSError, StoreUnavailableError) as exc:
+    except (OSError, StoreUnavailableError, ValueError) as exc:
+        # ValueError is a file that is not valid text. Not ours to repair,
+        # and a traceback at every start is not a way to say so.
         raise MigrationError(NOT_CONVERTED.format(error=exc)) from exc
 
     # 4. Replace the symlink with the real merged directory. Guarded: if the
@@ -243,9 +282,13 @@ def run(paths, *, now_ms: int) -> Plan:
             f"Could not move '{plan.base}' into place, so nothing was "
             f"changed and ~/.claude was restored:\n{exc}") from exc
 
-    # 5. Leave ~/.claude looking like a stock install: the sidecar's contents
-    #    were filed in step 3. The conversion is complete by now, so a file
-    #    that will not go is left behind rather than reported as a failure.
+    # 5. Keep the user on the account they were on. The conversion is
+    #    complete by now, so nothing below is reported as a failure of it.
+    if active and active != plan.base:
+        _keep_signed_in(paths, plan.base, live_login)
+
+    # 6. Leave ~/.claude looking like a stock install: the sidecar's contents
+    #    were filed in step 3. A file that will not go is left behind.
     try:
         (paths.claude_dir / LEGACY_SIDECAR).unlink(missing_ok=True)
     except OSError:
@@ -253,8 +296,37 @@ def run(paths, *, now_ms: int) -> Plan:
     return plan
 
 
-def _prepare(paths, plan, base_dir, now_ms) -> None:
-    """Steps 1 to 3: everything that happens before ``~/.claude`` changes."""
+def _keep_signed_in(paths, base: str, live_login) -> None:
+    """Put the linked profile's login where the merged directory's was.
+
+    ``~/.claude`` is now the richest profile's directory, login included,
+    while the marker and ``~/.claude.json`` both name the profile the link
+    pointed at. Left like that the next switch files the base's token under
+    the linked profile's name and its own saved token is gone. The base's
+    login is already filed in the store, so replacing it here loses nothing.
+
+    If the login cannot be written, the marker is moved to the base instead:
+    whichever way it goes, the marker and the live login name one account.
+    """
+    live = FileStore(paths.claude_dir / LEGACY_CREDENTIALS, 0o600)
+    try:
+        if live_login:
+            live.write(live_login)
+        else:
+            live.delete()   # the linked profile was signed out, so stay so
+    except (OSError, StoreUnavailableError):
+        try:
+            state.write_active(paths, V1_PROVIDER, base)
+        except OSError:
+            pass
+
+
+def _prepare(paths, plan, base_dir, now_ms):
+    """Steps 1 to 3: everything that happens before ``~/.claude`` changes.
+
+    Returns the profile the link points at, if any, and its login as read at
+    the last moment.
+    """
     # 1. Merge everyone else's machine-scoped state into the base.
     merged = skipped = 0
     for name in plan.others:
@@ -273,8 +345,8 @@ def _prepare(paths, plan, base_dir, now_ms) -> None:
     #    locations before anything is rearranged.
     identities = {}
     for name in legacy_names(paths):
-        old_creds = paths.legacy_profiles_dir / name / ".credentials.json"
-        old_sidecar = paths.legacy_profiles_dir / name / ".shambles.json"
+        old_creds = paths.legacy_profiles_dir / name / LEGACY_CREDENTIALS
+        old_sidecar = paths.legacy_profiles_dir / name / LEGACY_SIDECAR
         identities[name] = (
             old_creds.read_bytes() if old_creds.exists() else None,
             configjson.read_sidecar(old_sidecar),
@@ -297,19 +369,28 @@ def _prepare(paths, plan, base_dir, now_ms) -> None:
 
     # 3. Write the slim profile store, provider-scoped. Everything the pre-1.0
     #    layout held was a Claude login -- there was no second provider.
-    #
-    #    The linked profile goes last. Its login is the live one, which Claude
-    #    Code can refresh between a failed run and the retry. Filed early by
-    #    the failed run, the superseded copy would already be in the store on
-    #    the retry, and the copy already in the store is the one kept.
-    for name in sorted(identities, key=lambda each: each == active):
-        _file_profile(paths, name, *identities[name], now_ms)
+    for name in identities:
+        if name != active:
+            _file_profile(paths, name, *identities[name], now_ms)
 
+    # The linked profile last, and from a read made now. Its login is the
+    # live one: Claude Code refreshes it through the link, including between
+    # a run that failed and the retry. So unlike the others it replaces what
+    # an earlier run filed -- that copy is the same login, only older, and
+    # keeping it would leave the refreshed one neither live nor saved once
+    # the link is gone.
+    live_login = None
     if active:
+        linked = paths.legacy_profiles_dir / active / LEGACY_CREDENTIALS
+        live_login = (linked.read_bytes() if linked.exists() else None) or None
+        _file_profile(paths, active, live_login, identities[active][1], now_ms,
+                      refresh=True)
         state.write_active(paths, V1_PROVIDER, active)
+    return active, live_login
 
 
-def _file_profile(paths, name, creds, account, now_ms) -> None:
+def _file_profile(paths, name, creds, account, now_ms, *,
+                  refresh: bool = False) -> None:
     """File one pre-1.0 profile's login and identity in the slim store.
 
     Safe to repeat, because a migration that was cut short is run again from
@@ -317,7 +398,11 @@ def _file_profile(paths, name, creds, account, now_ms) -> None:
     documents: on a retry it is the same bytes, and otherwise a newer Shambles
     saved it and has kept it current, which nothing did for the copy in the
     old directory. The write is atomic, so a half-written credential can never
-    be the one that wins.
+    be the one that wins, and an empty file is not a login and does not win
+    either.
+
+    ``refresh`` is for the linked profile, whose old directory holds the live
+    login: there the copy being filed is the newer one.
 
     The identity is only filed beside the login it came with. Next to a login
     that was kept instead, it would put one account's address on another
@@ -326,11 +411,11 @@ def _file_profile(paths, name, creds, account, now_ms) -> None:
     """
     paths.ensure_profile(V1_PROVIDER, name)
     store = FileStore(paths.credentials(V1_PROVIDER, name), 0o600)
-    held = store.read()
-    if held is None and creds is not None:
+    held = store.read() or None
+    if creds and (held is None or (refresh and held != creds)):
         store.write(creds)
         held = creds
-    if held != creds:
+    if held != (creds or None):
         return
 
     sidecar = paths.account(V1_PROVIDER, name)
@@ -375,7 +460,11 @@ def store_migration_needed(paths) -> bool:
     whether the v1.0 profiles, every one a Claude login, were brought across.
     """
     return (paths.legacy_profiles_dir.is_dir()
-            and not paths.provider_dir(V1_PROVIDER).exists())
+            and not paths.provider_dir(V1_PROVIDER).exists()
+            # While ~/.claude is still a pre-1.0 link, that store is the
+            # pre-1.0 one, whose logins are under other file names. Copying
+            # it as a v1.0 store files none of them and then reports success.
+            and not needed(paths))
 
 
 def migrate_store(paths) -> StorePlan:
@@ -394,7 +483,12 @@ def migrate_store(paths) -> StorePlan:
     yet the copy is assembled in a hidden staging directory beside it and
     renamed into place as the last step: a run that fails or dies before then
     leaves no provider directory, and the next start begins again. When it is
-    already there the copy is made in place, as it always was.
+    already there -- or appears while this is copying -- the copy is made in
+    place, as it always was, and a profile that already holds a login is
+    left exactly as it is.
+
+    The old config snapshots come across last and as far as they will. They
+    are a convenience, and never a reason to hold the logins back.
     """
     plan = StorePlan(source=paths.legacy_profiles_dir,
                      dest=paths.library_dir)
@@ -410,7 +504,20 @@ def migrate_store(paths) -> StorePlan:
             staging = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX,
                                             dir=paths.library_dir))
             _copy_store(paths, staging.name, plan)
-            staging.rename(paths.provider_dir(V1_PROVIDER))
+            try:
+                staging.rename(paths.provider_dir(V1_PROVIDER))
+            except OSError:
+                # Something else made the provider directory while this was
+                # copying: another window, or an account saved from the
+                # terminal. That directory now reads as "done", so giving up
+                # here would leave every profile behind for good. Fill in
+                # what it lacks instead, in place, which never overwrites.
+                if not paths.provider_dir(V1_PROVIDER).is_dir():
+                    raise
+                plan.profiles.clear()
+                plan.active = None
+                _copy_store(paths, V1_PROVIDER, plan)
+                shutil.rmtree(staging, ignore_errors=True)
     except OSError as exc:
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
@@ -423,6 +530,7 @@ def migrate_store(paths) -> StorePlan:
             f"\n\nNothing was deleted. The old store is still at "
             f"{plan.source}.{again}") from exc
 
+    _copy_backups(paths, plan)
     if staging is not None:
         _clear_staging(paths)
     return plan
@@ -441,12 +549,16 @@ def _copy_store(paths, provider_id: str, plan: StorePlan) -> None:
     for entry in sorted(paths.legacy_profiles_dir.iterdir()):
         if not entry.is_dir() or entry.name.startswith("."):
             continue
-        paths.ensure_profile(provider_id, entry.name)
+        directory = paths.ensure_profile(provider_id, entry.name)
         plan.profiles.append(entry.name)
+        # A login already there wins, and it keeps its own address with it:
+        # the old account.json describes the old login, and beside a
+        # different one it would be one account's name on another's token.
+        kept = _differs(entry / CREDENTIALS_NAME, directory / CREDENTIALS_NAME)
         for filename in V1_PROFILE_FILES:
             source = entry / filename
-            dest = paths.profile_dir(provider_id, entry.name) / filename
-            if source.is_file() and not dest.exists():
+            dest = directory / filename
+            if source.is_file() and not dest.exists() and not kept:
                 shutil.copy2(source, dest)
                 _lock_down(dest)
 
@@ -467,16 +579,41 @@ def _copy_store(paths, provider_id: str, plan: StorePlan) -> None:
                 marked + "\n", encoding="utf-8")
             _lock_down(paths.active_marker(provider_id))
 
-    # Not inside the provider directory, so not staged. Copied before the
-    # caller's rename all the same: the provider directory appearing has to
-    # mean these came across too, or a failure here would never be retried.
-    if paths.legacy_backup_dir.is_dir():
+
+def _differs(source: Path, dest: Path) -> bool:
+    """Whether ``dest`` already holds a credential other than ``source``'s."""
+    try:
+        held = dest.read_bytes()
+    except OSError:
+        return False
+    try:
+        return held != source.read_bytes()
+    except OSError:
+        return True
+
+
+def _copy_backups(paths, plan: StorePlan) -> None:
+    """Bring the old config snapshots across, as far as they will come.
+
+    After the profiles, and never a reason to fail. They are copies of
+    ``~/.claude.json`` kept for convenience; one that cannot be copied used
+    to hold every login back with it, at every start, for good.
+    """
+    try:
+        if not paths.legacy_backup_dir.is_dir():
+            return
         paths.backup_dir.mkdir(parents=True, exist_ok=True)
-        for snapshot in sorted(paths.legacy_backup_dir.glob("claude.json.*")):
-            dest = paths.backup_dir / snapshot.name
+        snapshots = sorted(paths.legacy_backup_dir.glob("claude.json.*"))
+    except OSError:
+        return
+    for snapshot in snapshots:
+        dest = paths.backup_dir / snapshot.name
+        try:
             if not dest.exists():
                 shutil.copy2(snapshot, dest)
                 plan.backups += 1
+        except OSError:
+            continue
 
 
 def _clear_staging(paths) -> None:

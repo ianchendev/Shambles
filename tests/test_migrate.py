@@ -193,13 +193,13 @@ def test_a_symlink_of_the_users_own_is_not_the_legacy_layout(paths):
     ".claude-profiles",                    # the old store itself
     ".claude-profiles/Work/projects",      # inside a profile, not a profile
     ".claude-profiles/.shambles-backups",  # in the store, but not a profile
-    ".claude-profiles/Gone",               # points at nothing
 ])
 def test_only_a_link_to_a_profile_directory_is_the_legacy_layout(paths, target):
     """The old layout was ~/.claude linked to one profile directory. A link
-    that merely passes near the old store, or leads nowhere, is something
-    the user made, and converting it would replace their link with a
-    directory they did not choose."""
+    that merely passes near the old store is something the user made, and
+    converting it would replace their link with a directory they did not
+    choose. (A link to a profile that has since been removed is a different
+    matter: see test_dangling_link_does_not_strand_pre_1_0_logins.)"""
     make_legacy_profile(paths, "Work", email="w@example.test")
     (paths.legacy_profiles_dir / ".shambles-backups").mkdir()
     os.symlink(paths.home / target, paths.claude_dir, target_is_directory=True)
@@ -594,3 +594,56 @@ def test_a_line_separator_inside_a_prompt_does_not_split_the_line(paths):
 
     merged = (paths.claude_dir / "history.jsonl").read_text(encoding="utf-8")
     assert merged == '{"display": "one"}\n' + entry + "\n"
+
+
+def test_a_profile_that_was_signed_out_stays_signed_out(paths):
+    """The link pointed at a profile with no login; the richest profile has
+    one. The merged directory is the richest profile's, login included, so
+    without care the conversion signs the user in as an account they were
+    not using. Its login is in the store; the live slot is left empty."""
+    make_legacy_profile(paths, "Rich", email="rich@example.test", sessions=4)
+    make_legacy_profile(paths, "Linked", email="linked@example.test",
+                        sessions=1)
+    rich = (paths.legacy_profiles_dir / "Rich" / ".credentials.json").read_bytes()
+    (paths.legacy_profiles_dir / "Linked" / ".credentials.json").unlink()
+    os.symlink(paths.legacy_profiles_dir / "Linked", paths.claude_dir,
+               target_is_directory=True)
+    make_claude_json(paths, email="linked@example.test")
+
+    migrate.run(paths, now_ms=NOW)
+
+    assert not (paths.claude_dir / ".credentials.json").exists()
+    assert paths.credentials("claude", "Rich").read_bytes() == rich
+    assert state.read_active(paths, "claude") == "Linked"
+
+
+def test_the_marker_follows_the_login_when_the_linked_one_cannot_be_installed(
+        paths, monkeypatch):
+    """After the swap the live login is the richest profile's. If the linked
+    profile's cannot be written over it, the marker must not go on naming
+    the linked profile: marker and live login have to name one account, or
+    the next switch files one account's token under the other's name."""
+    make_legacy_profile(paths, "Rich", email="rich@example.test", sessions=4)
+    make_legacy_profile(paths, "Linked", email="linked@example.test",
+                        sessions=1)
+    write_json(paths.legacy_profiles_dir / "Rich" / ".credentials.json",
+               credentials(access_token="old-Rich"))
+    write_json(paths.legacy_profiles_dir / "Linked" / ".credentials.json",
+               credentials(access_token="old-Linked"))
+    rich = (paths.legacy_profiles_dir / "Rich" / ".credentials.json").read_bytes()
+    os.symlink(paths.legacy_profiles_dir / "Linked", paths.claude_dir,
+               target_is_directory=True)
+    make_claude_json(paths, email="linked@example.test")
+
+    real = FileStore.write
+
+    def refuses_the_live_slot(store, blob):
+        if store.path == paths.claude_dir / ".credentials.json":
+            raise StoreUnavailableError("the file is in use")
+        return real(store, blob)
+
+    monkeypatch.setattr(FileStore, "write", refuses_the_live_slot)
+    migrate.run(paths, now_ms=NOW)
+
+    assert (paths.claude_dir / ".credentials.json").read_bytes() == rich
+    assert state.read_active(paths, "claude") == "Rich"

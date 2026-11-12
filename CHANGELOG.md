@@ -31,6 +31,12 @@ Notable changes per release. Dates are the tag date.
   that folder's profiles in its place. Only a link that points at a profile
   inside `~/.claude-profiles` is converted now. Any other link is left exactly
   as it is, and switching works through it.
+- **Converting the old layout no longer signs you in as a different
+  account.** `~/.claude` became the folder of whichever profile had the most
+  history, with that profile's login inside it, while Shambles went on
+  showing the profile you had been using as the active one. The next switch
+  then saved that login over the wrong profile and its own token was gone.
+  You now stay signed in as the account you were using.
 - **Converting the old layout, where `~/.claude` was a link to one profile's
   folder, now finishes on the next start if it was cut short.** A full disk
   or a crash partway through used to leave `~/.claude` converted while the
@@ -40,7 +46,9 @@ Notable changes per release. Dates are the tag date.
   touched, so an attempt that fails leaves the old layout in place and the
   next start completes it. The failure is shown in a dialog instead of a
   traceback, and a login already saved in the new store is never replaced by
-  the older copy from the old folder.
+  the older copy from the old folder. Session and history files are copied
+  in one step each, so a full disk can no longer leave a cut-off file or an
+  emptied prompt history behind.
 - **Accounts saved with 1.0 are no longer left behind when something else
   created `~/.shambles` first.** Running `shambles config set update.check
   true` before the window had opened once, or saving a Codex account, made
@@ -52,7 +60,8 @@ Notable changes per release. Dates are the tag date.
   the copy left the new store looking complete with some accounts missing,
   and nothing tried again. The copy is now put in place in one step once all
   of it has succeeded, and a failure is shown in a dialog instead of a
-  traceback.
+  traceback. An old settings snapshot that cannot be copied no longer holds
+  the accounts back.
 - A prompt history file or an old active marker that is not valid text (the
   last line cut short by a crash, for instance) no longer stops either
   conversion, which used to fail the same way at every start. A history

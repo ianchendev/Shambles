@@ -225,29 +225,6 @@ def test_two_windows_migrating_at_once_cannot_leave_an_account_out(
     assert _staging_left(paths) == []
 
 
-def test_a_failed_backup_copy_holds_the_whole_migration_back(paths,
-                                                             monkeypatch):
-    """The new store appearing is the signal that everything came across.
-    If it appeared before the config snapshots were copied, a failure there
-    would never be retried and the old snapshots would be left behind."""
-    _alpha_and_beta(paths)
-    paths.legacy_backup_dir.mkdir(parents=True, exist_ok=True)
-    (paths.legacy_backup_dir / "claude.json.1785000000000").write_text(
-        "{}", encoding="utf-8")
-
-    with monkeypatch.context() as patch:
-        # Four profile files copy; the snapshot is the fifth.
-        patch.setattr(shutil, "copy2", _dies_on_call(5, OSError("disk full")))
-        with pytest.raises(migrate.MigrationError):
-            migrate.migrate_store(paths)
-
-    assert migrate.store_migration_needed(paths)
-
-    plan = migrate.migrate_store(paths)
-    assert plan.backups == 1
-    assert (paths.backup_dir / "claude.json.1785000000000").is_file()
-
-
 def test_a_failed_copy_into_an_existing_store_is_a_message_too(paths,
                                                                monkeypatch):
     """Whichever way the copy runs, a failure has to reach the user as
