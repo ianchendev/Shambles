@@ -138,7 +138,34 @@ def cmd_tui(args) -> int:
     return EXIT_OK
 
 
+def _window_entry():
+    """``run_window``, imported through a function so its absence is catchable.
+
+    Importing it imports PySide6, which is an optional extra and, on a bare
+    Linux install, can be present and still fail to load for want of a system
+    library. Both arrive here as an ``ImportError``.
+    """
+    from .qt.application import run_window
+
+    return run_window
+
+
+def cmd_window(args) -> int:
+    """The Qt window. A preview beside the Tk one until it replaces it."""
+    try:
+        run_window = _window_entry()
+    except ImportError as exc:
+        from shambles.__main__ import QT_MISSING
+        sys.stderr.write(QT_MISSING.format(reason=exc))
+        return EXIT_FAILED
+    return run_window(_service(args),
+                      motion=not getattr(args, "no_motion", False))
+
+
 def cmd_gui(args) -> int:
+    if getattr(args, "new", False):
+        return cmd_window(args)
+
     try:
         import tkinter  # noqa: F401
     except ModuleNotFoundError:
@@ -331,6 +358,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     graphical = sub.add_parser("gui", parents=[common],
                                help="open the graphical interface")
+    graphical.add_argument("--new", action="store_true",
+                           help="open the new window (preview; needs the "
+                                "'gui' extra)")
     graphical.set_defaults(func=cmd_gui)
 
     listing = sub.add_parser("list", parents=[common],

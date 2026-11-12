@@ -25,6 +25,31 @@ Notable changes per release. Dates are the tag date.
   your previous account if the sign-in is cancelled or fails. The profile is
   kept so you can retry without naming it again.
 
+- **A new window, in preview: `shambles gui --new`.** Rebuilt in Qt on the
+  same service the terminal UI uses. One resizable column: each provider's
+  live account on top with its usage, everyone else as rows beneath. What is
+  different from the classic window:
+
+  - Nothing opens a separate dialog. Adding, signing in, renaming, removing
+    and ejecting happen in a sheet inside the window, and results are said in
+    words at the bottom instead of in a message box.
+  - Signing in shows steps and who to sign in as, not the vendor's raw
+    output. **Open sign-in page** and **Copy link** appear when the vendor
+    prints a link.
+  - A row opens to show the exact date its saved login is good until, which
+    used to live only in a tooltip.
+  - Keyboard: `1` to `9` switch to an account, `/` filters once there are
+    seven or more, `Ctrl+N` adds, `Ctrl+R` refreshes, `Esc` closes.
+  - Light and dark, under the `...` menu. It follows the system where Qt can
+    tell and remembers your choice where it cannot, which includes WSL.
+  - While you are signed in as an account that is not saved, switching is
+    held back until you save it. The classic window let the click through
+    and relied on the core to refuse.
+
+  It needs PySide6, which is an optional extra: `pip install 'shambles[gui]'`.
+  The release binaries do not carry it yet, and plain `shambles gui` still
+  opens the classic window.
+
 - **`shambles list --json` says more about each account.** Every group now
   carries `can_sign_in` and `cli` (whether the vendor's command is there to
   run, and its name). Every account carries `expires_at_ms` and

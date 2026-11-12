@@ -199,7 +199,7 @@ def test_the_contract_exposes_every_field_a_shell_renders(paths):
     assert set(group["accounts"][0]) == {
         "name", "email", "display_name", "plan", "active", "state",
         "needs_login", "login_hint", "usage", "expires_at_ms",
-        "status_label"}
+        "status_label", "publishes_usage"}
     assert set(group["accounts"][0]["usage"][0]) == {
         "label", "used_percent", "resets_at_ms", "resets_label",
         "age_label", "stale", "severity"}
@@ -615,3 +615,13 @@ def test_the_window_fields_reach_the_wire(paths, fake_vendor):
     assert wire["can_sign_in"] is True and wire["cli"] == "claude"
     assert wire["accounts"][0]["expires_at_ms"] == NOW - DAY_MS
     assert wire["accounts"][0]["status_label"] == "needs login"
+
+
+def test_an_account_says_whether_its_provider_publishes_usage_at_all(paths):
+    """Blank space reads as a broken widget; a frontend needs to know whether
+    there is something to explain."""
+    make_profile(paths, "claude", "Work", email="w@example.test")
+
+    work = group_of(paths, "claude").accounts[0]
+
+    assert work.usage == [] and work.publishes_usage is True
