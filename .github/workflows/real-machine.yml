@@ -76,6 +76,42 @@ jobs:
           fi
           python -m pytest tests/real -v -s -rA -p no:cacheprovider
 
+  # Systems the binaries cannot run on. The install script is meant to say so
+  # before it downloads anything, which only a real old glibc and a real
+  # musl can confirm. Nothing is downloaded: the check comes first.
+  cannot-run-here:
+    name: install.sh on ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:20.04
+            setup: apt-get update -qq && apt-get install -y -qq curl >/dev/null
+            expect: "glibc 2.31"
+          - image: alpine:3.20
+            setup: apk add --no-cache bash curl >/dev/null
+            expect: "musl"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The installer refuses, says why, and names the install that works
+        run: |
+          set +e
+          out="$(docker run --rm -v "$PWD/scripts:/scripts:ro" ${{ matrix.image }} \
+                 sh -c '${{ matrix.setup }} && bash /scripts/install.sh' 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          echo "exit: $code"
+          test "$code" -ne 0
+          echo "$out" | grep -q "${{ matrix.expect }}"
+          echo "$out" | grep -q "pipx install"
+          if echo "$out" | grep -q "Downloading"; then
+            echo "it downloaded before refusing" >&2
+            exit 1
+          fi
+
   # The SwiftUI menu-bar panel in macos/ talks to the CLI's JSON output. It
   # had never been built by anything but its author's machine. This builds
   # it and runs its tests, including the one that starts the real CLI.
