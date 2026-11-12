@@ -589,3 +589,132 @@ def test_an_emptied_token_carries_no_expiry_to_display(provider):
 def test_a_full_credential_is_still_live(provider):
     """The guard must not catch a working account."""
     assert provider.liveness(healthy_blob(provider), now_ms=NOW).state == LIVE
+
+
+# -- Codex: is the login in auth.json at all? ---------------------------------
+
+from shambles.providers.codex import CodexProvider, toml_top_level_string  # noqa: E402
+from shambles.stores import UnsupportedStore  # noqa: E402
+from shambles.stores.base import StoreUnavailableError  # noqa: E402
+
+SETTING = "cli_auth_credentials_store"
+
+
+def _codex(tmp_path, env=None):
+    """A Codex provider whose machine-wide config lives under ``tmp_path``."""
+    return CodexProvider(env=env or {}, system_root=tmp_path / "root")
+
+
+def _config(tmp_path, text):
+    (tmp_path / ".codex").mkdir(exist_ok=True)
+    (tmp_path / ".codex" / "config.toml").write_text(text, encoding="utf-8")
+
+
+def test_codex_uses_auth_json_when_nothing_says_otherwise(tmp_path):
+    store = _codex(tmp_path).store(home=tmp_path, platform="linux")
+    assert store == FileStore(tmp_path / ".codex" / "auth.json", 0o600)
+
+
+@pytest.mark.parametrize("mode", ["keyring", "auto", "ephemeral"])
+@pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
+def test_codex_told_to_use_another_store_is_refused_not_guessed_at(
+        tmp_path, mode, platform):
+    """With Codex in keyring mode ``auth.json`` is never read.
+
+    Carrying on with the file store, a switch wrote a credential Codex would
+    not open and called it a success. Every change is now refused with the
+    reason instead, and nothing is touched. Reading still answers "nothing
+    here", which is true of auth.json and keeps the account list on screen.
+    """
+    _config(tmp_path, f'model = "x"\n{SETTING} = "{mode}"\n')
+    (tmp_path / ".codex" / "auth.json").write_text("{}", encoding="utf-8")
+    store = _codex(tmp_path).store(home=tmp_path, platform=platform)
+    assert isinstance(store, UnsupportedStore)
+    assert store.read() is None
+    for action in (lambda: store.write(b'{"new":1}'), store.delete):
+        with pytest.raises(StoreUnavailableError) as caught:
+            action()
+        message = str(caught.value)
+        assert mode in message and "auth.json" in message
+        assert str(tmp_path / ".codex" / "config.toml") in message
+        assert f'{SETTING} = "file"' in message, "must say how to fix it"
+    assert (tmp_path / ".codex" / "auth.json").read_text(encoding="utf-8") == "{}"
+    assert store.describe().strip()
+
+
+def test_codex_file_mode_written_out_is_still_the_file(tmp_path):
+    _config(tmp_path, f'{SETTING} = "file"\n')
+    assert isinstance(_codex(tmp_path).store(home=tmp_path, platform="linux"),
+                      FileStore)
+
+
+def test_the_setting_is_read_from_codex_home_when_that_is_set(tmp_path):
+    alt = tmp_path / "alt"
+    alt.mkdir()
+    (alt / "config.toml").write_text(f'{SETTING} = "keyring"\n', encoding="utf-8")
+    provider = _codex(tmp_path, env={"CODEX_HOME": str(alt)})
+    assert isinstance(provider.store(home=tmp_path, platform="linux"),
+                      UnsupportedStore)
+
+
+def test_an_administrators_requirement_outranks_the_users_config(tmp_path):
+    """And is reported as something the user cannot change, because telling
+    them to edit their own config.toml would not work."""
+    _config(tmp_path, f'{SETTING} = "file"\n')
+    etc = tmp_path / "root" / "etc" / "codex"
+    etc.mkdir(parents=True)
+    (etc / "requirements.toml").write_text(f'{SETTING} = "keyring"\n',
+                                           encoding="utf-8")
+    provider = _codex(tmp_path)
+    mode, source, enforced = provider.storage_mode(home=tmp_path, platform="linux")
+    assert (mode, enforced) == ("keyring", True)
+    assert source == etc / "requirements.toml"
+    store = provider.store(home=tmp_path, platform="linux")
+    with pytest.raises(StoreUnavailableError, match="administrator"):
+        store.write(b"{}")
+
+
+def test_the_users_config_outranks_the_machine_wide_one(tmp_path):
+    etc = tmp_path / "root" / "etc" / "codex"
+    etc.mkdir(parents=True)
+    (etc / "config.toml").write_text(f'{SETTING} = "keyring"\n', encoding="utf-8")
+    provider = _codex(tmp_path)
+    assert provider.storage_mode(home=tmp_path, platform="linux")[0] == "keyring"
+    _config(tmp_path, f'{SETTING} = "file"\n')
+    assert provider.storage_mode(home=tmp_path, platform="linux")[0] == "file"
+
+
+def test_windows_reads_the_machine_wide_config_from_program_data(tmp_path):
+    program_data = tmp_path / "ProgramData"
+    (program_data / "OpenAI" / "Codex").mkdir(parents=True)
+    (program_data / "OpenAI" / "Codex" / "requirements.toml").write_text(
+        f'{SETTING} = "keyring"\n', encoding="utf-8")
+    provider = CodexProvider(env={"ProgramData": str(program_data)})
+    mode, _source, enforced = provider.storage_mode(home=tmp_path,
+                                                    platform="win32")
+    assert (mode, enforced) == ("keyring", True)
+    # The POSIX paths are not consulted on Windows, nor the reverse.
+    assert provider.storage_mode(home=tmp_path, platform="linux")[0] == "file"
+
+
+@pytest.mark.parametrize("text, expected", [
+    (f'{SETTING} = "keyring"\n', "keyring"),
+    (f"{SETTING}='auto'  # why\n", "auto"),
+    (f'model = "o"\n\n  {SETTING} = "keyring"\n[features]\nx = true\n', "keyring"),
+    (f'[profiles.work]\n{SETTING} = "keyring"\n', None),
+    (f'# {SETTING} = "keyring"\n', None),
+    (f'other_{SETTING} = "keyring"\n', None),
+    (f"{SETTING} = 3\n", None),
+    ("", None),
+    ("this is not toml = = =\n", None),
+])
+@pytest.mark.parametrize("parser", ["tomllib", "scan"])
+def test_reading_one_setting_out_of_a_toml_file(monkeypatch, text, expected,
+                                                parser):
+    """Both readers, because Python 3.10 has no TOML parser and the binary
+    ships with one. A key under a table header is that table's, not this."""
+    if parser == "scan":
+        monkeypatch.setitem(__import__("sys").modules, "tomllib", None)
+    else:
+        pytest.importorskip("tomllib")
+    assert toml_top_level_string(text, SETTING) == expected

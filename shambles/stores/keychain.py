@@ -43,6 +43,12 @@ SECURITY = "/usr/bin/security"
 EXIT_NOT_FOUND = 44
 EXIT_INTERACTION_NOT_ALLOWED = 36
 
+#: How long ``security`` gets to answer. On a desktop it can put up a dialog
+#: asking for the keychain password, so this is long enough for a person to
+#: type one -- and short enough that a dialog nobody can see, or a keychain
+#: daemon that has stopped answering, ends in a sentence rather than a hang.
+TIMEOUT_SECONDS = 60
+
 #: The longest command line ``security -i`` reads from standard input.
 #: Claude Code uses the same figure and falls back to arguments beyond it.
 STDIN_COMMAND_LIMIT = 4032
@@ -101,10 +107,16 @@ class KeychainStore:
         runner = self.run or subprocess.run
         try:
             if stdin is None:
-                done = runner([self.security, *args], capture_output=True)
+                done = runner([self.security, *args], capture_output=True,
+                              timeout=TIMEOUT_SECONDS)
             else:
                 done = runner([self.security, *args], capture_output=True,
-                              input=stdin)
+                              input=stdin, timeout=TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as exc:
+            raise StoreUnavailableError(
+                f"The macOS Keychain did not answer within {TIMEOUT_SECONDS} "
+                f"seconds for '{self.service}'. It may be waiting for a "
+                "password in a dialog on the Mac's own screen.") from exc
         except OSError as exc:
             raise StoreUnavailableError(
                 f"Could not run {self.security}:\n{exc}") from exc

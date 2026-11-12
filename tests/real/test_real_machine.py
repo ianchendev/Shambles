@@ -353,7 +353,14 @@ def _bun_script():
 def test_shambles_reads_what_claude_codes_credman_code_writes(
         native_store, tmp_path, size):
     """``Bun.secrets`` is the API Claude Code calls; the script restates its
-    writer. One entry for a small login, base64 pieces for a large one."""
+    writer. One entry for a small login, base64 pieces for a large one.
+
+    The vendor's writer stores its pieces concurrently. Whether every piece
+    then exists is checked with the vendor's *own* reader first: if that
+    cannot read the result back, the pieces were lost before Shambles was
+    involved, and the honest outcome is "the vendor's writer failed", not a
+    verdict on Shambles in either direction.
+    """
     bun, script = _bun_script()
     payload = claude_blob("vendor-write", padding=size)
     source = tmp_path / "in.json"
@@ -361,6 +368,19 @@ def test_shambles_reads_what_claude_codes_credman_code_writes(
     done = run_vendor([bun, script, "set", native_store.service,
                        native_store.account, str(source)], env=base_env())
     assert done.returncode == 0
+
+    echo = tmp_path / "echo.json"
+    own = run_vendor([bun, script, "get", native_store.service,
+                      native_store.account, str(echo)], env=base_env())
+    if own.returncode != 0 or echo.read_bytes() != payload:
+        api = native_store._api()
+        present = [index for index in range(64)
+                   if api.read(native_store._target(f"#{index}")) is not None]
+        print("pieces present after the vendor's write:", present,
+              "| count entry:", api.read(native_store._target("#m")))
+        pytest.xfail(
+            "Bun.secrets did not keep every piece its own writer stored, and "
+            "its own reader cannot read the result. Not a Shambles result.")
     assert native_store.read() == payload
 
 
@@ -401,11 +421,16 @@ class Machine:
     somebody runs this somewhere that is not.
     """
 
-    def __init__(self, provider_id, blobs, *, env=None, accounts=None):
+    def __init__(self, provider_id, blobs, *, env=None, accounts=None,
+                 home=None):
         self.env = dict(env or {})
+        if home is not None:
+            # What a relocated or oddly named home looks like to a program:
+            # the variable its runtime asks for the home directory.
+            self.env["USERPROFILE" if sys.platform == "win32" else "HOME"] = str(home)
         self.provider = providers.load(provider_id,
                                        env=base_env(**self.env))
-        self.home = Path.home()
+        self.home = Path(home) if home is not None else Path.home()
         self.paths = Paths.for_home(self.home)
         self.blobs = blobs
         self.accounts = accounts or {}
@@ -444,8 +469,11 @@ class Machine:
     def stashed(self, name) -> bytes:
         return self.paths.credentials(self.provider.id, name).read_bytes()
 
-    def run(self, *args):
-        return shambles(*args, env=base_env(**self.env))
+    def run(self, *args, without=()):
+        env = base_env(**self.env)
+        for name in without:
+            env.pop(name, None)
+        return shambles(*args, env=env)
 
     def listed(self) -> dict:
         done = self.run("list", "--json")
@@ -455,8 +483,8 @@ class Machine:
                      if g["provider"] == self.provider.id)
         return {a["name"]: a for a in group["accounts"]}
 
-    def switch(self, name):
-        done = self.run("switch", self.provider.id, name, "--json")
+    def switch(self, name, **kwargs):
+        done = self.run("switch", self.provider.id, name, "--json", **kwargs)
         assert done.returncode == 0, done.stdout + done.stderr
         assert json.loads(done.stdout)["ok"] is True
 
@@ -468,7 +496,7 @@ class Machine:
                 step()
             except StoreUnavailableError as exc:
                 print("cleanup:", exc)
-        if self.accounts:
+        if self.provider.id == "claude":
             self.paths.claude_json.unlink(missing_ok=True)
 
 
@@ -642,3 +670,280 @@ def test_shambles_reads_the_login_codex_itself_writes(machine):
     blob = box.store().read()
     assert blob is not None, "Codex wrote its login somewhere Shambles does not look"
     assert json.loads(blob)["OPENAI_API_KEY"] == "sk-shambles-ci-not-a-real-key"
+
+
+# -- 4. the cases beyond a default install ------------------------------------
+
+
+@pytest.fixture
+def odd_home(tmp_path):
+    """A home directory with a space and non-ASCII characters in its name."""
+    home = tmp_path / "hôme with spaces 家"
+    home.mkdir()
+    return home
+
+
+def test_claude_in_a_home_directory_with_spaces_and_non_ascii_characters(
+        machine, odd_home):
+    """Windows profile folders are named after people. A store path built by
+    string concatenation, or a child process started through a shell, breaks
+    on exactly this."""
+    blobs = {"CI-A": claude_blob("a"), "CI-B": claude_blob("b")}
+    accounts = {"CI-A": claude_account("a"), "CI-B": claude_account("b")}
+    box = machine("claude", blobs, accounts=accounts, home=odd_home)
+    status_env = vendor_env(**box.env)
+    print("store:", box.store().describe())
+
+    box.seed("CI-A")
+    signed_in, said = claude_status(status_env)
+    assert signed_in and said.get("email") == "a@example.test"
+    box.switch("CI-B")
+    assert box.store().read() == blobs["CI-B"]
+    assert box.stashed("CI-A") == blobs["CI-A"]
+    signed_in, said = claude_status(status_env)
+    assert signed_in and said.get("email") == "b@example.test"
+    assert (odd_home / ".shambles" / "claude" / "active").read_text(
+        encoding="utf-8").strip() == "CI-B"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Codex on Windows asks the system for the profile folder and "
+           "ignores USERPROFILE, so the home cannot be relocated for it here")
+def test_codex_in_a_home_directory_with_spaces_and_non_ascii_characters(
+        machine, odd_home):
+    blobs = {"CI-A": codex_blob("a"), "CI-B": codex_blob("b")}
+    box = machine("codex", blobs, home=odd_home)
+    box.seed("CI-A")
+    signed_in, said = codex_status(vendor_env(**box.env))
+    assert signed_in, said
+    box.switch("CI-B")
+    assert box.store().read() == blobs["CI-B"]
+    assert (odd_home / ".codex" / "auth.json").read_bytes() == blobs["CI-B"]
+    signed_in, said = codex_status(vendor_env(**box.env))
+    assert signed_in, said
+
+
+@pytest.mark.parametrize("trailing", ["", "/"], ids=["plain", "trailing slash"])
+def test_claude_with_its_config_directory_moved(machine, tmp_path, trailing):
+    """``CLAUDE_CONFIG_DIR`` moves the credentials file, and on macOS renames
+    the Keychain item after a hash of the variable *as typed*.
+
+    The trailing slash is the trap: tidy the path before hashing and Shambles
+    looks in an item Claude Code never wrote. The vendor is asked, under the
+    same environment, whether it sees what Shambles stored.
+    """
+    config = tmp_path / "claude config"
+    config.mkdir()
+    env = {"CLAUDE_CONFIG_DIR": str(config) + trailing}
+    blobs = {"CI-A": claude_blob("a"), "CI-B": claude_blob("b")}
+    box = machine("claude", blobs, env=env)
+    print("store:", box.store().describe())
+
+    signed_in, _ = claude_status(vendor_env(**env))
+    assert not signed_in
+    box.seed("CI-A")
+    signed_in, said = claude_status(vendor_env(**env))
+    assert signed_in, "Claude Code does not see the login in the moved directory"
+    print("claude reports configDirectory:", said.get("configDirectory"))
+
+    box.switch("CI-B")
+    assert box.store().read() == blobs["CI-B"]
+    assert box.stashed("CI-A") == blobs["CI-A"]
+    signed_in, _ = claude_status(vendor_env(**env))
+    assert signed_in
+
+    # And a session *without* the variable sees none of it: the two are
+    # separate logins, which is why the window shows a banner for this.
+    signed_in, _ = claude_status(vendor_env())
+    assert not signed_in
+
+
+def test_codex_with_its_home_moved(machine, tmp_path):
+    codex_home = tmp_path / "codex home"
+    codex_home.mkdir()
+    env = {"CODEX_HOME": str(codex_home)}
+    blobs = {"CI-A": codex_blob("a"), "CI-B": codex_blob("b")}
+    box = machine("codex", blobs, env=env)
+    box.seed("CI-A")
+    assert (codex_home / "auth.json").read_bytes() == blobs["CI-A"]
+    signed_in, said = codex_status(vendor_env(**env))
+    assert signed_in, said
+    box.switch("CI-B")
+    assert (codex_home / "auth.json").read_bytes() == blobs["CI-B"]
+    signed_in, said = codex_status(vendor_env(**env))
+    assert signed_in, said
+
+
+def test_codex_told_to_use_the_keyring_is_refused_and_nothing_is_written(
+        machine, tmp_path):
+    """Codex in keyring mode does not read ``auth.json``.
+
+    Shown from both sides. First the premise, with the vendor as judge: a
+    perfectly good ``auth.json`` is on disk and Codex says "Not logged in".
+    Then the consequence: Shambles refuses to switch, says why, and leaves
+    every file as it found it.
+    """
+    codex_home = tmp_path / "codex-keyring"
+    codex_home.mkdir()
+    env = {"CODEX_HOME": str(codex_home)}
+    blobs = {"CI-A": codex_blob("a"), "CI-B": codex_blob("b")}
+
+    # File mode first, so the profiles and the live login exist.
+    box = machine("codex", blobs, env=env)
+    box.seed("CI-A")
+    signed_in, said = codex_status(vendor_env(**env))
+    assert signed_in, said
+
+    (codex_home / "config.toml").write_text(
+        'cli_auth_credentials_store = "keyring"\n', encoding="utf-8")
+    signed_in, said = codex_status(vendor_env(**env))
+    print("codex in keyring mode, auth.json present:", signed_in, "|", said)
+    assert not signed_in, (
+        "Codex read auth.json in keyring mode. The premise of the refusal "
+        "below no longer holds: revisit it.")
+
+    done = box.run("switch", "codex", "CI-B", "--json")
+    assert done.returncode != 0
+    message = json.loads(done.stdout)["error"]["message"]
+    assert "keyring" in message and "auth.json" in message
+    assert 'cli_auth_credentials_store = "file"' in message
+    assert (codex_home / "auth.json").read_bytes() == blobs["CI-A"]
+    assert box.stashed("CI-B") == blobs["CI-B"]
+    assert box.paths.active_marker("codex").read_text(
+        encoding="utf-8").strip() == "CI-A"
+
+    listing = box.run("list", "--json")
+    print("list in keyring mode -> exit", listing.returncode)
+
+    # Out of keyring mode again so the fixture can clean up through the store.
+    (codex_home / "config.toml").unlink()
+
+
+@darwin_only
+def test_a_mac_signed_in_through_the_file_is_seen_and_then_moved_to_the_keychain(
+        machine):
+    """Claude Code's macOS backend is the Keychain *with a plaintext fallback*.
+
+    A login made over SSH lands in ``~/.claude/.credentials.json`` because
+    the Keychain refuses the write. The vendor reads it from there while the
+    Keychain is empty, and so must Shambles. A switch then goes to the
+    Keychain and clears the file -- what the vendor's own next write does --
+    and the vendor is asked who is signed in after each step.
+    """
+    blobs = {"CI-A": claude_blob("a"), "CI-B": claude_blob("b")}
+    accounts = {"CI-A": claude_account("a"), "CI-B": claude_account("b")}
+    box = machine("claude", blobs, accounts=accounts)
+    store = box.store()
+    assert isinstance(store, FallbackStore)
+
+    box.seed("CI-A")
+    store.primary.delete()
+    store.fallback.write(blobs["CI-A"])
+    assert store.primary.read() is None
+
+    signed_in, said = claude_status(vendor_env())
+    assert signed_in and said.get("email") == "a@example.test", (
+        "Claude Code did not read the fallback file with the Keychain empty")
+    assert box.store().read() == blobs["CI-A"]
+    assert box.listed()["CI-A"]["active"]
+
+    box.switch("CI-B")
+    assert store.primary.read() == blobs["CI-B"]
+    assert store.fallback.read() is None
+    assert box.stashed("CI-A") == blobs["CI-A"]
+    signed_in, said = claude_status(vendor_env())
+    assert signed_in and said.get("email") == "b@example.test"
+
+
+@darwin_only
+def test_a_mac_process_with_no_user_variable_still_finds_the_login(machine):
+    """Started by launchd or a desktop launcher, a process can have no USER.
+
+    Claude Code then asks the system for the user name. Shambles used to
+    fall straight to ``claude-code-user`` and so wrote a Keychain item the
+    vendor never reads; the vendor is the judge that it no longer does.
+    """
+    blobs = {"CI-A": claude_blob("a"), "CI-B": claude_blob("b")}
+    accounts = {"CI-A": claude_account("a"), "CI-B": claude_account("b")}
+    box = machine("claude", blobs, accounts=accounts)
+    box.seed("CI-A")
+    box.switch("CI-B", without=("USER", "LOGNAME"))
+    signed_in, said = claude_status(vendor_env())
+    assert signed_in and said.get("email") == "b@example.test"
+    stray = KeychainStore(service="Claude Code-credentials",
+                          account="claude-code-user")
+    assert stray.read() is None, "a second Keychain item was created"
+
+
+# -- 5. last, because it rearranges the runner's keychains --------------------
+
+
+@darwin_only
+def test_a_locked_keychain_is_reported_as_locked_and_the_file_is_used(tmp_path):
+    """SSH into a Mac: the Keychain will not answer, and Claude Code falls
+    back to its file.
+
+    Staged with a throwaway keychain made the only one in the search list and
+    then locked. A runner has a desktop session, so macOS may ask for the
+    password in a dialog nobody can see instead of refusing; when that
+    happens ``security`` hangs, the test notes it and stops. It is a record
+    of what happened on this runner either way, and it runs last because it
+    changes which keychains are searched.
+    """
+    def security(*args, timeout=20):
+        return subprocess.run(["security", *args], capture_output=True,
+                              text=True, timeout=timeout)
+
+    original = security("list-keychains", "-d", "user").stdout
+    originals = [line.strip().strip('"') for line in original.splitlines()
+                 if line.strip()]
+    default = security("default-keychain", "-d", "user").stdout.strip().strip('"')
+    scratch = str(tmp_path / "shambles-ci.keychain-db")
+    password = "shambles-ci"
+    account = os.environ.get("USER", "runner")
+    service = f"Shambles CI locked {uuid.uuid4().hex[:8]}-credentials"
+    store = KeychainStore(service=service, account=account)
+    file_store = FileStore(tmp_path / ".credentials.json")
+    layered = FallbackStore(store, file_store)
+
+    try:
+        assert security("create-keychain", "-p", password, scratch).returncode == 0
+        assert security("list-keychains", "-d", "user", "-s", scratch).returncode == 0
+        assert security("default-keychain", "-d", "user", "-s", scratch).returncode == 0
+        security("unlock-keychain", "-p", password, scratch)
+
+        store.write(b'{"in":"keychain"}')
+        assert store.read() == b'{"in":"keychain"}'
+
+        assert security("lock-keychain", scratch).returncode == 0
+        try:
+            probe = security("find-generic-password", "-a", account, "-w",
+                             "-s", service, timeout=15)
+        except subprocess.TimeoutExpired:
+            pytest.skip("macOS asked for the keychain password in a dialog "
+                        "instead of refusing; a desktop session cannot stage "
+                        "the SSH case")
+        print("locked keychain lookup -> exit", probe.returncode,
+              "|", probe.stderr.strip()[:200])
+        if probe.returncode != 36:
+            pytest.skip(f"locked lookup exited {probe.returncode}, not 36; "
+                        "recorded above")
+
+        from shambles.stores.base import StoreLockedError
+        with pytest.raises(StoreLockedError):
+            store.read()
+        with pytest.raises(StoreLockedError):
+            layered.read()  # nothing in the file either: locked, not "signed out"
+
+        file_store.write(b'{"in":"file"}')
+        assert layered.read() == b'{"in":"file"}'
+        layered.write(b'{"in":"file, switched"}')
+        assert file_store.read() == b'{"in":"file, switched"}'
+    finally:
+        security("unlock-keychain", "-p", password, scratch)
+        if originals:
+            security("list-keychains", "-d", "user", "-s", *originals)
+        if default:
+            security("default-keychain", "-d", "user", "-s", default)
+        security("delete-keychain", scratch)

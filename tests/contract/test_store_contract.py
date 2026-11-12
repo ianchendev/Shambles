@@ -595,3 +595,17 @@ def test_a_credential_is_written_without_newline_translation(tmp_path):
     store.write(payload)
     assert store.path.read_bytes() == payload
     assert b"\r\n" not in store.path.read_bytes()
+
+
+def test_a_keychain_that_never_answers_is_an_error_not_a_hang():
+    """``security`` can sit behind a password dialog nobody can see. Without
+    a limit the whole program waits with it."""
+    import subprocess
+
+    def never(args, **kwargs):
+        assert kwargs.get("timeout"), "security must be run with a time limit"
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    store = KeychainStore(service="S", account="A", run=never)
+    with pytest.raises(StoreUnavailableError, match="did not answer"):
+        store.read()

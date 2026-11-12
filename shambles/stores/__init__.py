@@ -12,6 +12,7 @@ from .credman import CredmanStore
 from .fallback import FallbackStore
 from .file import FileStore
 from .keychain import KeychainStore
+from .unsupported import UnsupportedStore
 
 __all__ = [
     "CredentialStore",
@@ -21,4 +22,5 @@ __all__ = [
     "FallbackStore",
     "FileStore",
     "KeychainStore",
+    "UnsupportedStore",
 ]
