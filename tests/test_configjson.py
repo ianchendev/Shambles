@@ -230,3 +230,18 @@ def test_a_loose_source_does_not_produce_a_loose_backup(paths):
     dest = configjson.backup(paths.claude_json, paths.backup_dir, NOW)
 
     assert oct(os.stat(dest).st_mode)[-3:] == "600"
+
+
+def test_write_atomic_leaves_no_temp_file(tmp_path):
+    """The splice tests above now drive the provider's own writer. This is
+    the writer behind every profile's account.json, the usage capture, the
+    settings and the update cache, and it needs the property stated for
+    itself: a write that only copied the temp file into place would pass
+    everything else here."""
+    target = tmp_path / "account.json"
+
+    configjson.write_atomic(target, {"oauthAccount": {"e": 1}})
+    configjson.write_atomic(target, {"oauthAccount": {"e": 2}})
+
+    assert configjson.load(target) == {"oauthAccount": {"e": 2}}
+    assert [p.name for p in tmp_path.iterdir()] == ["account.json"]
