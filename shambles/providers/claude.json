@@ -76,9 +76,16 @@
     "optional": true,
     "optional_note": "absent from credentials written by the VS Code extension bundle; a missing value means UNKNOWN, never CLOSED"
   },
+  "config_file": {
+    "name": ".claude{suffix}.json",
+    "suffix_env": "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+    "suffix_when_set": "-custom-oauth",
+    "legacy": ".config.json",
+    "note": "Claude Code 2.1.300: the global config is $CLAUDE_CONFIG_DIR/.claude{suffix}.json when that variable is set and ~/.claude{suffix}.json when not. A legacy .config.json inside the config directory wins when it is a file and either holds something or is writable while the new file does not exist yet."
+  },
   "identity": {
     "kind": "sidecar",
-    "path": "~/.claude.json",
+    "path": "{config_file}",
     "email": "oauthAccount.emailAddress",
     "display_name": "oauthAccount.displayName",
     "org": "oauthAccount.organizationName",
@@ -88,7 +95,7 @@
     "plan_note": "NOT claudeAiOauth.subscriptionType, which read 'team' for a Max 5x account"
   },
   "companion": {
-    "path": "~/.claude.json",
+    "path": "{config_file}",
     "keys": [
       "oauthAccount",
       "cachedUsageUtilization"

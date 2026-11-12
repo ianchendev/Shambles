@@ -285,6 +285,18 @@ read can land between the truncate and the write.
 credentials and `projects/` alike. A shell exporting it reads a tree Shambles
 never touches, so switches silently have no effect there.
 
+When the variable is set for Shambles itself, Shambles follows it the way
+Claude Code does: the login at `$CLAUDE_CONFIG_DIR/.credentials.json`, and the
+global config (identity, the splice, the usage cache) at
+`$CLAUDE_CONFIG_DIR/.claude.json` instead of `~/.claude.json`.
+`ClaudeProvider.config_file` is the one place that decides, including two
+rules from the 2.1.300 client: a custom OAuth endpoint
+(`CLAUDE_CODE_CUSTOM_OAUTH_URL`) names the file `.claude-custom-oauth.json`,
+and a non-empty legacy `.config.json` inside the config directory wins. Before
+this, with the variable set, Shambles read and spliced `~/.claude.json`,
+showed whoever last used the default location, and refused switches as
+"signed in as someone else".
+
 `state.config_dir_override()` resolves the variable and compares it against the
 managed directory, returning `None` when unset, empty, or pointing at
 `~/.claude` itself. A non-`None` result renders a persistent banner naming the

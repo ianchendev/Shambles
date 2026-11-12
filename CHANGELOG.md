@@ -85,6 +85,13 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **`CLAUDE_CONFIG_DIR` is followed for the account details too, not only
+  the login.** With the variable set, Claude Code keeps its config, including
+  which account is signed in, in that directory. Shambles still read and
+  updated `~/.claude.json`, so it showed whoever last used the default
+  location, refused switches as "signed in as someone else", and wrote the
+  switched-to account into a file Claude Code was not reading. It now uses
+  the same file Claude Code does.
 - **One address in two organisations is no longer treated as one account.**
   With a personal subscription and a Team or Console seat under the same
   address, or two ChatGPT workspaces, Shambles saw one account: the "signed in

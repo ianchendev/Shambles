@@ -371,11 +371,7 @@ def _outgoing_profile(paths, provider, current, *, platform,
 
 def _companion_path(provider, paths):
     """Where this provider's companion file lives, or ``None`` if it has none."""
-    from .providers import spec as specmod
-    block = provider.spec.get("companion")
-    if not block:
-        return None
-    return specmod.expand(block["path"], home=paths.home)
+    return provider.companion_path(home=paths.home)
 
 
 def save_current_account(paths, provider, name, *, platform=sys.platform,

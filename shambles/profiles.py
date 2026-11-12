@@ -135,7 +135,8 @@ def resolve_usage(paths, provider, name: str, active_name: str | None):
 
     if active_name is not None and name == active_name:
         live = usage_mod.parse(
-            configjson.load(paths.claude_json).get("cachedUsageUtilization"))
+            configjson.load(provider.companion_path(home=paths.home))
+            .get("cachedUsageUtilization"))
         if live:
             return live
 
