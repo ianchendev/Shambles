@@ -72,7 +72,9 @@ def test_every_binary_has_a_window_archive_to_go_with_it():
         "shambles-window-linux-arm64.tar.gz"
     assert window_asset(sys_platform="win32", machine="AMD64") == \
         "shambles-window-windows-x64.zip"
-    assert len(WINDOW_ARTIFACTS) == 5
+    assert window_asset(sys_platform="win32", machine="ARM64") == \
+        "shambles-window-windows-arm64.zip"
+    assert len(WINDOW_ARTIFACTS) == 6
 
 
 def test_install_sh_fetches_every_unix_window_archive():
@@ -100,7 +102,9 @@ def test_the_release_workflow_builds_every_window_archive():
 
 def test_the_small_binary_is_built_without_qt():
     """Qt inside the one-file binary would slow every command by most of a
-    second, which is the reason the window is a separate download."""
-    text = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    second, which is the reason the window is a separate download. Every
+    one-file binary is built by the shared action."""
+    text = Path(".github/actions/build-binary/action.yml").read_text(
+        encoding="utf-8")
     assert text.count("--exclude-module PySide6 --exclude-module shiboken6") == 3, \
         "each of the three one-file builds must exclude Qt"

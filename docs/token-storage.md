@@ -1,13 +1,210 @@
 # Token storage across Claude and Codex surfaces
 
 > **Status: research, not specification.** This is a field survey of how five
-> products store credentials, gathered to inform future work. It describes
-> platforms and providers Shambles does **not** currently support.
+> products store credentials. The first pass was made on one Mac in August
+> 2026. It was re-checked on 2026-11-13 against current vendor source and on
+> CI runners, and several of its Windows and macOS conclusions were wrong or
+> have since changed. **Read the next section first**; the August text below
+> it is kept as a record and is marked where it no longer holds.
 >
 > For what Shambles actually does today, see [TECH_SPEC.md](../TECH_SPEC.md).
 > Where the two disagree about shipped behaviour, TECH_SPEC is authoritative.
->
-> Findings here that changed the shipped tool are cross-referenced inline.
+
+## Re-check, 2026-11-13: what is true now
+
+Versions: Claude Code **2.1.322** (npm, published 2026-11-10), Codex
+**0.167.2** (released 2026-11-11; `openai/codex` main at `c0cc9fc`,
+2026-11-12), Bun main at `ccb3611f` (2026-11-12).
+
+Evidence grades used in this section, kept strictly apart:
+
+| Grade | Meaning |
+|---|---|
+| **[RUN]** | Ran on a GitHub-hosted runner in the `real-machine` workflow, with made-up credentials and the vendor's own CLI as the judge |
+| **[SRC]** | Read in vendor source: the shipping Claude Code binaries for `win32-x64` and `darwin-arm64` (npm `@anthropic-ai/claude-code-*`), the open Codex repository, Bun's `SecretsWindows.cpp` |
+| **[DOC]** | Official documentation at code.claude.com, fetched 2026-11-12 |
+| **[INF]** | Inferred from the above; not run |
+
+### Claude Code
+
+**Backends** [SRC]. The binary names five: `plaintext`, `keychain`,
+`windows-credman`, `keychain-with-plaintext-fallback` and
+`windows-credman-with-plaintext-fallback`. Which one is used:
+
+| Platform | Backend | Confirmed |
+|---|---|---|
+| Linux | `plaintext`: `.credentials.json`, mode 0600 | [RUN] Ubuntu 22.04 x64, 24.04 arm64 |
+| macOS | `keychain-with-plaintext-fallback`, always | [RUN] macOS 15.8 and 26.7 arm64, macOS 15 Intel |
+| Windows | `plaintext`, **unless** Credential Manager is switched on; then `windows-credman-with-plaintext-fallback` | [RUN] Server 2022, Server 2025, Windows 11 arm64, both modes |
+
+This matches the documentation [DOC], which says Windows uses
+`%USERPROFILE%\.claude\.credentials.json` and that macOS falls back to the
+file "when the Keychain rejects the write, such as when it's locked in an SSH
+session". Credential Manager is not documented anywhere.
+
+**Windows Credential Manager is gated** [SRC]:
+
+```js
+function credmanEnabled() {
+  if (process.env.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN === "1") return true;
+  // memoised: reads <configDir>/.config.json, or if that is empty or absent
+  // (CLAUDE_CONFIG_DIR || homedir)/.claude.json
+  return JSON.parse(text).cachedGrowthBookFeatures?.tengu_windows_credman === true;
+}
+```
+
+Any error reading or parsing means off. With it off the vendor never reads
+Credential Manager; leftover entries are only deleted at logout. [RUN]: a
+login placed only in Credential Manager leaves `claude auth status` reporting
+signed out, and signed in once the variable is set.
+
+**The Credential Manager layout** [SRC], which differs from the August
+description in every particular:
+
+- A value of 2400 bytes or fewer is **one** entry, `<service>/<account>`,
+  holding the JSON as it is.
+- A larger value is base64-encoded and cut into 2400-character pieces,
+  `<account>#0` onwards, with `<account>#m` holding `{"n":pieces,"l":length}`
+  and at most 256 pieces. `<account>#p` is a marker written before the pieces
+  and removed after.
+- `Bun.secrets` maps `{service, name}` to the target name `service/name`,
+  sets the user name to `name`, stores the value's UTF-8 bytes, generic
+  type, local-machine persistence.
+- The account is the literal `claude-code-user`.
+
+[RUN]: `Bun.secrets` (Bun 1.4.4) and Shambles' `CredmanStore` read each
+other's entries for one-entry and two-piece logins, and Claude Code itself
+reads what Shambles writes in both shapes. One observation about the vendor
+side: writing twelve pieces concurrently, as the vendor's writer does, Bun
+lost pieces on every run (eight of twelve kept on x64, two of twelve on
+arm64), and the vendor's own reader then rejects the result. That is a login
+of about 20 KB, far larger than a normal one; it is recorded because a
+`CredmanStore` read that fails as "incomplete" on such a login is the
+vendor's write, not ours.
+
+**The combinator** [SRC], which both `-with-plaintext-fallback` backends
+share: read the primary and, if it holds nothing, the file; write the
+primary and, if the primary was empty before, delete the file; if the
+primary refuses the write and is not merely locked, write the file and clear
+the primary; delete both. [RUN] on macOS: with the Keychain empty and a
+login in the file, `claude auth status` reports that login.
+
+**Service and account names** [SRC]. The service is still
+`` `Claude Code${suffix}-credentials${dirHash}` ``, used for both the
+Keychain item and the Credential Manager target. Corrections:
+
+- The hash is taken over `CLAUDE_CONFIG_DIR` **exactly as typed**, NFC
+  normalised and nothing else: `(process.env.CLAUDE_CONFIG_DIR ??
+  join(homedir(), ".claude")).normalize("NFC")`. A trailing slash is a
+  different item. [RUN]: with the variable ending in `/`, Claude Code sees a
+  login Shambles stored under the hash of the raw string.
+- `-custom-oauth` is keyed on `CLAUDE_CODE_CUSTOM_OAUTH_URL`, not
+  `CLAUDE_CODE_OAUTH_CLIENT_ID`.
+- The account on macOS is `process.env.USER || os.userInfo().username`,
+  falling back to `claude-code-user` only when that fails the pattern.
+  [RUN]: a process with no `USER` reaches the same item.
+
+**Other locations** [SRC]:
+
+- The credentials *file* lives in `CLAUDE_SECURESTORAGE_CONFIG_DIR` when that
+  is set (in `~/.claude` when it is set but empty), otherwise in the config
+  directory.
+- `.claude.json` lives at `(CLAUDE_CONFIG_DIR || homedir)/.claude.json`, and
+  a non-empty legacy `<configDir>/.config.json` is read in its place. The
+  documentation agrees [DOC]. **Shambles still reads and writes
+  `~/.claude.json` regardless**, which is wrong whenever `CLAUDE_CONFIG_DIR`
+  is set; see the open items.
+- The Keychain is found through the real home directory. [RUN]: with `HOME`
+  pointed elsewhere, Claude Code reports signed out with a login sitting in
+  the Keychain.
+
+**Keychain commands** [SRC]. Reading is unchanged. Writing now goes through
+`security -i` with the command on standard input when it is 4032 characters
+or fewer, and by argument otherwise. Exit 44 is "not found" and exit 36 is
+"interaction not allowed", which is what a locked keychain answers.
+[RUN]: `security -i` exits 44 for a failed command on standard input, on
+macOS 15 and 26.
+
+**Signing out revokes** [SRC]. `claude auth logout` and `/logout` post the
+stored refresh token to `${TOKEN_URL}/revoke` before clearing the store. The
+path taken after a successful re-login passes `preserveInProcessTokens` and
+does not. A copy of that login saved elsewhere is dead after a logout.
+
+**Commands** [DOC]. `claude auth login|status|logout` exist from 2.1.41
+(2026-02-13). `claude auth status` prints JSON, exits 0 when signed in and 1
+when not, and from 2.1.268 includes `configDirectory`. `claude auth login`
+accepts a pasted code when the browser cannot reach localhost (WSL2, SSH,
+containers) from 2.1.126.
+
+**What outranks the stored login** [DOC], in order: the Bedrock, Vertex and
+Foundry switches, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,
+`apiKeyHelper`, `CLAUDE_CODE_OAUTH_TOKEN`, a named `ANTHROPIC_PROFILE`, and
+only then the login from `/login`.
+
+**XDG** [DOC]. Nothing credential-related is documented as honouring XDG
+variables. A 2025 changelog entry (1.0.28) added `XDG_CONFIG_HOME` support
+for the config directory and no later entry removes it; whether it still
+applies was not determined.
+
+### Codex
+
+All [SRC] at `c0cc9fc` unless marked.
+
+- `$CODEX_HOME/auth.json`, default `~/.codex`, on every platform. On Windows
+  the home is `SHGetKnownFolderPath(FOLDERID_Profile)`, not `USERPROFILE`.
+  A set `CODEX_HOME` must already exist and is canonicalised.
+  [RUN] on all three systems, with `CODEX_HOME` set and unset.
+- `cli_auth_credentials_store` defaults to `file` everywhere. `keyring`
+  never reads `auth.json`; `auto` prefers the keyring and **deletes
+  `auth.json`** after a successful keyring save. On Windows the keyring
+  modes use an age-encrypted `$CODEX_HOME/secrets/codex_auth.age` with only
+  the passphrase in Credential Manager. [RUN]: with `keyring` set and a valid
+  `auth.json` on disk, `codex login status` says "Not logged in" on macOS
+  and Windows, and fails to reach a keyring on Linux.
+- The setting can come from, lowest to highest: packaged defaults, macOS
+  managed preferences, `/etc/codex/config.toml` or
+  `%ProgramData%\OpenAI\Codex\config.toml`, an enterprise cloud bundle,
+  `$CODEX_HOME/config.toml`, a `--profile` file, a trusted project's
+  `.codex/config.toml`, and `-c`. Requirements
+  (`/etc/codex/requirements.toml`, legacy `managed_config.toml`,
+  `%ProgramData%\OpenAI\Codex\requirements.toml`, macOS managed
+  preferences) outrank all of them. Shambles reads the requirements, user
+  and system files and cannot see the rest.
+- **`codex login` revokes the stored login before it starts**
+  (`cli/src/login.rs`, `clear_existing_auth_before_login` calling
+  `logout_with_revoke` in `login/src/auth/manager.rs`). So does
+  `codex logout`. A saved copy of the login that was live when either ran is
+  dead.
+- Since 0.167.0 (2026-11-06) `auth.json` is written by temp file and rename
+  under two lock files, `auth.lock` and `auth.json.lock`. A hard-linked or
+  read-only `auth.json` makes Codex's own save fail.
+- A running Codex keeps its tokens in memory. Since 0.166.0, if `auth.json`
+  now belongs to a different account it stops with an error at its next
+  refresh instead of overwriting the file. It does not adopt the new
+  account; it has to be restarted.
+- `codex login status` writes to stderr and exits 0 or 1, with no network
+  call for ChatGPT or API-key logins. `codex login --with-api-key` writes a
+  login with no browser. [RUN]: Shambles reads the login that command
+  writes.
+- `CODEX_ACCESS_TOKEN` outranks `auth.json`; so do `CODEX_API_KEY` in
+  `codex exec` and the workload identity variables.
+
+### Not determined
+
+- Whether the `tengu_windows_credman` flag is on for any real account today.
+- Whether a browser sign-in started by Shambles completes on macOS or native
+  Windows. No runner has an account.
+- Behaviour with a locked Keychain. A runner has a desktop session, so macOS
+  asks for the password in a dialog instead of refusing; the SSH case could
+  not be staged and rests on [SRC] and [DOC].
+- A home directory with spaces or non-ASCII characters on macOS. Relocating
+  `HOME` hides the Keychain from Claude Code itself, so it cannot be staged
+  without creating a user. [RUN] on Linux and Windows.
+
+---
+
+The August 2026 survey follows, unchanged except for the notes marked
+**[2026-11]**.
 
 Research for [#3](https://github.com/ianchendev/Shambles/issues/3). Prerequisite
 for the cross-platform switcher UI in [#2](https://github.com/ianchendev/Shambles/issues/2).
@@ -76,6 +273,10 @@ Two naming traps worth writing down:
 ## Claude agent credentials
 
 ### Three backends, one per platform
+
+> **[2026-11] Superseded.** There are five backends, macOS and Windows both
+> layer over the plaintext file, and Windows uses the file unless Credential
+> Manager is switched on. See the re-check above.
 
 The binary defines exactly three named backends [SRC]:
 
@@ -159,6 +360,10 @@ authorization dialog [OBS]. Convenient for a switcher; worth stating plainly in
 the UI that this is the existing posture and Shambles does not worsen it.
 
 ### Windows: Credential Manager, chunked
+
+> **[2026-11] Superseded.** Credential Manager is off by default, the piece
+> size is 2400, pieces are base64, the count entry is JSON and a small login
+> is a single unsplit entry. See the re-check above.
 
 Via `Bun.secrets`, not a shelled-out command [SRC]. Blobs exceed the per-entry
 size cap, so values are split:
@@ -255,6 +460,11 @@ Read-only, no Keychain prompt, no parsing of undocumented files. Worth using for
 the "who is live right now" check in [`state.inspect`](../shambles/state.py).
 
 ### `CLAUDE_CONFIG_DIR` on macOS: the docs are wrong
+
+> **[2026-11] The documentation has since been corrected.** It now says the
+> variable "keys the macOS Keychain entry to that directory too, so a session
+> with a different `CLAUDE_CONFIG_DIR` reads a different entry". The
+> experiment below still describes the behaviour.
 
 Anthropic's documentation states that on macOS "credentials are in the Keychain
 and carry over to the clean session"

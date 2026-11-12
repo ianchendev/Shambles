@@ -1,0 +1,147 @@
+name: real-machine
+
+# What the test suite cannot say from behind its fakes: on a real macOS
+# Keychain and a real Windows Credential Manager, with the vendors' own
+# programs installed, does a switch change who the vendor says is signed in?
+#
+# Every job is a throwaway machine with made-up credentials. The vendor CLIs
+# are installed fresh each run, so this is also the early warning for a
+# vendor moving where it keeps its login.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Vendors ship several times a week. Without a schedule, a moved login is
+  # only noticed the next time somebody opens a pull request here.
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  machine:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - macos-26
+          - macos-15-intel
+          - windows-2022
+          - windows-2025
+          - windows-11-arm
+          - ubuntu-22.04
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    env:
+      SHAMBLES_REAL_MACHINE: "1"
+      SHAMBLES_REQUIRE_VENDORS: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Shambles
+        run: pip install -e ".[dev]" pyinstaller
+
+      # npm, because it is the one install method that is the same command
+      # on all three systems. It places the same native binary the vendors'
+      # own installers do.
+      - name: Install the vendor CLIs
+        run: npm install -g @anthropic-ai/claude-code @openai/codex
+
+      # Bun.secrets is the API Claude Code uses for Credential Manager.
+      - uses: oven-sh/setup-bun@v2
+        if: runner.os == 'Windows'
+
+      - name: Real stores and vendor CLIs, from source
+        run: python -m pytest tests/real -v -s -rA -p no:cacheprovider
+
+      - uses: ./.github/actions/build-binary
+
+      - name: Real stores and vendor CLIs, built binary
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export SHAMBLES_BIN="$(cygpath -w "$PWD/dist/shambles.exe")"
+          else
+            export SHAMBLES_BIN="$PWD/dist/shambles"
+          fi
+          python -m pytest tests/real -v -s -rA -p no:cacheprovider
+
+  # Systems the binaries cannot run on. The install script is meant to say so
+  # before it downloads anything, which only a real old glibc and a real
+  # musl can confirm. Nothing is downloaded: the check comes first.
+  cannot-run-here:
+    name: install.sh on ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:20.04
+            setup: apt-get update -qq && apt-get install -y -qq curl >/dev/null
+            expect: "glibc 2.31"
+          - image: alpine:3.20
+            setup: apk add --no-cache bash curl >/dev/null
+            expect: "musl"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The installer refuses, says why, and names the install that works
+        run: |
+          set +e
+          out="$(docker run --rm -v "$PWD/scripts:/scripts:ro" ${{ matrix.image }} \
+                 sh -c '${{ matrix.setup }} && bash /scripts/install.sh' 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          echo "exit: $code"
+          test "$code" -ne 0
+          echo "$out" | grep -q "${{ matrix.expect }}"
+          echo "$out" | grep -q "pipx install"
+          if echo "$out" | grep -q "Downloading"; then
+            echo "it downloaded before refusing" >&2
+            exit 1
+          fi
+
+  # The SwiftUI menu-bar panel in macos/ talks to the CLI's JSON output. It
+  # had never been built by anything but its author's machine. This builds
+  # it and runs its tests, including the one that starts the real CLI.
+  #
+  # macOS 26 only. The panel calls glassEffect, which exists only in the
+  # macOS 26 SDK; it is guarded at run time for older systems, but the source
+  # does not compile against the macOS 15 SDK (Swift 6.1, Xcode 16), which is
+  # what the macos-15 runner has. Building needs Xcode 26.
+  swift-app:
+    name: swift app (macos-26)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Where the Swift integration test looks for the CLI.
+      - name: Install Shambles into the checkout's virtualenv
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e .
+
+      - name: Build
+        working-directory: macos
+        run: |
+          swift --version
+          swift build
+
+      - name: Test
+        working-directory: macos
+        run: swift test

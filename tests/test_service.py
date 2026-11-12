@@ -164,7 +164,7 @@ def test_eject_plan_lists_profiles_without_mutation(paths):
     make_profile(paths, "claude", "Work", active=True)
     plan = service(paths).plan_eject()
     assert plan.requires_confirmation is True
-    assert "Work" in plan.warnings[0]
+    assert any("Work" in warning for warning in plan.warnings)
     assert state.read_active(paths, "claude") == "Work"
 
 
@@ -1090,6 +1090,30 @@ def test_add_refuses_to_replace_an_unsaved_login(paths, deferred_login):
     assert deferred_login == []
     assert done[0].ok is False
     assert "Save your current account first" in done[0].error.message
+
+
+def test_the_remove_plan_says_what_removing_costs(paths):
+    """Reproduced: the terminal UI confirmed with only "The saved login will
+    be removed." Getting it back costs a verification email, which is the
+    one thing a person deciding needs to know."""
+    make_profile(paths, "claude", "Old", email="old@example.com")
+
+    plan = service(paths).plan_remove("claude", "Old")
+    said = " ".join(plan.warnings)
+
+    assert "old@example.com" in said
+    assert "verification email" in said
+
+
+def test_the_eject_plan_says_what_eject_does_before_asking(paths):
+    """Reproduced: the confirmation showed only the past-tense summary of an
+    eject that had not happened yet."""
+    make_profile(paths, "claude", "Work", active=True)
+
+    first = service(paths).plan_eject().warnings[0]
+
+    assert "stop managing" in first
+    assert "Nothing is deleted" in first
 
 
 # -- what a window needs beyond the terminal UI --------------------------------

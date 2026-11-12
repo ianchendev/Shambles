@@ -41,7 +41,17 @@ jobs:
             built: dist/shambles
           - os: windows-latest
             artifact: shambles-windows-x64.exe
+            windowed: shamblesw-windows-x64.exe
             window: shambles-window-windows-x64.zip
+            built: dist/shambles.exe
+          # Native, not emulated. Windows 11 on Arm runs the x64 build under
+          # emulation, and the installer falls back to it for releases older
+          # than this entry; this one starts faster and is what the
+          # real-machine workflow exercises on the same runner label.
+          - os: windows-11-arm
+            artifact: shambles-windows-arm64.exe
+            windowed: shamblesw-windows-arm64.exe
+            window: shambles-window-windows-arm64.zip
             built: dist/shambles.exe
     runs-on: ${{ matrix.os }}
     steps:
@@ -105,72 +115,11 @@ jobs:
         if: runner.os == 'Windows'
         run: python -m pytest --reruns 4 --reruns-delay 1
 
-      # --exclude-module PySide6 on every one-file build. The window is built
-      # further down as its own archive; Qt inside this binary would be
-      # unpacked on every launch and add most of a second to commands that
-      # never open a window. The CLI imports the window lazily and hands over
-      # to the installed bundle when Qt is absent, so excluding it here is
-      # what makes that hand-over happen.
-      #
-      # --windowed only on Windows: it suppresses the console window for a GUI
-      # app there. On Linux it would swallow the --version and --help output,
-      # and on macOS it would produce a .app bundle instead of the single
-      # executable the installers download.
-      #
-      # --add-data is not optional. Provider specs are package data, and
-      # PyInstaller bundles only what it can see imported. Without this the
-      # binary builds green, passes a --version smoke test, and then fails at
-      # runtime the moment it tries to load a provider. macOS takes the same
-      # ':' separator as Linux, so those runners share a step; only Windows'
-      # ';' forces a second copy of the command.
-      #
-      # The second --add-data does the same for the TUI's stylesheet:
-      # ShamblesTUI.CSS_PATH = "theme.tcss" is resolved and read from disk by
-      # Textual at runtime, relative to shambles/app/tui/application.py --
-      # it is not imported, so PyInstaller never sees it on its own. The TUI
-      # is the bare `shambles` command's default frontend on an interactive
-      # terminal, so a binary missing this crashes on startup with a Textual
-      # StylesheetError, while --version/--help stay green because neither
-      # touches Textual.
-      #
-      # If a future PyInstaller/Textual upgrade ever fails to bundle a widget
-      # module Textual only reaches through its lazy `__getattr__`-based
-      # submodule loading (textual.widgets._input, _list_view, etc.) -- i.e.
-      # the binary builds and starts but crashes on first use of some widget
-      # -- try adding --collect-all textual before assuming it's a code bug.
-      - name: Build (Linux, macOS)
-        if: runner.os != 'Windows'
-        run: pyinstaller --onefile --name shambles
-             --exclude-module PySide6 --exclude-module shiboken6
-             --add-data "shambles/providers/*.json:shambles/providers"
-             --add-data "shambles/app/tui/*.tcss:shambles/app/tui"
-             shambles/__main__.py
+      # The PyInstaller invocation and its smoke test live in one place, so
+      # the binary the real-machine workflow tests is built by the same lines
+      # as the binary shipped from here.
+      - uses: ./.github/actions/build-binary
 
-      # Two binaries, because one cannot do both jobs. A console-subsystem
-      # program can print; a windowed one cannot, and Python sets its stdout
-      # and stderr to None. 2.1.0 shipped only the windowed build under the
-      # console name, so `shambles --version` printed nothing and then died
-      # on its first write to stderr. shambles.exe is the console one,
-      # shamblesw.exe the windowed twin for desktop shortcuts.
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          pyinstaller --onefile --name shambles `
-            --exclude-module PySide6 --exclude-module shiboken6 `
-            --add-data "shambles/providers/*.json;shambles/providers" `
-            --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
-            shambles/__main__.py
-          pyinstaller --onefile --windowed --name shamblesw `
-            --exclude-module PySide6 --exclude-module shiboken6 `
-            --add-data "shambles/providers/*.json;shambles/providers" `
-            --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
-            shambles/__main__.py
-
-      # Every platform, always. A Linux-only smoke test let a broken Windows
-      # binary through once already: PyInstaller runs the entry file as a
-      # top-level script, so a relative import inside it killed the bundle on
-      # startup. Only the Linux job noticed.
       # The glibc floor is invisible from the outside: the executable itself
       # reports GLIBC_2.14 and says nothing about the libraries packed inside
       # it. Only unpacking the archive catches a build that cannot start
@@ -179,45 +128,13 @@ jobs:
         if: runner.os == 'Linux'
         run: python scripts/check_glibc.py dist/shambles 2.35
 
-      # Assert on what a user sees, not on the exit status. An exit-code-only
-      # check is what let a Windows binary ship that printed nothing at all.
-      - name: Smoke-test the binary (Linux, macOS)
-        if: runner.os != 'Windows'
-        run: |
-          ./dist/shambles --version | grep -E "^shambles [0-9]+\.[0-9]+\.[0-9]+$"
-          ./dist/shambles --help | grep -q "switch"
-
-      - name: Smoke-test the binaries (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # The console build has to actually print. Checking only the exit
-          # code is how 2.1.0 shipped a binary that printed nothing.
-          $out = (& .\dist\shambles.exe --version 2>&1 | Out-String).Trim()
-          Write-Host "--version said: $out"
-          if ($out -notmatch 'shambles \d+\.\d+\.\d+') {
-            Write-Error "--version printed nothing usable"; exit 1
-          }
-          $help = (& .\dist\shambles.exe --help 2>&1 | Out-String)
-          if ($help -notmatch 'switch') {
-            Write-Error "--help printed nothing usable"; exit 1
-          }
-          # The windowed twin has no console by design, so a clean exit is all
-          # there is to check. Before the stream guard it crashed here.
-          $p = Start-Process -FilePath .\dist\shamblesw.exe `
-                             -ArgumentList '--version' -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            Write-Error "shamblesw.exe exited $($p.ExitCode)"; exit 1
-          }
-          Write-Host "windowed build exited cleanly"
-
       - name: Collect
         shell: bash
         run: |
           mkdir -p out
           mv "${{ matrix.built }}" "out/${{ matrix.artifact }}"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            mv dist/shamblesw.exe out/shamblesw-windows-x64.exe
+            mv dist/shamblesw.exe "out/${{ matrix.windowed }}"
           fi
           ls -l out
 
@@ -379,7 +296,8 @@ jobs:
             **Windows ships two binaries.** `shambles.exe` is the one you run
             in a terminal, and it prints. `shamblesw.exe` is the windowed twin
             for a desktop shortcut that should not flash a console. The
-            installer places both.
+            installer places both. There is an x64 pair and a native
+            Arm pair; the installer picks.
 
             **The binaries are unsigned.** Windows SmartScreen warns on first
             run, which is what an unsigned publisher looks like. If you would
@@ -396,17 +314,18 @@ jobs:
             Get-FileHash .\shambles-windows-x64.exe -Algorithm SHA256
             ```
 
-            **Windows account switching is unverified.** Claude Code appears
-            to keep credentials in the Credential Manager there rather than in
-            `.credentials.json`, the file Shambles swaps, in which case
-            switching would quietly do nothing. The binary builds and runs;
-            nobody has confirmed a switch takes effect. See
-            `docs/token-storage.md`.
+            **macOS and native Windows are checked by CI, not yet by a
+            person.** On GitHub's macOS and Windows machines, with made-up
+            credentials, a switch changes who `claude auth status` and
+            `codex login status` report. Nobody has yet reported signing in
+            with a real account through Shambles on either system. The
+            README's support table says exactly what was and was not
+            established. If a switch seems to do nothing, run
+            `shambles doctor`.
 
-            **macOS account switching is not supported.** There are macOS
-            binaries below and the installer will fetch one, but installing is
-            not switching support: credentials live in the Keychain there, so
-            there is no file for Shambles to swap.
+            **On Windows, upgrade from 2.1.2 or older before switching.**
+            Those versions wrote the Claude login somewhere Claude Code does
+            not read.
 
             **Upgrading from 1.x?** First launch merges your split session
             history back into one shared `~/.claude`, automatically and

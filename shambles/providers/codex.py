@@ -18,9 +18,11 @@ import binascii
 import json
 import math
 import os
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
-from ..stores import FileStore, KeychainStore
+from ..stores import FileStore, KeychainStore, UnsupportedStore
 from . import spec as specmod
 from .base import ABSENT, CLOSED, CLOSING, LIVE, SIGNED_OUT, UNKNOWN, Identity, Liveness
 
@@ -52,10 +54,75 @@ def jwt_claims(token) -> dict:
     return claims if isinstance(claims, dict) else {}
 
 
+#: ``key = "value"`` at the start of a line, in either quote style. Enough
+#: for the one top-level string this module needs out of a TOML file, on a
+#: Python too old to ship a TOML parser.
+_TOML_STRING = (r"""^\s*{key}\s*=\s*(?:"([^"\\]*)"|'([^']*)')"""
+                r"""\s*(?:#.*)?$""")
+
+KEYRING_REFUSAL = (
+    "Codex is set to keep its login in {where}, not in auth.json "
+    "({setting} = \"{value}\" in {source}).\n\n"
+    "Shambles switches Codex accounts by swapping auth.json, which Codex "
+    "would not read in this mode, so nothing has been touched.\n\n"
+    "To use Shambles with Codex, set {setting} = \"file\" in "
+    "{user_config} and sign in again with 'codex login'."
+)
+
+ENFORCED_REFUSAL = (
+    "Codex is required to keep its login in {where}, not in auth.json "
+    "({setting} = \"{value}\" in {source}, which your administrator "
+    "controls).\n\n"
+    "Shambles switches Codex accounts by swapping auth.json, which Codex "
+    "would not read in this mode, so nothing has been touched. Shambles "
+    "cannot switch Codex accounts on this machine."
+)
+
+#: Where each non-file mode puts the login, in words.
+_MODE_PLACES = {
+    "keyring": "the system keyring",
+    "auto": "the system keyring when one is available",
+    "ephemeral": "memory only, for the life of one session",
+}
+
+
+def toml_top_level_string(text: str, key: str) -> str | None:
+    """One top-level string value out of a TOML document, or ``None``.
+
+    Uses the standard library's parser where there is one (3.11 onwards) and
+    a line scan otherwise. The scan stops at the first table header, because
+    a key below ``[something]`` belongs to that table and is not the setting
+    this is looking for.
+    """
+    try:
+        import tomllib
+    except ImportError:
+        tomllib = None
+    if tomllib is not None:
+        try:
+            value = tomllib.loads(text).get(key)
+        except (tomllib.TOMLDecodeError, RecursionError):
+            value = None
+        else:
+            return value if isinstance(value, str) else None
+
+    pattern = re.compile(_TOML_STRING.format(key=re.escape(key)))
+    for line in text.splitlines():
+        if line.lstrip().startswith("["):
+            break
+        match = pattern.match(line)
+        if match:
+            return match.group(1) if match.group(1) is not None else match.group(2)
+    return None
+
+
 class CodexProvider:
-    def __init__(self, spec=None, env=None):
+    def __init__(self, spec=None, env=None, system_root=None):
         self.spec = spec if spec is not None else specmod.load("codex")
         self.env = os.environ if env is None else env
+        #: Prefix for the machine-wide config paths, so a test can stand in
+        #: for ``/etc`` without being root. ``None`` means the real one.
+        self.system_root = system_root
 
     # -- identification ---------------------------------------------------
 
@@ -96,6 +163,9 @@ class CodexProvider:
         kind = block["kind"]
 
         if kind == "file":
+            refusal = self._storage_mode_refusal(block, config, platform)
+            if refusal is not None:
+                return refusal
             return FileStore(
                 specmod.expand(block["path"], home=home, config_dir=config),
                 specmod.mode_of(block))
@@ -103,6 +173,69 @@ class CodexProvider:
             return KeychainStore(service=block["service"],
                                  account=block["account"])
         raise ValueError(f"Unknown store kind '{kind}' for provider 'codex'.")
+
+    def storage_mode(self, *, home, platform: str):
+        """``(mode, file that set it, enforced)`` as Codex would resolve it.
+
+        ``file`` unless a config file says otherwise. An administrator's
+        requirements outrank the user's ``config.toml``, which outranks the
+        machine-wide one. The file is ``None`` when nothing set it.
+        """
+        block = specmod.store_block(self.spec, platform)
+        config = specmod.config_dir(self.spec, home=home, env=self.env)
+        return self._storage_mode(block.get("requires") or {}, config, platform)
+
+    def _storage_mode(self, requires: dict, config, platform: str):
+        setting = requires.get("setting")
+        default = requires.get("default", "file")
+        if not setting:
+            return default, None, False
+        family = "win32" if platform == "win32" else "posix"
+        layers = (
+            (requires.get("enforced_in", {}).get(family, ()), True),
+            (requires.get("user", ()), False),
+            (requires.get("system", {}).get(family, ()), False),
+        )
+        for templates, enforced in layers:
+            for template in templates:
+                path = self._config_path(template, config)
+                if path is None:
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                value = toml_top_level_string(text, setting)
+                if value:
+                    return value, path, enforced
+        return default, None, False
+
+    def _config_path(self, template: str, config) -> Path | None:
+        text = str(template).replace("{config_dir}", str(config))
+        if "{program_data}" in text:
+            program_data = self.env.get("ProgramData") or self.env.get("PROGRAMDATA")
+            if not program_data:
+                return None
+            text = text.replace("{program_data}", program_data)
+        path = Path(text)
+        if self.system_root is not None and "{config_dir}" not in str(template):
+            # Re-rooted for tests: /etc/codex/x under <root>/etc/codex/x.
+            path = Path(self.system_root) / str(path).lstrip("/\\").replace(":", "")
+        return path
+
+    def _storage_mode_refusal(self, block: dict, config, platform: str):
+        """An :class:`UnsupportedStore` when Codex is not using ``auth.json``."""
+        requires = block.get("requires") or {}
+        mode, source, enforced = self._storage_mode(requires, config, platform)
+        if mode == requires.get("value", "file"):
+            return None
+        where = _MODE_PLACES.get(mode, f"a store called '{mode}'")
+        template = ENFORCED_REFUSAL if enforced else KEYRING_REFUSAL
+        return UnsupportedStore(
+            reason=template.format(
+                where=where, setting=requires.get("setting"), value=mode,
+                source=source, user_config=Path(config) / "config.toml"),
+            where=f"Codex's {where} (not auth.json)")
 
     # -- what the bytes mean ----------------------------------------------
 
@@ -128,7 +261,7 @@ class CodexProvider:
         expires_ms = None
 
         exp = claims.get(block["claim"])
-        if isinstance(exp, (int, float)):
+        if specmod.finite(exp):
             expires_ms = int(exp) * 1000
         else:
             # No parseable exp: fall back to how long ago the tokens were last
