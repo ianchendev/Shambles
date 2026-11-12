@@ -67,6 +67,59 @@ Notable changes per release. Dates are the tag date.
   conversion, which used to fail the same way at every start. A history
   entry containing a Unicode line separator is no longer split in two when
   histories are merged.
+- A sign-in that Shambles refuses to start now says why in the terminal
+  interface (for instance, that you are signed in as a different account),
+  instead of only "The login could not be completed."
+- **Switching no longer replaces a login that is saved nowhere.** With
+  profiles saved but none marked active (the state Eject leaves behind, or a
+  profile folder removed by hand), Switch, Add Account and Sign in used to
+  overwrite whatever login was live without keeping a copy of it. They now
+  stop and ask you to save it first. When the live login is already one of
+  your saved profiles there is nothing to lose, and they carry on.
+- **A switch that fails halfway can be finished by running it again.** If
+  the login was replaced but the active marker could not be written, the next
+  switch filed the new account's token under the old profile and destroyed
+  the old one. Shambles now recognises the live login by its bytes, so
+  running the switch again finishes it. This holds until the vendor next
+  refreshes that login, so retry straight away.
+- **A login file that is empty for a moment no longer wipes the saved
+  token.** Claude Code and Codex both rewrite their login file in place, and
+  a read that landed between the two halves of that saw an empty file.
+  Shambles saved those zero bytes over the profile's token: on a switch, and
+  for Codex on every refresh of the window with no click at all. An empty
+  file is now treated as no login.
+- **A Claude Code session left running no longer blocks switching.** A
+  session still signed in as the previous account rewrites `~/.claude.json`,
+  and Shambles then refused every switch with "Signed in as ..., but ...
+  holds ...", about a login that was the right one all along. The stored
+  login now settles which account is live, not the address in that file.
+- A profile's saved address is no longer erased, or replaced with another
+  account's, when `~/.claude.json` is briefly out of step with the login. An
+  empty profile is no longer labelled with the previous account's address
+  after a cancelled Add Account.
+- Removing a profile is now refused when it is the only one holding the
+  login that is live, even if the active marker names a different profile.
+- A switch is no longer refused as "signed in as someone else" when nobody
+  is signed in at all and only an old address is left in `~/.claude.json`.
+- A refused Add Account no longer leaves an empty profile behind.
+- Cancelling Add Account in one window no longer switches you back when you
+  had already moved to another profile in a second window.
+- Saving a login that one of your profiles already holds now marks that
+  profile as the active one, instead of making a second copy under a new
+  name.
+- **A login file that cannot be read no longer stops Shambles opening.** When
+  the vendor's credential store was locked or unreadable (a locked Keychain,
+  a file held by another program), the window failed to start and the
+  terminal UI could not refresh. Both now show what they can from the saved
+  profiles. Switching is still refused until the store can be read, because
+  the outgoing login could not be copied out first.
+  A store that is busy for one read and free for the next can no longer get
+  a login filed under the wrong profile: whose login it is gets decided from
+  the same bytes that are about to be saved.
+- A `~/.claude.json` caught halfway through being written, a damaged active
+  marker, or a value in a vendor file that is not a real number (an expiry of
+  `NaN`, a reset time no calendar reaches) no longer crashes the account
+  list. The affected field is shown as unknown instead.
 
 ## 2.1.2 - 2026-09-11
 

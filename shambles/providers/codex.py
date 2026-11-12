@@ -128,7 +128,7 @@ class CodexProvider:
         expires_ms = None
 
         exp = claims.get(block["claim"])
-        if isinstance(exp, (int, float)):
+        if specmod.finite(exp):
             expires_ms = int(exp) * 1000
         else:
             # No parseable exp: fall back to how long ago the tokens were last
