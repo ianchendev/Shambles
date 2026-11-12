@@ -60,3 +60,61 @@ def test_removing_the_active_profile_is_still_reported_as_protected(paths):
     assert result.ok is False
     assert result.error.code == "active_profile_protected"
     assert "Switch away" in result.error.recovery
+
+
+# -- a sign-in that is refused before the vendor ever runs ------------------
+
+class NeverStarted:
+    """Stands in for the vendor process; a refusal must not reach it."""
+    running = False
+
+    def __init__(self, argv, **kwargs):
+        pass
+
+    def start(self, *, on_line, on_exit):
+        self.running = True
+
+    def cancel(self):
+        self.running = False
+
+
+def test_a_refused_sign_in_says_why(paths, monkeypatch, fake_vendor):
+    """Every login failure was reported as 'The login could not be
+    completed.' That is right for a store error, whose text carries paths
+    and whatever the OS said. It is wrong for the switcher's own refusals,
+    which are written for the user and are the only place the way out is
+    named: here, that the machine is signed in as somebody else."""
+    monkeypatch.setattr("shambles.app.service.login.LoginProcess", NeverStarted)
+    fake_vendor("codex")
+    make_profile(paths, "codex", "Work", email="w@example.test", active=True)
+    make_profile(paths, "codex", "Old", email="o@example.test",
+                 refresh_expires_ms=NOW - 1)
+    make_live_codex_login(paths, email="stranger@example.test",
+                          exp_ms=healthy_ms(7))
+    done = []
+
+    service(paths).start_login("codex", "Old", lambda line: None, done.append)
+
+    assert done[0].ok is False
+    assert "Signed in as stranger@example.test" in done[0].error.message
+
+
+def test_a_store_failure_during_sign_in_still_says_nothing_private(
+        paths, monkeypatch, fake_vendor):
+    """The other half: what the store said stays out of the result."""
+    monkeypatch.setattr("shambles.app.service.login.LoginProcess", NeverStarted)
+    fake_vendor("codex")
+    make_profile(paths, "codex", "Old", email="o@example.test",
+                 refresh_expires_ms=NOW - 1)
+
+    def locked(*args, **kwargs):
+        raise StoreUnavailableError("/private/path: the store is locked")
+
+    monkeypatch.setattr(switcher, "switch", locked)
+    monkeypatch.setattr(switcher, "begin_relogin", locked, raising=False)
+    done = []
+
+    service(paths).start_login("codex", "Old", lambda line: None, done.append)
+
+    assert done[0].ok is False
+    assert "/private/path" not in str(done[0].to_dict())

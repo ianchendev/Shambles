@@ -23,6 +23,9 @@ Notable changes per release. Dates are the tag date.
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.
+- A sign-in that Shambles refuses to start now says why in the terminal
+  interface (for instance, that you are signed in as a different account),
+  instead of only "The login could not be completed."
 
 ## 2.1.2 - 2026-09-11
 
