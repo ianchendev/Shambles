@@ -35,7 +35,10 @@ def load(path) -> dict:
     try:
         with Path(path).open(encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
+        # ValueError, not only JSONDecodeError: a file cut inside a
+        # multi-byte character fails to *decode* before it can fail to parse,
+        # and UnicodeDecodeError is the other kind of ValueError.
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -100,7 +103,7 @@ def load_for_write(path) -> dict:
     try:
         with path.open(encoding="utf-8") as fh:
             config = json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         raise ConfigUnreadableError(
             CORRUPT_CONFIG_HELP.format(backups="the backups directory")) from exc
 
