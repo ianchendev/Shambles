@@ -26,7 +26,7 @@ from ..snapshot import Snapshot
 from .brand import header_text
 from .dashboard import Dashboard, MINIMUM_HEIGHT
 from .overlays import ConfirmAction, ResultScreen, overlay_panel_classes
-from .widgets import AccountList
+from .widgets import AccountList, notices_text
 from .workflows import AccountMenu, AddAccountScreen, LoginProgress, NameInputScreen
 
 #: A state and the key that changes it. The footer already lists "a add",
@@ -192,9 +192,24 @@ class Onboarding(Widget):
     }
     """
 
-    def __init__(self, *, unicode: bool):
+    def __init__(self, *, unicode: bool, snapshot: Snapshot | None = None):
         super().__init__(id="onboarding")
         self.unicode = unicode
+        self.snapshot = snapshot
+
+    def welcome_copy(self) -> str:
+        """The first thing a new user reads, and what to press next.
+
+        A first run is usually somebody already signed in to the vendor, and
+        "add your first account" is the wrong instruction for them: adding
+        has to replace the live login, so it is refused until that login is
+        saved. Their first step is s.
+        """
+        said = notices_text(self.snapshot) if self.snapshot else ""
+        if not said:
+            return WELCOME_COPY
+        return (f"No saved accounts yet.\n\n{said}\n\n"
+                "Or press a to add a different account.")
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -203,7 +218,7 @@ class Onboarding(Widget):
         )
         yield Static(id="dashboard-header", markup=False)
         with Vertical(id="welcome-body"):
-            yield Static(WELCOME_COPY, id="welcome-copy")
+            yield Static(self.welcome_copy(), id="welcome-copy", markup=False)
         yield Static(id="shortcut-footer", markup=False)
 
     def on_resize(self, event: events.Resize) -> None:
@@ -237,10 +252,11 @@ class HelpScreen(ModalScreen[None]):
                 "\n"
                 "j / Down     Next account\n"
                 "k / Up       Previous account\n"
-                "Enter        Switch selected account\n"
-                "a            Add a new profile\n"
+                "Enter        Switch to selected account, or sign it in\n"
+                "             if its login no longer works\n"
+                "a            Add an account and sign in to it\n"
                 "m            Account actions (save, add, rename, remove)\n"
-                "l            Log in to selected account\n"
+                "l            Sign in to selected account again\n"
                 "x            Eject Shambles\n"
                 "r            Refresh local state\n"
                 "u            Hide the update notice\n"
@@ -279,6 +295,7 @@ class ShamblesTUI(App[str | None]):
         Binding("enter", "switch_selected", "Switch", priority=True),
         Binding("m", "open_menu", "Menu"),
         Binding("a", "add_account", "Add"),
+        Binding("s", "save_login", "Save", show=False),
         Binding("l", "login_selected", "Login"),
         Binding("x", "eject", "Eject"),
         Binding("u", "hide_update_notice", "Hide notice", show=False),
@@ -314,7 +331,7 @@ class ShamblesTUI(App[str | None]):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        gated = {"switch_selected", "refresh_snapshot",
+        gated = {"switch_selected", "refresh_snapshot", "save_login",
                 "open_menu", "add_account", "login_selected", "eject"}
         # Refresh only rereads/restashes already-active credentials; it does
         # not begin a new credential mutation, so (like before) it alone is
@@ -350,7 +367,7 @@ class ShamblesTUI(App[str | None]):
     def _view(self) -> Widget:
         if self._accounts():
             return Dashboard(self.snapshot)
-        return Onboarding(unicode=self.unicode)
+        return Onboarding(unicode=self.unicode, snapshot=self.snapshot)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="app-body"):
@@ -530,6 +547,13 @@ class ShamblesTUI(App[str | None]):
             if group.provider != self.selected_provider:
                 continue
             for account in group.accounts:
+                if account.name == self.selected_account and account.needs_login:
+                    # Switching would install a dead token and leave the
+                    # vendor prompting for the very login this runs. The
+                    # window offers Sign in in place of Switch for the same
+                    # reason.
+                    self._start_login(group.provider, account.name)
+                    return
                 if account.name == self.selected_account and not account.active:
                     plan = self.service.plan_switch(group.provider, account.name)
                     if plan.requires_confirmation:
@@ -584,8 +608,11 @@ class ShamblesTUI(App[str | None]):
         provider, account = self.selected_provider, self.selected_account
         if provider is None or account is None:
             return
+        active = any(a.active for g in self.snapshot.groups
+                     if g.provider == provider for a in g.accounts
+                     if a.name == account)
         self.push_screen(
-            AccountMenu(provider, account),
+            AccountMenu(provider, account, removable=not active),
             lambda choice: self._menu_chosen(provider, account, choice),
         )
 
@@ -617,6 +644,33 @@ class ShamblesTUI(App[str | None]):
             else:
                 self._begin_mutation(lambda: self.service.remove(plan), True)
 
+    def action_save_login(self) -> None:
+        """Save a live login that no account holds yet.
+
+        The one action a first run needs, and it was reachable only through
+        ``m``, which needs an account selected -- so on the welcome screen it
+        was not reachable at all.
+        """
+        if not self.check_action("save_login", ()):
+            return
+        self._capture_selection()
+        candidates = [group for group in self.snapshot.groups
+                      if getattr(group, "can_save", False)]
+        if not candidates:
+            self.push_screen(ResultScreen(ActionResult(
+                False, "save_current", error=ActionError(
+                    "nothing_to_save",
+                    "Nothing to save: every live login is already saved.",
+                    "Press a to add another account."))))
+            return
+        group = next((g for g in candidates
+                      if g.provider == self.selected_provider), candidates[0])
+        who = group.live_email or f"the current {group.display_name} login"
+        self.push_screen(
+            NameInputScreen(f"Save {who} as:"),
+            lambda name: self._begin_save(group.provider, name),
+        )
+
     def _begin_save(self, provider: str, name: str | None) -> None:
         if name is None:
             return
@@ -634,10 +688,24 @@ class ShamblesTUI(App[str | None]):
         )
 
     def _begin_add(self, picked: tuple[str, str] | None) -> None:
-        if picked is None:
+        """Create the profile and sign it in, as one step.
+
+        Adding has to make the new profile live, which signs the user out of
+        the account they were on; stopping there left them signed out with an
+        empty profile and only "Added X." to go on. The service rolls back if
+        the sign-in comes to nothing.
+        """
+        if picked is None or self.mutation_running:
             return
         provider, name = picked
-        self._begin_mutation(lambda: self.service.add(provider, name))
+        self._mutation_pending = True
+        self._login_handle = self.service.start_add(
+            provider, name,
+            on_line=lambda line: self.post_message(LoginLine(line)),
+            on_done=lambda result: self.post_message(LoginFinished(result)),
+        )
+        self.push_screen(LoginProgress(provider, name.strip()),
+                         self._login_cancelled)
 
     def _begin_rename(
         self, provider: str, old_name: str, new_name: str | None,
@@ -699,6 +767,9 @@ class ShamblesTUI(App[str | None]):
         provider, account = self.selected_provider, self.selected_account
         if provider is None or account is None:
             return
+        self._start_login(provider, account)
+
+    def _start_login(self, provider: str, account: str) -> None:
         self._mutation_pending = True
         self._login_handle = self.service.start_login(
             provider, account,
@@ -736,4 +807,10 @@ def run_tui(
     service: ShamblesService, *, motion: bool = True, unicode: bool = True,
 ) -> str | None:
     """Return the optional provider choice after Textual restores the terminal."""
+    # Settle a stale marker before the first frame, as the window does on
+    # every refresh: otherwise the list opens with the wrong account active.
+    try:
+        service.refresh()
+    except Exception:
+        pass
     return ShamblesTUI(service, motion=motion, unicode=unicode).run()

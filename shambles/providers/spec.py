@@ -7,6 +7,7 @@ path arithmetic against it is unreliable.
 """
 
 import json
+import math
 import os
 from importlib import resources
 from pathlib import Path
@@ -71,6 +72,24 @@ def pointer(data, path: str, default=None):
         else:
             return default
     return current if current is not None else default
+
+
+def finite(value) -> bool:
+    """Whether a parsed JSON value is a number arithmetic can be done on.
+
+    Python's JSON parser accepts ``NaN`` and ``Infinity`` and reads ``1e400``
+    as infinity, and ``int()`` of any of them raises. Vendor files are read on
+    every refresh to draw every card, so a value like that in one field of one
+    file would otherwise be the whole window. An integer too large for a
+    float is refused with them: it is not a timestamp or a percentage either,
+    and dividing it raises the same way.
+    """
+    if not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def config_dir(spec: dict, *, home: Path, env=None) -> Path:

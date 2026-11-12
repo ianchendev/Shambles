@@ -1713,3 +1713,125 @@ def test_a_refused_start_opens_no_browser(paths, make_app, monkeypatch, claude):
 
     assert seen == {}
     assert said[-1][0] == "showerror"
+
+
+# -- adding an account that is already saved ----------------------------
+
+def _add_dialog(monkeypatch, name, provider_id="claude"):
+    class FakeDialog:
+        def __init__(self, *args, **kwargs):
+            self.result = (name, provider_id)
+
+    monkeypatch.setattr(gui, "AddAccountDialog", FakeDialog)
+
+
+def test_adding_an_account_that_is_already_saved_is_refused(
+        paths, make_app, monkeypatch):
+    """Reproduced: adding 'Personal' while the browser was still signed in to
+    Work said "'Personal' is signed in and active" and kept a second copy of
+    Work under the new name."""
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+    said = _said(monkeypatch)
+    _add_dialog(monkeypatch, "Personal")
+
+    def vendor_writes():
+        make_claude_json(paths, email="w@example.com")
+        make_live_claude_login(paths, access_token="tok-work-again")
+
+    _vendor(monkeypatch, succeeded=True, writes=vendor_writes)
+    app = make_app(paths)
+
+    app.on_add()
+
+    assert state.read_active(paths, "claude") == "Work"
+    assert not paths.credentials("claude", "Personal").exists()
+    kind, message = said[-1]
+    assert kind == "showwarning"
+    assert "already saved as 'Work'" in message
+    assert "private window" in message
+
+
+def test_adding_a_new_account_still_files_it(paths, make_app, monkeypatch):
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+    said = _said(monkeypatch)
+    _add_dialog(monkeypatch, "Personal")
+
+    def vendor_writes():
+        make_claude_json(paths, email="p@example.com")
+        make_live_claude_login(paths, access_token="tok-personal")
+
+    _vendor(monkeypatch, succeeded=True, writes=vendor_writes)
+    app = make_app(paths)
+
+    app.on_add()
+
+    assert state.read_active(paths, "claude") == "Personal"
+    assert b"tok-personal" in paths.credentials("claude", "Personal").read_bytes()
+    assert said[-1][0] == "showinfo"
+
+
+# -- states where the window said less than was true ------------------------
+
+def test_the_window_opens_when_the_live_login_cannot_be_read(
+        paths, make_app, monkeypatch):
+    """Reproduced: a live credential with mode 000 raised out of __init__ and
+    the window never appeared. A locked Keychain takes the same path."""
+    from shambles.stores import FileStore
+    from shambles.stores.base import StoreUnavailableError
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_profile(paths, "claude", "Home", email="h@example.com")
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths, access_token="tok-Work")
+    original = FileStore.read
+
+    def locked(self):
+        if self.path.name == ".credentials.json":
+            raise StoreUnavailableError("Permission denied")
+        return original(self)
+
+    monkeypatch.setattr(FileStore, "read", locked)
+
+    app = make_app(paths)
+    app.update()
+
+    assert "Can't read the Claude Code login" in _all_text(app.rows)
+
+
+def test_an_unsaved_login_under_a_missing_marker_can_be_saved(
+        paths, make_app):
+    """Reproduced: the heading said "Not signed in" and offered only
+    "Forget that profile"; Switch on the other card would then overwrite the
+    live login with no copy kept."""
+    make_profile(paths, "claude", "Work", email="w@example.com")
+    make_claude_json(paths, email="gone@example.com")
+    make_live_claude_login(paths, access_token="tok-gone")
+    paths.active_marker("claude").write_text("Gone\n", encoding="utf-8")
+
+    app = make_app(paths)
+    app.update()
+
+    labels = _label_texts(app)
+    assert any(t.startswith("Save gone@example.com") for t in labels)
+    # The Claude heading; Codex below it really is not signed in.
+    assert labels[labels.index("CLAUDE CODE") + 1] == "Not saved"
+    text = "\n".join(labels)
+    assert "Signed in as gone@example.com, which is not saved" in text
+
+
+def test_an_unmarked_live_login_is_named_rather_than_guessed_at(
+        paths, make_app):
+    make_profile(paths, "claude", "Work", email="w@example.com")
+    make_claude_json(paths, email="x@example.com")
+    make_live_claude_login(paths, access_token="tok-x")
+
+    app = make_app(paths)
+    app.update()
+
+    text = "\n".join(_label_texts(app))
+    assert "Signed in as x@example.com, which is not saved" in text
+    assert "Not sure which account is live" not in text
