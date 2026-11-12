@@ -2,6 +2,7 @@
 
 import pytest
 
+from conftest import posix_only
 from helpers import NOW, healthy_ms, make_live_codex_login, make_profile
 from shambles import providers, switcher
 from shambles.app.service import ShamblesService
@@ -78,6 +79,7 @@ class NeverStarted:
         self.running = False
 
 
+@posix_only
 def test_a_refused_sign_in_says_why(paths, monkeypatch, fake_vendor):
     """Every login failure was reported as 'The login could not be
     completed.' That is right for a store error, whose text carries paths
