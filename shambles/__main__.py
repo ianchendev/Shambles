@@ -22,6 +22,7 @@ shambles — switch between Claude Code and Codex accounts
   shambles list                list every account and its state
   shambles list --json         the same thing, machine-readable
   shambles switch claude Work  switch without opening an interface
+  shambles doctor              check whether switching can work here
   shambles --no-motion         disable nonessential terminal motion
   shambles --version           print the version
   shambles --help              show this message

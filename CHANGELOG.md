@@ -83,6 +83,84 @@ Notable changes per release. Dates are the tag date.
   it costs: signing that address back in needs a new verification email.
 - The terminal UI's eject confirmation says what eject does before asking.
   It used to show only the after-the-fact summary, as if it had happened.
+- **`shambles doctor`.** Checks whether switching can work on this machine
+  and says why not, without changing anything. It reports an environment
+  variable that makes the vendor ignore its stored login (`ANTHROPIC_API_KEY`
+  and friends, `CODEX_ACCESS_TOKEN`), a `claude` inside WSL that is really
+  the Windows install, Codex not keeping its login in `auth.json`, a
+  relocated config directory, a missing vendor program, and where each login
+  is kept. Exits 1 on a problem; `--json` for scripts.
+
+- **A native Windows on Arm binary**, `shambles-windows-arm64.exe`, and an
+  installer that picks it. On releases without one the installer falls back
+  to the x64 build, which Windows 11 on Arm runs under emulation.
+
+- **macOS and native Windows are now exercised on every pull request.** A
+  `real-machine` workflow installs the current Claude Code and Codex on
+  GitHub's macOS, Windows and Linux machines, drives Shambles against the
+  real Keychain and Credential Manager with made-up credentials, and asks the
+  vendors' own commands who is signed in after each switch. The README's
+  support table now says what that established and what it did not.
+
+### Fixed
+
+- **Switching Claude accounts on native Windows did nothing.** Shambles read
+  and wrote the Credential Manager there, always, in a layout Claude Code
+  does not use. Claude Code keeps its login in
+  `%USERPROFILE%\.claude\.credentials.json` unless Credential Manager has
+  been switched on for the account. So the live login read as absent, and a
+  switch put the incoming credential where nothing looked, wrote the
+  incoming account's name into `.claude.json` and reported success: the old
+  login under the new name. Shambles now uses the file, and Credential
+  Manager only when Claude Code itself does, in Claude Code's own layout.
+
+- **A Mac signed in over SSH read as signed out.** When the Keychain refuses
+  a write, Claude Code keeps the login in `~/.claude/.credentials.json`.
+  Shambles only looked in the Keychain. It now reads the file when the
+  Keychain is empty, as Claude Code does, and a switch moves the login into
+  the Keychain and clears the file, as Claude Code's own next write would.
+
+- **A locked Keychain was read as "no login".** It is now reported as locked,
+  with the command that unlocks it. The Keychain is also given 60 seconds to
+  answer instead of being waited on indefinitely.
+
+- **`--home` could reach the real Keychain.** `shambles --home <dir>` is the
+  documented way to try Shambles without risking a real login, but the
+  Keychain belongs to the user, not to a directory, so on macOS a switch
+  made for a scratch home would have replaced the real login. For any home
+  but the real one, only files are used now. The same applies to the
+  Windows Credential Manager.
+
+- **Codex told to keep its login in the system keyring.** With
+  `cli_auth_credentials_store` set to `keyring` or `auto`, Codex does not
+  read `auth.json`, and Shambles swapped it anyway. It now refuses, names
+  the setting and the file that set it, and touches nothing.
+
+- **`CLAUDE_CONFIG_DIR` with a trailing slash, or Windows-style separators,
+  on macOS.** Claude Code names its Keychain item after a hash of the
+  variable exactly as typed. Shambles hashed a tidied copy and looked in an
+  item that did not exist. The credentials file also now follows
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR`.
+
+- **A process with no `USER` variable used the wrong Keychain item.** Started
+  from a desktop launcher or launchd, Shambles fell back to a fixed account
+  name where Claude Code asks the system for the real one.
+
+- **A small login was visible in the process list during a Keychain write.**
+  The write now goes through standard input when it fits, as Claude Code's
+  does.
+
+- **`install.sh` could leave a binary that cannot start.** On a glibc older
+  than 2.35 it installed the file, then printed "Done". Both installers now
+  run the download before replacing anything, refuse a download that fails
+  its checksum, and say what to do instead. `install.sh` also recognises
+  musl, Rosetta shells and Git Bash.
+
+- **`install.ps1` changed the PowerShell session that ran it** and could
+  rewrite the user's PATH with its variables expanded. It also now works
+  under Windows PowerShell 5.1's defaults (TLS 1.2, the Restricted policy),
+  over a running Shambles, and from `cmd.exe`.
+
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.

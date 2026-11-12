@@ -210,7 +210,8 @@ jobs:
             **Windows ships two binaries.** `shambles.exe` is the one you run
             in a terminal, and it prints. `shamblesw.exe` is the windowed twin
             for a desktop shortcut that should not flash a console. The
-            installer places both.
+            installer places both. There is an x64 pair and a native
+            Arm pair; the installer picks.
 
             **The binaries are unsigned.** Windows SmartScreen warns on first
             run, which is what an unsigned publisher looks like. If you would
@@ -227,17 +228,18 @@ jobs:
             Get-FileHash .\shambles-windows-x64.exe -Algorithm SHA256
             ```
 
-            **Windows account switching is unverified.** Claude Code appears
-            to keep credentials in the Credential Manager there rather than in
-            `.credentials.json`, the file Shambles swaps, in which case
-            switching would quietly do nothing. The binary builds and runs;
-            nobody has confirmed a switch takes effect. See
-            `docs/token-storage.md`.
+            **macOS and native Windows are checked by CI, not yet by a
+            person.** On GitHub's macOS and Windows machines, with made-up
+            credentials, a switch changes who `claude auth status` and
+            `codex login status` report. Nobody has yet reported signing in
+            with a real account through Shambles on either system. The
+            README's support table says exactly what was and was not
+            established. If a switch seems to do nothing, run
+            `shambles doctor`.
 
-            **macOS account switching is not supported.** There are macOS
-            binaries below and the installer will fetch one, but installing is
-            not switching support: credentials live in the Keychain there, so
-            there is no file for Shambles to swap.
+            **On Windows, upgrade from 2.1.2 or older before switching.**
+            Those versions wrote the Claude login somewhere Claude Code does
+            not read.
 
             **Upgrading from 1.x?** First launch merges your split session
             history back into one shared `~/.claude`, automatically and
