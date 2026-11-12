@@ -13,6 +13,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python: ["3.10", "3.12"]
+        # macOS ran this suite only when a release was tagged, which is the
+        # worst moment to learn it fails. One Python is enough to catch a
+        # platform difference; the version spread is covered above.
+        include:
+          - os: macos-15
+            python: "3.12"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +39,12 @@ jobs:
       - name: Test (Linux, with display)
         if: runner.os == 'Linux'
         run: xvfb-run -a python -m pytest -v
+
+      # No xvfb on macOS: Tk talks to the window server, not X11, and the GUI
+      # tests skip themselves on a TclError when no display answers.
+      - name: Test (macOS)
+        if: runner.os == 'macOS'
+        run: python -m pytest -v
 
       # Windows retries; Linux does not. The TUI suite asserts on rendered
       # output after a fixed number of event-loop pumps, but Textual settles a

@@ -29,7 +29,33 @@
       "kind": "file",
       "path": "{config_dir}/auth.json",
       "mode": "0600",
-      "note": "same path on darwin, linux and win32 \u2014 no XDG, no %APPDATA%. A keyring backend exists but is off by default."
+      "note": "same path on darwin, linux and win32; no XDG, no %APPDATA%. Only when Codex is in its default 'file' mode; see 'requires'.",
+      "requires": {
+        "setting": "cli_auth_credentials_store",
+        "value": "file",
+        "default": "file",
+        "enforced_in": {
+          "posix": [
+            "/etc/codex/requirements.toml",
+            "/etc/codex/managed_config.toml"
+          ],
+          "win32": [
+            "{program_data}/OpenAI/Codex/requirements.toml"
+          ]
+        },
+        "user": [
+          "{config_dir}/config.toml"
+        ],
+        "system": {
+          "posix": [
+            "/etc/codex/config.toml"
+          ],
+          "win32": [
+            "{program_data}/OpenAI/Codex/config.toml"
+          ]
+        },
+        "note": "'keyring' keeps the login in the OS keyring (an encrypted file plus a keyring passphrase on Windows) and never reads auth.json; 'auto' prefers the keyring and deletes auth.json after a successful save; 'ephemeral' keeps it in memory. Requirements outrank the user's config, which outranks the system's. Not visible from here: macOS managed preferences, an enterprise cloud bundle, a --profile file, a project's .codex/config.toml and -c on the command line."
+      }
     }
   },
   "liveness": {
@@ -69,17 +95,17 @@
   },
   "provenance": {
     "client_versions": [
-      "0.147.0-alpha.1.2"
+      "0.167.2"
     ],
-    "measured": "2026-08-06",
+    "measured": "2026-11-13",
     "platforms_executed": [
-      "darwin"
-    ],
-    "platforms_from_source_only": [
+      "darwin",
       "linux",
       "win32"
     ],
-    "source": "github.com/openai/codex, codex-rs/login/src/auth/",
+    "platforms_from_source_only": [],
+    "executed_how": "the real-machine workflow on GitHub-hosted runners, with made-up credentials and the vendor's own status command as judge: macOS 15 and 26 arm64, macOS 15 x86_64, Windows Server 2022 and 2025 x64, Windows 11 arm64, Ubuntu 22.04 x64 and 24.04 arm64. No real account was used on any of them",
+    "source": "github.com/openai/codex at c0cc9fc (2026-11-12): codex-rs/login/src/auth/storage.rs, codex-rs/utils/home-dir/src/lib.rs, codex-rs/config/defaults.toml, codex-rs/config/src/loader/mod.rs",
     "observed_lifetimes": {
       "id_token_hours": 1,
       "access_token_days": 10

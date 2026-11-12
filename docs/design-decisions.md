@@ -227,10 +227,11 @@ are never presented as things to manage, and there is no "refresh", "repair" or
 > `switcher`, `state`, `profiles`, `gui` — talks only to the `Provider`
 > protocol and never learns a provider's name.
 >
-> Two departures from the text below. The store is `~/.shambles/<provider>/`,
-> not `~/.shambles/<name>` as sketched. And `KeychainStore` / `CredmanStore`
-> ship unreferenced: only `FileStore` is wired, because neither macOS nor
-> Windows could be verified.
+> One departure from the text below: the store is `~/.shambles/<provider>/`,
+> not `~/.shambles/<name>` as sketched. `KeychainStore` and `CredmanStore` are
+> wired and verified on CI runners since 2026-11; a fourth piece,
+> `FallbackStore`, layers either over a `FileStore` the way Claude Code
+> itself does. See TECH_SPEC §1.11.
 
 **Status: Decided**
 
