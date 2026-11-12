@@ -23,6 +23,14 @@ Notable changes per release. Dates are the tag date.
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.
+- **A `~/.claude` you symlinked yourself is no longer mistaken for the old
+  Shambles layout.** With `~/.claude` linked from a dotfiles checkout or
+  another drive, every Claude switch was refused with "still a symlink from
+  an older version of Shambles". If an old `~/.claude-profiles` folder was
+  still on disk as well, opening the window removed your link and put one of
+  that folder's profiles in its place. Only a link that points at a profile
+  inside `~/.claude-profiles` is converted now. Any other link is left exactly
+  as it is, and switching works through it.
 
 ## 2.1.2 - 2026-09-11
 

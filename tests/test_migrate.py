@@ -10,7 +10,8 @@ import os
 
 import pytest
 
-from helpers import NOW, make_claude_json, make_legacy_profile
+from helpers import (NOW, make_claude_json, make_legacy_profile,
+                     make_live_claude_login, make_profile, make_v1_profile)
 from shambles import providers as _providers
 from shambles import configjson, migrate, state, switcher
 from shambles.errors import ShamblesError
@@ -155,6 +156,79 @@ def test_switch_refuses_while_the_legacy_layout_is_present(paths):
     with pytest.raises(ShamblesError):
         switcher.switch(paths, CLAUDE, "Work", platform="linux",
                     now_ms_fn=lambda: NOW, sleep=lambda _: None)
+
+
+# ---- a symlink is only ours when it points into the old store -----------
+
+def test_a_symlink_of_the_users_own_is_not_the_legacy_layout(paths):
+    """Dotfile managers symlink ~/.claude, and so do people who keep it on
+    another drive. Treated as the pre-1.0 layout, the window would unlink
+    their link at startup and rename a leftover profile directory into its
+    place, so Claude Code would open on a directory with none of their
+    settings or history in it."""
+    real = paths.home / "dotfiles" / "claude"
+    (real / "projects").mkdir(parents=True)
+    (real / "settings.json").write_text("{}", encoding="utf-8")
+    os.symlink(real, paths.claude_dir, target_is_directory=True)
+    make_v1_profile(paths, "Work", email="w@example.test")
+
+    assert migrate.needed(paths) is False
+    # Asked anyway, the migration refuses rather than converting a home it
+    # does not recognise, and neither the link nor what it points at moves.
+    with pytest.raises(migrate.MigrationError):
+        migrate.run(paths, now_ms=NOW)
+
+    assert paths.claude_dir.is_symlink()
+    assert os.readlink(paths.claude_dir) == str(real)
+    assert sorted(p.name for p in real.iterdir()) == ["projects", "settings.json"]
+    assert (real / "settings.json").read_text(encoding="utf-8") == "{}"
+    assert (paths.legacy_profiles_dir / "Work").is_dir()
+
+
+@pytest.mark.parametrize("target", [
+    ".claude-profiles",                    # the old store itself
+    ".claude-profiles/Work/projects",      # inside a profile, not a profile
+    ".claude-profiles/.shambles-backups",  # in the store, but not a profile
+    ".claude-profiles/Gone",               # points at nothing
+])
+def test_only_a_link_to_a_profile_directory_is_the_legacy_layout(paths, target):
+    """The old layout was ~/.claude linked to one profile directory. A link
+    that merely passes near the old store, or leads nowhere, is something
+    the user made, and converting it would replace their link with a
+    directory they did not choose."""
+    make_legacy_profile(paths, "Work", email="w@example.test")
+    (paths.legacy_profiles_dir / ".shambles-backups").mkdir()
+    os.symlink(paths.home / target, paths.claude_dir, target_is_directory=True)
+
+    assert migrate.needed(paths) is False
+
+
+def test_a_relative_link_into_the_old_store_is_still_the_legacy_layout(paths):
+    """How the link is spelled must not hide the old layout, or the split
+    session history it causes would never be merged."""
+    make_legacy_profile(paths, "Work", email="w@example.test")
+    os.symlink(os.path.join(".claude-profiles", "Work"), paths.claude_dir,
+               target_is_directory=True)
+
+    assert migrate.needed(paths) is True
+
+
+def test_switching_works_through_a_symlink_of_the_users_own(paths):
+    """With ~/.claude symlinked by the user, every switch was refused with
+    "still a symlink from an older version of Shambles", and no migration
+    could ever clear it because there was nothing to migrate."""
+    real = paths.home / "dotfiles" / "claude"
+    real.mkdir(parents=True)
+    os.symlink(real, paths.claude_dir, target_is_directory=True)
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Personal", email="p@example.test")
+    make_claude_json(paths, email="w@example.test")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+    switcher.switch(paths, CLAUDE, "Personal", platform="linux",
+                    sleep=lambda _: None)
+
+    assert state.read_active(paths, "claude") == "Personal"
 
 
 # ---- migration happens on sight, not on request -------------------------

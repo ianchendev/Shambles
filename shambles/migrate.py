@@ -61,7 +61,28 @@ class Plan:
 
 
 def needed(paths) -> bool:
-    return paths.claude_dir.is_symlink()
+    """Whether ``~/.claude`` is the pre-1.0 layout: a link to an old profile.
+
+    A symlink alone is not evidence. People link ``~/.claude`` themselves,
+    from a dotfile manager or to keep it on another drive, and that link is
+    not ours to replace. Only one that resolves to a profile directory
+    directly inside ``~/.claude-profiles`` is the layout this module converts,
+    which is the same test the pre-1.0 code used to call a link its own.
+
+    Both sides are resolved, so a relative link, or a home that is itself
+    reached through a link, still compares equal. A link that dangles or loops
+    cannot be resolved and is not the old layout either: False, not an error.
+    """
+    try:
+        if not paths.claude_dir.is_symlink():
+            return False
+        target = paths.claude_dir.resolve(strict=True)
+        store = paths.legacy_profiles_dir.resolve(strict=True)
+    except (OSError, RuntimeError):  # RuntimeError: a link loop, before 3.13
+        return False
+    # The dot rule is legacy_names': a hidden directory was never a profile.
+    return (target.parent == store and target.is_dir()
+            and not target.name.startswith("."))
 
 
 def _session_count(profile_dir: Path) -> int:
@@ -164,7 +185,9 @@ def _merge_jsonl(src: Path, dest: Path) -> int:
 def run(paths, *, now_ms: int) -> Plan:
     """Perform the migration. Additive: nothing is deleted."""
     if not needed(paths):
-        raise MigrationError("~/.claude is not a symlink; nothing to migrate.")
+        raise MigrationError(
+            "~/.claude is not a link into the old profile store; nothing to "
+            "migrate.")
 
     plan = survey(paths)
     base_dir = paths.legacy_profiles_dir / plan.base

@@ -13,7 +13,7 @@ import shutil
 import sys
 import time
 
-from . import configjson, profiles, retry, state
+from . import configjson, migrate, profiles, retry, state
 from .errors import (AlreadyManagedError, DriftedLoginError,
                      ProfileNotFoundError, ShamblesError, SwitchFailedError)
 from .stores.base import StoreUnavailableError
@@ -44,16 +44,21 @@ MIGRATION_REQUIRED = (
 def _refuse_legacy_layout(paths) -> None:
     """Stop before touching a pre-1.0 layout.
 
-    ``~/.claude`` being a symlink means it points *into* a profile directory,
-    so writing the live credential would write through the link and corrupt
-    the very profile the switch is trying to leave. The GUI migrates on
-    startup, so this should be unreachable there -- it is here because a
-    half-applied switch on that layout is unrecoverable and the check is one
-    ``is_symlink`` call.
+    In that layout ``~/.claude`` is a symlink *into* a profile directory, so
+    writing the live credential would write through the link and corrupt the
+    very profile the switch is trying to leave. The GUI migrates on startup,
+    so this should be unreachable there -- it is here because a half-applied
+    switch on that layout is unrecoverable.
+
+    The test is :func:`migrate.needed`, the same one the migration itself
+    uses, not a bare ``is_symlink``. A link the user made themselves, to a
+    dotfiles checkout or another drive, points at no profile: there is
+    nothing to corrupt and nothing to migrate, so refusing it would refuse
+    every switch for good.
 
     Claude-only: the pre-1.0 layout predates every other provider.
     """
-    if paths.claude_dir.is_symlink():
+    if migrate.needed(paths):
         raise SwitchFailedError(MIGRATION_REQUIRED)
 
 
