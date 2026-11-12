@@ -91,9 +91,12 @@ class Bar:
             return None
         try:
             when = datetime.datetime.fromisoformat(self.resets_at)
-        except (TypeError, ValueError):
+            # The move to local time can fail on its own: an instant on the
+            # calendar's last day is a real one in UTC and off the end east
+            # of it.
+            return when.astimezone().strftime("%a %d %b, %H:%M")
+        except (TypeError, ValueError, OverflowError, OSError):
             return None
-        return when.astimezone().strftime("%a %d %b, %H:%M")
 
 
 @dataclass(frozen=True)

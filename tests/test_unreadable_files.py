@@ -266,3 +266,103 @@ def test_recording_usage_survives_a_sidecar_that_cannot_be_written(
 
     assert usage.capture_live(paths, "claude", "Work", now_ms=NOW) is False
     assert paths.account("claude", "Work").read_bytes() == before
+
+
+# -- "could not read it" is not "it has no identity" ------------------------
+#
+# Surviving an unreadable store must not become permission to write. The
+# guard on every stash asked the store who was signed in with a read of its
+# own, separate from the read that fetched the bytes to file. Once a failed
+# read answers "nobody we can name", a store that is busy for one and free
+# for the other files a stranger's login under the marked profile.
+
+def flaky_reads(monkeypatch, live_path, pattern):
+    """Reads of the live credential fail where ``pattern`` says so.
+
+    One entry per read, in order; True is a failure. Reads past the end of
+    the pattern succeed. What a file held for a moment by another process
+    looks like from here.
+    """
+    from shambles.stores import FileStore
+    from shambles.stores.base import StoreUnavailableError
+
+    real = FileStore.read
+    left = list(pattern)
+
+    def read(self):
+        if self.path == live_path and left and left.pop(0):
+            raise StoreUnavailableError(f"Could not read {self.path}:\nbusy")
+        return real(self)
+
+    monkeypatch.setattr(FileStore, "read", read)
+
+
+def test_a_store_busy_for_the_identity_check_does_not_let_restash_file_a_stranger(
+        paths, monkeypatch):
+    """restash_active runs on every refresh, with no click. Two reads that
+    would have noticed fail; the one that fetches the bytes succeeds."""
+    make_profile(paths, "codex", "Work", email="w@example.test", active=True)
+    live = make_live_codex_login(paths, email="stranger@example.test")
+    work = paths.credentials("codex", "Work").read_bytes()
+
+    flaky_reads(monkeypatch, live, [True, True])
+    switcher.restash_active(paths, codex(), platform="linux")
+
+    assert paths.credentials("codex", "Work").read_bytes() == work, (
+        "opening the window replaced Work's saved token with a stranger's")
+
+
+def test_a_store_busy_for_the_identity_check_does_not_let_a_switch_file_a_stranger(
+        paths, monkeypatch):
+    """The same through switch: unreadable while the state is classified,
+    readable for the bytes, unreadable again for the guard on the stash."""
+    make_profile(paths, "codex", "Work", email="w@example.test", active=True)
+    make_profile(paths, "codex", "Other", email="o@example.test")
+    live = make_live_codex_login(paths, email="stranger@example.test")
+    work = paths.credentials("codex", "Work").read_bytes()
+    stranger = live.read_bytes()
+
+    flaky_reads(monkeypatch, live,
+                [True, True, False, False, False, True, True, True])
+    try:
+        switcher.switch(paths, codex(), "Other", platform="linux",
+                        sleep=lambda _: None)
+    except Exception:
+        pass    # a refusal is the right answer; an overwrite is not
+
+    assert paths.credentials("codex", "Work").read_bytes() == work, (
+        "Work's saved token was replaced by the stranger's login")
+    assert live.read_bytes() == stranger
+
+
+def test_belongs_to_does_not_guess_about_a_store_it_cannot_read(
+        unreadable_codex_store):
+    """Unknown is not a match. It raised before this branch; it must not
+    start answering yes."""
+    from shambles.stores.base import StoreUnavailableError
+
+    with pytest.raises(StoreUnavailableError):
+        switcher.belongs_to(unreadable_codex_store, codex(), "Work",
+                            platform="linux")
+
+
+# -- a reset time the local calendar cannot hold ----------------------------
+
+@pytest.mark.skipif(not hasattr(__import__("time"), "tzset"),
+                    reason="needs time.tzset to move the local zone")
+def test_a_reset_time_on_the_calendars_last_day_has_no_label(monkeypatch):
+    """Finite, and a real instant in UTC, so it gets past the guard on the
+    conversion. Moved to local time east of UTC it falls off the end of the
+    calendar, and that raised while every card was being drawn."""
+    import time
+
+    monkeypatch.setenv("TZ", "Australia/Sydney")
+    time.tzset()
+    try:
+        parsed = usage.parse_codex_rate_limits(
+            {"primary": {"used_percent": 2, "window_minutes": 300,
+                         "resets_at": 253402300799}})
+        assert parsed.bars[0].resets_label() is None
+    finally:
+        monkeypatch.undo()
+        time.tzset()

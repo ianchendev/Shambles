@@ -66,6 +66,9 @@ Notable changes per release. Dates are the tag date.
   terminal UI could not refresh. Both now show what they can from the saved
   profiles. Switching is still refused until the store can be read, because
   the outgoing login could not be copied out first.
+  A store that is busy for one read and free for the next can no longer get
+  a login filed under the wrong profile: whose login it is gets decided from
+  the same bytes that are about to be saved.
 - A `~/.claude.json` caught halfway through being written, a damaged active
   marker, or a value in a vendor file that is not a real number (an expiry of
   `NaN`, a reset time no calendar reaches) no longer crashes the account

@@ -85,20 +85,34 @@ DRIFT_REFUSAL = (
 )
 
 
-def belongs_to(paths, provider, name, *, platform) -> bool:
+#: "The caller did not hand over the bytes", as distinct from None, which
+#: is what an empty store reads as.
+_UNREAD = object()
+
+
+def belongs_to(paths, provider, name, *, platform, blob=_UNREAD) -> bool:
     """Whether the live login may be filed under ``name``.
 
     False only when it is provably somebody else's. Returns True when the two
     agree *or* when either side has no identity to compare -- a brand new
     profile has no expectation to violate, and a credential we cannot
     attribute is not evidence of a mismatch.
+
+    ``blob`` is the credential the caller has read and is about to file.
+    Every question here is asked of those bytes and never of a second read
+    of the store: a store that is busy for one read and free for the next
+    would otherwise answer about a different moment than the one being
+    written, and "could not read it" is not "it has no identity". Without
+    ``blob`` the store is read here, and a store that cannot be read raises.
     """
+    if blob is _UNREAD:
+        blob = _store(paths, provider, platform).read()
+
     # A credential identical to this profile's stash is this profile's login,
     # whatever the vendor's config file currently says about it. Without this
     # a running Claude Code session could rewrite that file and have Shambles
     # refuse to re-stash a login it had just installed itself.
-    holders = state.holders_of_live_credential(paths, provider,
-                                               platform=platform)
+    holders = state.profiles_holding(paths, provider.id, blob)
     if name in holders:
         return True
     # And one identical to another profile's stash is that profile's login,
@@ -108,8 +122,19 @@ def belongs_to(paths, provider, name, *, platform) -> bool:
     if holders:
         return False
     expected = state.profile_email(paths, provider, name)
-    live = state.live_email(paths, provider, platform=platform)
+    live = _email_of(paths, provider, blob)
     return not (expected and live and expected != live)
+
+
+def _email_of(paths, provider, blob) -> str | None:
+    """Whose login these bytes are, as far as the provider can say.
+
+    ``None`` for an empty store: with nobody signed in, an address left in
+    the vendor's config describes nobody.
+    """
+    if not blob:
+        return None
+    return provider.identity(blob, home=paths.home, active=True).email
 
 
 def stash_live_login(paths, provider, name, *, platform=sys.platform,
@@ -133,14 +158,15 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
         # token with an empty file.
         return
 
+    # Everything from here on is decided about the bytes just read, not
+    # about whatever a second read of the store would return.
     expected = state.profile_email(paths, provider, name)
-    live = state.live_email(paths, provider, platform=platform)
-    if not belongs_to(paths, provider, name, platform=platform):
-        holder = state.holder_of_live_credential(paths, provider,
-                                                 platform=platform)
-        if holder:
+    live = _email_of(paths, provider, blob)
+    if not belongs_to(paths, provider, name, platform=platform, blob=blob):
+        holders = state.profiles_holding(paths, provider.id, blob)
+        if holders:
             raise DriftedLoginError(HELD_ELSEWHERE.format(
-                holder=holder, name=name))
+                holder=holders[0], name=name))
         raise DriftedLoginError(DRIFT_REFUSAL.format(
             live=live, name=name, expected=expected))
     paths.ensure_profile(provider.id, name)
@@ -273,8 +299,7 @@ def _outgoing_profile(paths, provider, current, *, platform) -> str | None:
     running it again.
     """
     live = _store(paths, provider, platform).read()
-    holders = state.holders_of_live_credential(paths, provider,
-                                               platform=platform)
+    holders = state.profiles_holding(paths, provider.id, live)
     if holders:
         return current.profile if current.profile in holders else holders[0]
 
@@ -456,7 +481,7 @@ def judge_relogin(paths, provider, name: str, *, platform=sys.platform,
     if (blob is None or not provider.has_login(blob)
             or provider.liveness(blob, now_ms=now_ms_fn()).needs_login):
         return UNCHANGED
-    if not belongs_to(paths, provider, name, platform=platform):
+    if not belongs_to(paths, provider, name, platform=platform, blob=blob):
         return OTHER_ACCOUNT
     return RENEWED
 
@@ -592,19 +617,19 @@ def restash_active(paths, provider, *, platform=sys.platform,
         return False
 
     try:
-        # Only refresh a stash from a credential that is provably this
-        # profile's. This runs on every window refresh, so without the check
-        # merely opening the window while signed in as someone else replaces
-        # a saved token -- no click, no warning, and no copy left anywhere.
-        # Inside the guard, because it reads the store too.
-        if not belongs_to(paths, provider, name, platform=platform):
-            return False
-
         live = _store(paths, provider, platform).read()
         if not live:
             # Absent, or empty: a read that landed between the vendor's
             # truncate and its write. This runs on every refresh, so filing
             # that would empty the saved token with no click at all.
+            return False
+
+        # Only refresh a stash from a credential that is provably this
+        # profile's. This runs on every window refresh, so without the check
+        # merely opening the window while signed in as someone else replaces
+        # a saved token -- no click, no warning, and no copy left anywhere.
+        # Asked about the bytes just read, which are the bytes written below.
+        if not belongs_to(paths, provider, name, platform=platform, blob=live):
             return False
         stashed_path = paths.credentials(provider.id, name)
         if stashed_path.exists() and stashed_path.read_bytes() == live:
