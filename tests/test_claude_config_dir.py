@@ -133,3 +133,95 @@ def test_a_custom_oauth_endpoint_has_its_own_config_file(paths):
 
 def test_without_the_variable_nothing_moves(paths):
     assert claude({}).config_file(home=paths.home) == paths.claude_json
+
+
+# -- found by an independent review of the first version ---------------------
+
+def test_setting_the_variable_to_its_default_still_moves_the_config_file(
+        paths):
+    """CLAUDE_CONFIG_DIR=~/.claude changes nothing for the login, but the
+    config file moves from ~/.claude.json to ~/.claude/.claude.json, which
+    the VS Code extension (no inherited environment) never reads. So it is
+    an override worth a banner."""
+    env = {"CLAUDE_CONFIG_DIR": str(paths.home / ".claude")}
+
+    assert state.config_dir_override(claude(env), home=paths.home,
+                                     env=env) is not None
+
+
+def test_the_migration_files_the_identity_claude_code_is_using(paths):
+    """A non-empty legacy .config.json in the linked profile is what Claude
+    Code reads; ~/.claude.json is stale beside it."""
+    import os
+    from helpers import make_claude_json, make_legacy_profile
+    from shambles import migrate
+
+    make_legacy_profile(paths, "Admin", email="admin@example.test", sessions=5)
+    make_legacy_profile(paths, "Work", email="work@example.test", sessions=2)
+    write_json(paths.legacy_profiles_dir / "Admin" / ".config.json",
+               {"oauthAccount": account("admin@example.test")})
+    make_claude_json(paths, email="stale@example.test")
+    os.symlink(str(paths.legacy_profiles_dir / "Admin"), str(paths.claude_dir),
+               target_is_directory=True)
+
+    migrate.run(paths, now_ms=NOW)
+
+    assert state.profile_email(paths, claude({}), "Admin") == \
+        "admin@example.test"
+
+
+def test_an_unreadable_relocated_config_is_named_in_the_refusal(relocated):
+    from shambles.errors import ShamblesError
+
+    paths, alt, env = relocated
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.test")
+    (alt / ".claude.json").write_text("{not json", encoding="utf-8")
+    (alt / ".credentials.json").write_bytes(
+        paths.credentials("claude", "Work").read_bytes())
+
+    with pytest.raises(ShamblesError) as raised:
+        switcher.switch(paths, claude(env), "Other", platform="linux",
+                        sleep=lambda _: None)
+
+    assert str(alt / ".claude.json") in str(raised.value)
+
+
+def test_the_backup_is_taken_of_the_relocated_config(relocated):
+    paths, alt, env = relocated
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Personal", email="p@example.test")
+    login(paths, alt, "w@example.test", "tok-w")
+    before = (alt / ".claude.json").read_text(encoding="utf-8")
+
+    switcher.switch(paths, claude(env), "Personal", platform="linux",
+                    sleep=lambda _: None)
+
+    backups = sorted(paths.backup_dir.glob("claude.json.*"))
+    assert backups and backups[-1].read_text(encoding="utf-8") == before
+
+
+def test_a_parked_profiles_usage_is_read_from_the_relocated_config(relocated):
+    from shambles import profiles
+
+    paths, alt, env = relocated
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    login(paths, alt, "w@example.test", "tok-w")
+    data = json.loads((alt / ".claude.json").read_text(encoding="utf-8"))
+    data["cachedUsageUtilization"] = {
+        "accountUuid": "uuid-a", "fetchedAtMs": NOW,
+        "utilization": {"five_hour": {"utilization": 61}}}
+    write_json(alt / ".claude.json", data)
+
+    found = profiles.resolve_usage(paths, claude(env), "Work", "Work")
+
+    assert [bar.percent for bar in found.bars] == [61]
+
+
+def test_an_empty_writable_legacy_file_wins_while_the_new_one_is_missing(
+        paths):
+    paths.claude_dir.mkdir()
+    (paths.claude_dir / ".config.json").write_text("", encoding="utf-8")
+
+    assert claude({}).config_file(home=paths.home) == (
+        paths.claude_dir / ".config.json")

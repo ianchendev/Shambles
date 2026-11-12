@@ -363,7 +363,7 @@ def _prepare(paths, plan, base_dir, now_ms):
     # fresher than any sidecar.
     if active:
         live = configjson.extract_account_keys(
-            configjson.load(paths.claude_json))
+            configjson.load(_claude().config_file(home=paths.home)))
         if live.get("oauthAccount"):
             identities[active] = (identities[active][0], live)
 
