@@ -11,7 +11,7 @@ from .. import state
 from .. import switcher
 from .. import usage as usage_mod
 from ..errors import (AlreadyManagedError, ConfigUnreadableError,
-                      ProfileNotFoundError, ShamblesError)
+                      DriftedLoginError, ProfileNotFoundError, ShamblesError)
 from ..stores.base import StoreUnavailableError
 from . import snapshot as snapshot_mod
 from .snapshot import Snapshot
@@ -500,9 +500,17 @@ class ShamblesService:
             code, message, f"{where} Sign in to '{name}' to try again."))
 
     def plan_remove(self, provider_id, name):
+        """Ask before deleting a login, and say what getting it back costs."""
+        try:
+            email = state.profile_email(
+                self.paths, self._provider(provider_id), name)
+        except Exception:
+            email = None
+        who = email or "that account"
         return ActionPlan(
             "remove", provider_id, name, True, f"Remove {name}?",
-            ("The saved login will be removed.",),
+            (f"Its saved login is deleted. Signing {who} back in here will "
+             "need a new verification email.",),
         )
 
     def remove(self, plan):
@@ -523,9 +531,14 @@ class ShamblesService:
     def plan_eject(self):
         plan = eject_mod.survey(
             self.paths, self.providers, platform=self.platform)
+        # What eject does comes first. The survey's summary is written for
+        # after the fact, and shown alone it read as if eject had happened.
         return ActionPlan(
             "eject", None, None, True, "Eject Shambles?",
-            (eject_mod.summary(plan),),
+            ("Shambles will stop managing your accounts. Each provider keeps "
+             "the login it has now and goes back to being an ordinary "
+             "install. Nothing is deleted.",
+             "Afterwards:\n" + eject_mod.summary(plan)),
         )
 
     def eject(self, plan):
@@ -543,11 +556,27 @@ class ShamblesService:
             return self._failure("eject", exc)
 
     def _failure(self, action, exc):
-        code, recovery = ERROR_CODES.get(
-            type(exc), ("operation_refused", "Review the message and retry."))
+        # The nearest mapped class, not only an exact one: a store may raise
+        # something more specific than StoreUnavailableError, and it is still
+        # a store failure with the same way out.
+        code, recovery = next(
+            (ERROR_CODES[cls] for cls in type(exc).__mro__
+             if cls in ERROR_CODES),
+            ("operation_refused", "Review the message and retry."))
         if isinstance(exc, AlreadyManagedError) and action != "remove":
+            # One exception class, four refusals. Only Remove raises it to
+            # mean "this is the active profile"; from anywhere else that code
+            # would tell a client to offer the wrong remedy.
+            code = "operation_refused"
             recovery = "Review the current login and saved accounts before retrying."
-        message = "The login could not be completed." if action == "login" else str(exc)
+        # A login failure is reported in general terms, because a store's
+        # error text carries paths and whatever the OS said. The switcher's
+        # own refusals are the exception: they are written for the user, hold
+        # nothing the snapshot does not already carry, and are the only
+        # place the way out is named.
+        hidden = action == "login" and not isinstance(exc, (
+            AlreadyManagedError, DriftedLoginError, ProfileNotFoundError))
+        message = "The login could not be completed." if hidden else str(exc)
         return self._result(False, action,
                             error=ActionError(code, message, recovery))
 

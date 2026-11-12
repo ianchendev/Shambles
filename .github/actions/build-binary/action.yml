@@ -1,0 +1,108 @@
+name: Build the Shambles binary
+description: >
+  PyInstaller single-file build, the same on every workflow that needs one.
+  Leaves dist/shambles (dist/shambles.exe and dist/shamblesw.exe on Windows).
+  Expects Python and `pip install -e . pyinstaller` to have been done.
+
+# One definition, because there used to be one per workflow and a binary that
+# is tested must be the binary that is shipped. The release workflow and the
+# real-machine workflow both build through here.
+runs:
+  using: composite
+  steps:
+    # --exclude-module PySide6 on every one-file build. The window is built
+    # separately as its own archive; Qt inside this binary would be unpacked
+    # on every launch and add most of a second to commands that never open a
+    # window. The CLI imports the window lazily and hands over to the
+    # installed window when Qt is absent, so excluding it here is what makes
+    # that hand-over happen. Harmless where PySide6 is not installed.
+    #
+    # --windowed only on Windows: it suppresses the console window for a GUI
+    # app there. On Linux it would swallow the --version and --help output,
+    # and on macOS it would produce a .app bundle instead of the single
+    # executable the installers download.
+    #
+    # --add-data is not optional. Provider specs are package data, and
+    # PyInstaller bundles only what it can see imported. Without this the
+    # binary builds green, passes a --version smoke test, and then fails at
+    # runtime the moment it tries to load a provider. macOS takes the same
+    # ':' separator as Linux, so those runners share a step; only Windows'
+    # ';' forces a second copy of the command.
+    #
+    # The second --add-data does the same for the TUI's stylesheet:
+    # ShamblesTUI.CSS_PATH = "theme.tcss" is resolved and read from disk by
+    # Textual at runtime, relative to shambles/app/tui/application.py --
+    # it is not imported, so PyInstaller never sees it on its own. The TUI
+    # is the bare `shambles` command's default frontend on an interactive
+    # terminal, so a binary missing this crashes on startup with a Textual
+    # StylesheetError, while --version/--help stay green because neither
+    # touches Textual.
+    #
+    # If a future PyInstaller/Textual upgrade ever fails to bundle a widget
+    # module Textual only reaches through its lazy `__getattr__`-based
+    # submodule loading (textual.widgets._input, _list_view, etc.) -- i.e.
+    # the binary builds and starts but crashes on first use of some widget
+    # -- try adding --collect-all textual before assuming it's a code bug.
+    - name: Build (Linux, macOS)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        pyinstaller --onefile --name shambles \
+          --exclude-module PySide6 --exclude-module shiboken6 \
+          --add-data "shambles/providers/*.json:shambles/providers" \
+          --add-data "shambles/app/tui/*.tcss:shambles/app/tui" \
+          shambles/__main__.py
+
+    # Two binaries, because one cannot do both jobs. A console-subsystem
+    # program can print; a windowed one cannot, and Python sets its stdout
+    # and stderr to None. 2.1.0 shipped only the windowed build under the
+    # console name, so `shambles --version` printed nothing and then died
+    # on its first write to stderr. shambles.exe is the console one,
+    # shamblesw.exe the windowed twin for desktop shortcuts.
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        pyinstaller --onefile --name shambles `
+          --exclude-module PySide6 --exclude-module shiboken6 `
+          --add-data "shambles/providers/*.json;shambles/providers" `
+          --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
+          shambles/__main__.py
+        pyinstaller --onefile --windowed --name shamblesw `
+          --exclude-module PySide6 --exclude-module shiboken6 `
+          --add-data "shambles/providers/*.json;shambles/providers" `
+          --add-data "shambles/app/tui/*.tcss;shambles/app/tui" `
+          shambles/__main__.py
+
+    # Assert on what a user sees, not on the exit status. An exit-code-only
+    # check is what let a Windows binary ship that printed nothing at all.
+    - name: Smoke-test the binary (Linux, macOS)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        ./dist/shambles --version | grep -E "^shambles [0-9]+\.[0-9]+\.[0-9]+$"
+        ./dist/shambles --help | grep -q "switch"
+
+    - name: Smoke-test the binaries (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # The console build has to actually print. Checking only the exit
+        # code is how 2.1.0 shipped a binary that printed nothing.
+        $out = (& .\dist\shambles.exe --version 2>&1 | Out-String).Trim()
+        Write-Host "--version said: $out"
+        if ($out -notmatch 'shambles \d+\.\d+\.\d+') {
+          Write-Error "--version printed nothing usable"; exit 1
+        }
+        $help = (& .\dist\shambles.exe --help 2>&1 | Out-String)
+        if ($help -notmatch 'switch') {
+          Write-Error "--help printed nothing usable"; exit 1
+        }
+        # The windowed twin has no console by design, so a clean exit is all
+        # there is to check. Before the stream guard it crashed here.
+        $p = Start-Process -FilePath .\dist\shamblesw.exe `
+                           -ArgumentList '--version' -Wait -PassThru
+        if ($p.ExitCode -ne 0) {
+          Write-Error "shamblesw.exe exited $($p.ExitCode)"; exit 1
+        }
+        Write-Host "windowed build exited cleanly"

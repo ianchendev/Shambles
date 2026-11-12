@@ -21,24 +21,53 @@
     "darwin": {
       "kind": "keychain",
       "service_template": "Claude Code{oauth_suffix}-credentials{config_dir_hash}",
-      "oauth_suffix_env": "CLAUDE_CODE_OAUTH_CLIENT_ID",
+      "oauth_suffix_env": "CLAUDE_CODE_CUSTOM_OAUTH_URL",
       "oauth_suffix_when_set": "-custom-oauth",
       "hash_suppress_env": "CLAUDE_SECURESTORAGE_CONFIG_DIR",
       "account_env": "USER",
       "account_fallback": "claude-code-user",
-      "account_pattern": "^[a-zA-Z0-9._-]+$"
+      "account_pattern": "^[a-zA-Z0-9._-]+$",
+      "fallback": {
+        "kind": "file",
+        "path": "{secure_dir}/.credentials.json",
+        "mode": "0600"
+      },
+      "fallback_note": "the vendor's backend is 'keychain-with-plaintext-fallback': when the Keychain refuses a write (locked over SSH) the login goes to the same file Linux uses, and is read from there whenever the Keychain holds nothing"
     },
     "linux": {
       "kind": "file",
-      "path": "{config_dir}/.credentials.json",
+      "path": "{secure_dir}/.credentials.json",
       "mode": "0600"
     },
     "win32": {
       "kind": "credman",
       "service_template": "Claude Code{oauth_suffix}-credentials{config_dir_hash}",
+      "oauth_suffix_env": "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+      "oauth_suffix_when_set": "-custom-oauth",
+      "hash_suppress_env": "CLAUDE_SECURESTORAGE_CONFIG_DIR",
       "account": "claude-code-user",
-      "chunk_size": 2000
+      "chunk_size": 2400,
+      "enabled_by": {
+        "env": "CLAUDE_CODE_FORCE_WINDOWS_CREDMAN",
+        "env_value": "1",
+        "flag": "cachedGrowthBookFeatures.tengu_windows_credman",
+        "flag_files": [
+          "{config_dir}/.config.json",
+          "{config_root}/.claude.json"
+        ],
+        "note": "Credential Manager is a staged rollout, off unless the vendor's cached feature flag or the environment variable says otherwise. With it off the login is the plain file, exactly as on Linux, and the vendor never reads Credential Manager"
+      },
+      "fallback": {
+        "kind": "file",
+        "path": "{secure_dir}/.credentials.json",
+        "mode": "0600"
+      }
     }
+  },
+  "secure_dir": {
+    "env": "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "when_empty": "~/.claude",
+    "note": "where the credentials FILE lives: this variable when set (the default directory when set but empty), otherwise the config directory"
   },
   "liveness": {
     "kind": "field",
@@ -86,18 +115,17 @@
   },
   "provenance": {
     "client_versions": [
-      "2.1.220",
-      "2.1.221",
-      "2.1.222"
+      "2.1.322"
     ],
-    "measured": "2026-08-06",
+    "measured": "2026-11-13",
     "platforms_executed": [
-      "darwin"
-    ],
-    "platforms_from_source_only": [
+      "darwin",
       "linux",
       "win32"
     ],
+    "platforms_from_source_only": [],
+    "executed_how": "the real-machine workflow on GitHub-hosted runners, with made-up credentials and the vendor's own status command as judge: macOS 15 and 26 arm64, macOS 15 x86_64, Windows Server 2022 and 2025 x64, Windows 11 arm64, Ubuntu 22.04 x64 and 24.04 arm64. No real account was used on any of them",
+    "source": "the store layout was read out of the 2.1.322 binaries for win32-x64 and darwin-arm64 (npm @anthropic-ai/claude-code-*), and the Windows target-name mapping out of oven-sh/bun src/jsc/bindings/SecretsWindows.cpp",
     "observed_window_days": 4.0,
     "observed_on_plan": "claude_max (Max 5x)",
     "sample_size": 1

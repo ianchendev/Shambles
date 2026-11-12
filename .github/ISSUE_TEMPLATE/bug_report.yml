@@ -13,9 +13,11 @@ body:
     attributes:
       label: Where are you running Shambles?
       description: >
-        Asked first because it decides almost every answer. Account switching
-        is supported on Linux and inside WSL, unverified on native Windows,
-        and not supported on macOS.
+        Asked first because it decides almost every answer. Linux and WSL are
+        in daily use. macOS and native Windows are checked on CI machines with
+        made-up credentials, and nobody has yet reported a real account there,
+        so a report from either is especially welcome. Please run
+        `shambles doctor` and paste what it prints; it contains no credentials.
       options:
         - Linux
         - WSL (running the Linux build inside WSL)

@@ -608,8 +608,11 @@ class ShamblesTUI(App[str | None]):
         provider, account = self.selected_provider, self.selected_account
         if provider is None or account is None:
             return
+        active = any(a.active for g in self.snapshot.groups
+                     if g.provider == provider for a in g.accounts
+                     if a.name == account)
         self.push_screen(
-            AccountMenu(provider, account),
+            AccountMenu(provider, account, removable=not active),
             lambda choice: self._menu_chosen(provider, account, choice),
         )
 
