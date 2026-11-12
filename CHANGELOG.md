@@ -113,6 +113,13 @@ Notable changes per release. Dates are the tag date.
   the file then overwrites what that program wrote, which could be a token
   Codex or Claude Code had just replaced. A switch that meets a busy file now
   stops before anything has moved and says so; try it again.
+- **A switch no longer loses a Claude login that was being renewed at that
+  moment.** Claude Code replaces its login token every time it renews it,
+  and the old token stops working the instant it is sent. A switch that
+  landed while a renewal was on its way back saved the old token, and Claude
+  Code then threw the new one away because the file had changed under it:
+  the account needed signing in again. Shambles now waits for a renewal in
+  progress to finish, using Claude Code's own lock, before it switches.
 - **A cancelled or failed sign-in in the terminal UI puts you back where you
   were.** Pressing `l` and then Esc, or a sign-in that wrote nothing, left the
   expired account live and the working one signed out, with "The vendor

@@ -345,6 +345,25 @@ class ClaudeProvider:
     def companion_path(self, *, home) -> Path:
         return self.config_file(home=home)
 
+    def refresh_locks(self, *, home) -> list:
+        """The lock directories Claude Code holds while it refreshes, in the
+        order it takes them."""
+        block = self.spec.get("refresh_lock")
+        if not block:
+            return []
+        dir_env = block.get("dir_env", "")
+        if dir_env in self.env:
+            directory = Path(self.env[dir_env] or Path(home) / ".claude")
+        else:
+            directory = specmod.config_dir(self.spec, home=home, env=self.env)
+        try:
+            legacy = Path(os.path.realpath(directory))
+        except OSError:
+            legacy = Path(directory)
+        return [Path(directory) / block["name"],
+                legacy.with_name(legacy.name + block.get("legacy_suffix",
+                                                         ".lock"))]
+
     def has_login(self, blob: bytes | None) -> bool:
         token = specmod.pointer(_parse(blob), self.spec["token"]["pointer"])
         return isinstance(token, str) and bool(token.strip())

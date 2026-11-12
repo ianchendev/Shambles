@@ -791,6 +791,19 @@ untouched since the switch 73 minutes earlier.
 This is a feature as much as a constraint: two accounts can run concurrently in
 different terminals.
 
+### 4.3a A refresh in flight during a switch
+
+Claude Code 2.1.300 refreshes under a lock: it creates
+`<config dir>/.oauth_refresh.lock` and `<config dir>.lock`, re-reads the stored
+login, posts the refresh token (which the server spends at once), and saves
+the result only if the stored refresh token is still the one it posted. A
+switch landing between the post and the save stashed the spent token and
+replaced the stored one, so the save was refused and the new token was lost.
+`switcher.switch` now takes the same locks before it reads the outgoing login
+and releases them once the incoming one is in place (`_hold_refresh_locks`):
+a refresh in flight lands first. A lock untouched for 60 s is cleared as the
+client would; one still held after 15 s refuses the switch with nothing moved.
+
 ### 4.4 Known edge case — the 8-hour access token
 
 **No longer true of current clients.** Claude Code 2.1.300 takes a lock

@@ -239,6 +239,10 @@ class CodexProvider:
 
     # -- what the bytes mean ----------------------------------------------
 
+    def refresh_locks(self, *, home) -> list:
+        """None known: Codex's refresh coordination is not documented."""
+        return []
+
     def has_login(self, blob: bytes | None) -> bool:
         token = specmod.pointer(_parse(blob), self.spec["token"]["pointer"])
         return isinstance(token, str) and bool(token.strip())

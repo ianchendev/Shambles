@@ -258,6 +258,12 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     stamp = now_ms_fn()
     store = _store(paths, provider, platform)
 
+    # The vendor's own refresh lock, held from before the outgoing login is
+    # read until the incoming one is in place. A refresh already in flight
+    # lands first, so the token stashed is the one it was given rather than
+    # the one it just spent. See _hold_refresh_locks.
+    held = _hold_refresh_locks(provider, paths)
+
     # Everything touching the filesystem lives inside one guard, so no path
     # out of here raises a bare OSError. The GUI renders ShamblesError only;
     # anything else reaches the user as a stderr traceback and looks like the
@@ -302,11 +308,79 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
         raise SwitchFailedError(
             f"Could not update the login in {store.describe()}:\n{exc}\n\n"
             "Close any running sessions and try again.") from exc
+    finally:
+        _release(held)
 
     provider.companion_write(
         configjson.read_sidecar(paths.account(provider.id, target_name)),
         home=paths.home)
     return state.inspect(paths, provider, platform=platform)
+
+
+#: How long a switch waits for the vendor to finish a refresh in flight.
+#: Claude Code gives up on its own request after 30 seconds.
+REFRESH_LOCK_WAIT_S = 15.0
+
+REFRESH_IN_PROGRESS = (
+    "Claude Code is renewing this login right now.\n\n"
+    "Try again in a moment. Nothing was changed."
+)
+
+
+def _hold_refresh_locks(provider, paths) -> list:
+    """Take the lock the vendor refreshes under, waiting for it if held.
+
+    Claude Code posts its refresh token, the server spends it at once, and
+    the new one is saved only if the stored token is still the one posted.
+    A switch landing in between stashed the spent token and replaced the
+    stored one, so the save was refused and the new token was lost with the
+    process. Holding the same lock makes a refresh in flight land first.
+
+    A lock not touched for the vendor's stale interval belongs to a client
+    that died; it is cleared, as the vendor itself would. One that is still
+    held after ``REFRESH_LOCK_WAIT_S`` refuses the switch, before anything
+    has moved. A lock that cannot be created at all -- no config directory,
+    nothing to coordinate with -- is skipped.
+    """
+    block = provider.spec.get("refresh_lock") or {}
+    stale_s = block.get("stale_ms", 60_000) / 1000
+    held = []
+    deadline = time.monotonic() + REFRESH_LOCK_WAIT_S
+    try:
+        for lock in provider.refresh_locks(home=paths.home):
+            while True:
+                try:
+                    lock.mkdir()
+                    held.append(lock)
+                    break
+                except FileExistsError:
+                    try:
+                        age = time.time() - lock.stat().st_mtime
+                    except FileNotFoundError:
+                        continue          # released while we looked
+                    if age > stale_s:
+                        try:
+                            lock.rmdir()
+                        except OSError:
+                            pass
+                        continue
+                    if time.monotonic() >= deadline:
+                        raise SwitchFailedError(REFRESH_IN_PROGRESS)
+                    time.sleep(0.05)
+                except OSError:
+                    break                 # nowhere to put it: no client there
+    except BaseException:
+        _release(held)
+        raise
+    return held
+
+
+def _release(held) -> None:
+    for lock in reversed(held):
+        try:
+            lock.rmdir()
+        except OSError:
+            pass
 
 
 def _outgoing_profile(paths, provider, current, *, platform,
