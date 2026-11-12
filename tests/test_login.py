@@ -340,10 +340,14 @@ def test_login_environment_matches_the_provider_context(
         assert "CLAUDE_CODE_FORCE_WINDOWS_CREDMAN" not in child_env
         # The vendor, started with this environment, must resolve to the very
         # store Shambles will read afterwards -- on every platform.
+        # Declared the real home on both sides, so the comparison reaches
+        # the Keychain item name and not just the file path.
+        provider.real_home = paths.home
+        child = providers.load("claude", env=child_env)
+        child.real_home = paths.home
         for platform in ("darwin", "linux", "win32"):
             expected = provider.store(home=paths.home, platform=platform)
-            actual = providers.load("claude", env=child_env).store(
-                home=paths.home, platform=platform)
+            actual = child.store(home=paths.home, platform=platform)
             assert actual == expected
     assert dict(os.environ) == parent_env
 

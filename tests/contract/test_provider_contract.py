@@ -227,6 +227,42 @@ def test_claude_service_name_is_the_same_on_windows_and_macos():
 # -- Claude: which store, on which machine ------------------------------------
 
 
+def _claude_at_home(home, env=None):
+    """Claude, with ``home`` declared to be the user's real home directory.
+
+    The Keychain and Credential Manager are only used for the real home, so
+    a test about them has to say that its temporary directory is one.
+    """
+    provider = providers.load("claude", env=env or {})
+    provider.real_home = home
+    return provider
+
+
+def test_a_scratch_home_never_reaches_the_keychain_or_credential_manager(tmp_path):
+    """``--home /tmp/scratch`` is how the README says to try Shambles without
+    risking a real login. Every file path obeys it, but the Keychain belongs
+    to the user rather than to a directory: looked up on behalf of a scratch
+    home, it is still the one real Keychain, and a switch there overwrote the
+    real login. For any home but the real one, only the file is used -- which
+    is also what Claude Code itself falls back to when HOME points elsewhere.
+    """
+    forced = {"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"}
+    for platform, env in (("darwin", {}), ("win32", forced)):
+        provider = providers.load("claude", env=env)
+        provider.real_home = tmp_path / "the-real-home"
+        store = provider.store(home=tmp_path, platform=platform)
+        assert store == FileStore(tmp_path / ".claude" / ".credentials.json",
+                                  0o600), platform
+
+
+def test_an_unknown_real_home_is_treated_as_a_scratch_one(tmp_path):
+    provider = providers.load("claude", env={})
+    provider.real_home = lambda: None
+    assert isinstance(provider.store(home=tmp_path, platform="darwin"),
+                      FileStore)
+
+
+
 def test_claude_on_macos_layers_the_keychain_over_the_file(tmp_path):
     """The vendor's backend is ``keychain-with-plaintext-fallback``.
 
@@ -234,7 +270,7 @@ def test_claude_on_macos_layers_the_keychain_over_the_file(tmp_path):
     because the Keychain refused the write. A store that only knew about the
     Keychain would call that machine signed out.
     """
-    provider = providers.load("claude", env={})
+    provider = _claude_at_home(tmp_path, {})
     store = provider.store(home=tmp_path, platform="darwin")
     assert isinstance(store, FallbackStore)
     assert isinstance(store.primary, KeychainStore)
@@ -250,14 +286,13 @@ def test_claude_on_windows_is_the_file_unless_credman_is_switched_on(tmp_path):
     where nothing looked, spliced the new identity into ``.claude.json``, and
     reported success -- the old token under the new account's name.
     """
-    provider = providers.load("claude", env={})
+    provider = _claude_at_home(tmp_path, {})
     store = provider.store(home=tmp_path, platform="win32")
     assert store == FileStore(tmp_path / ".claude" / ".credentials.json", 0o600)
 
 
 def test_claude_on_windows_uses_credman_when_the_environment_forces_it(tmp_path):
-    provider = providers.load(
-        "claude", env={"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"})
+    provider = _claude_at_home(tmp_path, {"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"})
     store = provider.store(home=tmp_path, platform="win32")
     assert isinstance(store, FallbackStore)
     assert isinstance(store.primary, CredmanStore)
@@ -270,8 +305,7 @@ def test_claude_on_windows_uses_credman_when_the_environment_forces_it(tmp_path)
 @pytest.mark.parametrize("value", ["0", "true", ""])
 def test_only_the_exact_value_forces_credman(tmp_path, value):
     """The vendor compares against the string ``"1"`` and nothing else."""
-    provider = providers.load(
-        "claude", env={"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": value})
+    provider = _claude_at_home(tmp_path, {"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": value})
     assert isinstance(provider.store(home=tmp_path, platform="win32"),
                       FileStore)
 
@@ -284,7 +318,7 @@ def _flag(on):
 def test_claude_on_windows_uses_credman_when_the_vendors_flag_is_on(tmp_path):
     """The rollout flag, read from the file the vendor reads it from."""
     (tmp_path / ".claude.json").write_text(_flag(True), encoding="utf-8")
-    provider = providers.load("claude", env={})
+    provider = _claude_at_home(tmp_path, {})
     store = provider.store(home=tmp_path, platform="win32")
     assert isinstance(store, FallbackStore)
     assert isinstance(store.primary, CredmanStore)
@@ -298,7 +332,7 @@ def test_anything_but_a_true_flag_leaves_windows_on_the_file(tmp_path, content):
     """Guessing "on" is the dangerous direction: with the flag off the vendor
     never looks at Credential Manager."""
     (tmp_path / ".claude.json").write_text(content, encoding="utf-8")
-    provider = providers.load("claude", env={})
+    provider = _claude_at_home(tmp_path, {})
     assert isinstance(provider.store(home=tmp_path, platform="win32"),
                       FileStore)
 
@@ -309,7 +343,7 @@ def test_the_legacy_config_file_outranks_claude_json_for_the_flag(tmp_path):
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / ".config.json").write_text("{}", encoding="utf-8")
     (tmp_path / ".claude.json").write_text(_flag(True), encoding="utf-8")
-    provider = providers.load("claude", env={})
+    provider = _claude_at_home(tmp_path, {})
     assert isinstance(provider.store(home=tmp_path, platform="win32"),
                       FileStore)
 
@@ -319,7 +353,7 @@ def test_the_flag_is_read_from_the_config_directory_when_one_is_set(tmp_path):
     alt = tmp_path / "alt"
     alt.mkdir()
     (alt / ".claude.json").write_text(_flag(True), encoding="utf-8")
-    provider = providers.load("claude", env={"CLAUDE_CONFIG_DIR": str(alt)})
+    provider = _claude_at_home(tmp_path, {"CLAUDE_CONFIG_DIR": str(alt)})
     store = provider.store(home=tmp_path, platform="win32")
     assert isinstance(store, FallbackStore)
     assert store.fallback.path == alt / ".credentials.json"
@@ -327,8 +361,7 @@ def test_the_flag_is_read_from_the_config_directory_when_one_is_set(tmp_path):
 
 def test_the_flag_never_switches_the_store_off_windows(tmp_path):
     (tmp_path / ".claude.json").write_text(_flag(True), encoding="utf-8")
-    provider = providers.load(
-        "claude", env={"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"})
+    provider = _claude_at_home(tmp_path, {"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"})
     assert isinstance(provider.store(home=tmp_path, platform="linux"),
                       FileStore)
     assert isinstance(

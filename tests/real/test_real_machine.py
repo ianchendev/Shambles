@@ -431,6 +431,9 @@ class Machine:
         self.provider = providers.load(provider_id,
                                        env=base_env(**self.env))
         self.home = Path(home) if home is not None else Path.home()
+        # The Shambles process is started with this as its home, so to it
+        # this *is* the real one; say the same in-process.
+        self.provider.real_home = self.home
         self.paths = Paths.for_home(self.home)
         self.blobs = blobs
         self.accounts = accounts or {}
@@ -683,6 +686,11 @@ def odd_home(tmp_path):
     return home
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="a Mac's Keychain is found through the real home directory, so "
+           "pointing HOME elsewhere hides it from Claude Code itself; an "
+           "oddly named home cannot be staged without creating a user")
 def test_claude_in_a_home_directory_with_spaces_and_non_ascii_characters(
         machine, odd_home):
     """Windows profile folders are named after people. A store path built by
@@ -874,6 +882,54 @@ def test_a_mac_process_with_no_user_variable_still_finds_the_login(machine):
     stray = KeychainStore(service="Claude Code-credentials",
                           account="claude-code-user")
     assert stray.read() is None, "a second Keychain item was created"
+
+
+SCRATCH_MODES = []
+if sys.platform == "darwin":
+    SCRATCH_MODES.append(pytest.param({}, id="keychain"))
+if sys.platform == "win32":
+    SCRATCH_MODES.append(pytest.param(
+        {"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"}, id="credman forced"))
+
+
+@pytest.mark.skipif(not SCRATCH_MODES,
+                    reason="only a Keychain or Credential Manager can be "
+                           "reached from outside a scratch home")
+@pytest.mark.parametrize("env", SCRATCH_MODES)
+def test_a_scratch_home_leaves_the_real_login_alone(machine, tmp_path, env):
+    """``shambles --home <dir>`` is how the README says to try the tool
+    safely. The Keychain is not under any directory, so a switch made for a
+    scratch home used to land in the real one.
+
+    A login is placed in the real store, a switch is made for a scratch
+    home, and the vendor is asked who is signed in: still the first account.
+    """
+    blobs = {"CI-A": claude_blob("a"), "CI-B": claude_blob("b")}
+    accounts = {"CI-A": claude_account("a"), "CI-B": claude_account("b")}
+    real = machine("claude", {"CI-A": blobs["CI-A"]}, env=env,
+                   accounts={"CI-A": accounts["CI-A"]})
+    real.seed("CI-A")
+    signed_in, said = claude_status(vendor_env(**env))
+    assert signed_in and said.get("email") == "a@example.test"
+
+    scratch = tmp_path / "scratch home"
+    scratch.mkdir()
+    paths = Paths.for_home(scratch)
+    for name, blob in blobs.items():
+        paths.ensure_profile("claude", name)
+        FileStore(paths.credentials("claude", name)).write(blob)
+    FileStore(scratch / ".claude" / ".credentials.json").write(blobs["CI-A"])
+    paths.active_marker("claude").write_text("CI-A\n", encoding="utf-8")
+
+    done = shambles("switch", "claude", "CI-B", "--home", str(scratch), "--json",
+                    env=base_env(**env))
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (scratch / ".claude" / ".credentials.json").read_bytes() == blobs["CI-B"]
+
+    assert real.store().read() == blobs["CI-A"], (
+        "a switch made for a scratch home changed the real login")
+    signed_in, said = claude_status(vendor_env(**env))
+    assert signed_in and said.get("email") == "a@example.test"
 
 
 # -- 5. last, because it rearranges the runner's keychains --------------------

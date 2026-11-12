@@ -185,10 +185,22 @@ def gate_open(spec: dict, gate: dict | None, *, home, env) -> bool:
     return specmod.pointer(data, gate.get("flag", "")) is True
 
 
+def _system_home() -> Path | None:
+    """The home directory this process really has, or ``None`` if unknown."""
+    try:
+        return Path.home()
+    except (RuntimeError, OSError):
+        return None
+
+
 class ClaudeProvider:
-    def __init__(self, spec=None, env=None):
+    def __init__(self, spec=None, env=None, real_home=_system_home):
         self.spec = spec if spec is not None else specmod.load("claude")
         self.env = os.environ if env is None else env
+        #: Answers "which directory is this user's actual home". Injected so
+        #: a test can declare its temporary directory to be the real one;
+        #: nothing else should replace it.
+        self.real_home = real_home
 
     # -- identification ---------------------------------------------------
 
@@ -230,6 +242,9 @@ class ClaudeProvider:
         On Windows the file -- unless Credential Manager has been switched on
         for this account, in which case Credential Manager layered over the
         file. See :class:`~shambles.stores.FallbackStore` for the layering.
+
+        For a ``home`` that is not the user's real one, always the file:
+        see :meth:`_is_real_home`.
         """
         block = specmod.store_block(self.spec, platform)
         primary = self._single_store(block, home=home)
@@ -238,10 +253,38 @@ class ClaudeProvider:
             return primary
 
         plain = self._single_store(fallback, home=home)
+        if not self._is_real_home(home):
+            return plain
         if not gate_open(self.spec, block.get("enabled_by"),
                          home=home, env=self.env):
             return plain
         return FallbackStore(primary, plain)
+
+    def _is_real_home(self, home) -> bool:
+        """Whether ``home`` is the home directory of the user running this.
+
+        The Keychain and the Credential Manager belong to the *user*, not to
+        a directory. ``shambles --home /tmp/scratch`` exists so the program
+        can be tried without risking a real login, and every file path obeys
+        it -- but a Keychain lookup made on behalf of a scratch home still
+        lands in the one real Keychain. So for any home but the real one,
+        only the file is used.
+
+        That is also what the vendor does: run with ``HOME`` pointed
+        elsewhere, Claude Code's Keychain lookup finds nothing and it falls
+        back to the file under that home.
+
+        Unknown is treated as "not real". The cost is a file where a
+        Keychain item was wanted; the alternative is a guess that overwrites
+        somebody's login.
+        """
+        actual = self.real_home() if callable(self.real_home) else self.real_home
+        if actual is None:
+            return False
+        try:
+            return Path(home).expanduser().resolve() == Path(actual).resolve()
+        except OSError:
+            return False
 
     def _single_store(self, block: dict, *, home):
         config = specmod.config_dir(self.spec, home=home, env=self.env)
