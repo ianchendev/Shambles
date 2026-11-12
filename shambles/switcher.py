@@ -14,7 +14,7 @@ import sys
 import time
 from dataclasses import dataclass
 
-from . import configjson, migrate, profiles, retry, state
+from . import configjson, migrate, profiles, state
 from .errors import (AlreadyManagedError, DriftedLoginError,
                      ProfileNotFoundError, ShamblesError, SwitchFailedError)
 from .providers import SIGNED_OUT
@@ -67,6 +67,13 @@ def _refuse_legacy_layout(paths) -> None:
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+# ``sleep`` is still accepted by the functions below and no longer used. It
+# fed a retry wrapper that was removed (owner decision D5): a retried write
+# waits out whatever held the file and then overwrites what that program
+# wrote, from a copy taken before the wait -- a rotated token, if the program
+# was the vendor. Kept in the signatures so existing callers need no change.
 
 
 def _store(paths, provider, platform):
@@ -169,7 +176,7 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
     inherits it -- this write is the one that costs a refresh token.
     """
     store = _store(paths, provider, platform)
-    blob = retry.with_retry(store.read, f"read {store.describe()}", sleep=sleep)
+    blob = store.read()
     if not blob:
         # Nobody is signed in, so there is nothing to file and no login for
         # an identity to describe: whatever the vendor's config names is left
@@ -215,15 +222,8 @@ def _write_credential(paths, provider, name, blob: bytes, *, sleep) -> None:
 
     Through :func:`profiles.save_credential`, which keeps the login it
     replaces.
-
-    Retried: a running session, an antivirus scan or the Windows indexer can
-    hold the file for a moment, and a single refusal is not a reason to fail
-    the whole switch.
     """
-    retry.with_retry(lambda: profiles.save_credential(paths, provider, name,
-                                                      blob),
-                     f"write {paths.credentials(provider.id, name).name}",
-                     sleep=sleep)
+    profiles.save_credential(paths, provider, name, blob)
 
 
 def switch(paths, provider, target_name: str, *, platform=sys.platform,
@@ -264,9 +264,7 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     # switch silently did nothing.
     try:
         if companion_path is not None:
-            retry.with_retry(
-                lambda: configjson.backup(companion_path, paths.backup_dir, stamp),
-                f"back up {companion_path.name}", sleep=sleep)
+            configjson.backup(companion_path, paths.backup_dir, stamp)
 
         # Stash the outgoing login so switching away is never lossy, except
         # under a profile other than the marked one that already holds these
@@ -282,13 +280,11 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
 
         incoming = paths.credentials(provider.id, target_name)
         if incoming.exists():
-            blob = incoming.read_bytes()
-            retry.with_retry(lambda: store.write(blob),
-                             f"write {store.describe()}", sleep=sleep)
+            store.write(incoming.read_bytes())
         else:
             # A profile never signed into: clear the login so the vendor
             # prompts for one rather than reusing the last account.
-            retry.with_retry(store.delete, f"clear {store.describe()}", sleep=sleep)
+            store.delete()
 
         # The marker moves with the login, not after the identity write.
         # Anything that fails below leaves the two still agreeing: the marked
