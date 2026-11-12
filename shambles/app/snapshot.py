@@ -13,8 +13,10 @@ Reads through the same :mod:`shambles.profiles` and :mod:`shambles.state` the
 window uses, so the panel and the window cannot disagree about what is on disk.
 """
 
+import datetime
 from dataclasses import dataclass, field
 
+from .. import login as login_mod
 from .. import profiles as profiles_mod
 from .. import state as state_mod
 from .. import switcher
@@ -47,6 +49,9 @@ class Window:
     resets_label: str | None = None
     age_label: str | None = None
     stale: bool = False
+    #: ``ok``, ``soon`` or ``gone``: which colour the bar is. Decided here so
+    #: the 80% rule in :mod:`shambles.usage` has one implementation.
+    severity: str = "ok"
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,11 @@ class Account:
     needs_login: bool = False
     login_hint: str | None = None
     usage: list = field(default_factory=list)
+    #: When the saved login stops working, if the credential says. DD-1 keeps
+    #: this off an account's face; it is here for a details view to format.
+    expires_at_ms: int | None = None
+    #: The one or two words for a state that needs the user, else None.
+    status_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +101,12 @@ class Group:
     #: A live login no saved account holds, which saving would keep.
     can_save: bool = False
     notices: list = field(default_factory=list)
+    #: Whether the vendor's own CLI is there to run. Without it nothing can
+    #: be signed in or added, though switching between saved accounts still
+    #: works, so a frontend disables those two rather than letting them fail.
+    can_sign_in: bool = False
+    #: The command a sign-in runs, to name in that explanation.
+    cli: str = ""
 
 
 @dataclass(frozen=True)
@@ -142,12 +158,16 @@ def _group(paths, provider, *, platform: str, now_ms: int) -> Group:
             # account is noise a shell would then have to decide to hide.
             login_hint=provider.login_hint() if lapsed else None,
             usage=_windows(profile, now_ms=now_ms),
+            expires_at_ms=profile.liveness.expires_at_ms,
+            status_label=profiles_mod.expiry_label(profile),
         ))
     return Group(provider.id, provider.display_name, surfaces, accounts,
                  state=current.kind, live_email=current.live_email,
                  can_save=can_save,
                  notices=_notices(paths, provider, current, owner=owner,
-                                  can_save=can_save, unreadable=unreadable))
+                                  can_save=can_save, unreadable=unreadable),
+                 can_sign_in=login_mod.available(provider),
+                 cli=login_mod.binary(provider))
 
 
 def _store_error(paths, provider, *, platform):
@@ -241,10 +261,28 @@ def _windows(profile, *, now_ms: int) -> list:
         return []
     stale = usage.is_stale(now_ms)
     return [Window(bar.label, bar.percent,
+                   resets_at_ms=_epoch_ms(bar.resets_at),
                    resets_label=bar.resets_label(),
                    age_label=usage.age_label(now_ms),
-                   stale=stale)
+                   stale=stale,
+                   severity=bar.display_severity)
             for bar in usage.bars]
+
+
+def _epoch_ms(iso) -> int | None:
+    """An ISO timestamp as epoch milliseconds, or None if it is not one.
+
+    Whatever the vendor cached, unvalidated: a value that does not parse is
+    simply a window with no known reset, the same reading
+    :meth:`shambles.usage.Bar.resets_label` gives it.
+    """
+    if not isinstance(iso, str) or not iso:
+        return None
+    try:
+        when = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return int(when.timestamp() * 1000)
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def to_dict(snapshot: Snapshot) -> dict:
@@ -258,6 +296,8 @@ def to_dict(snapshot: Snapshot) -> dict:
                 "state": group.state,
                 "live_email": group.live_email,
                 "can_save": group.can_save,
+                "can_sign_in": group.can_sign_in,
+                "cli": group.cli,
                 "notices": [{"code": n.code, "message": n.message,
                              "remedy": n.remedy, "account": n.account}
                             for n in group.notices],
@@ -273,6 +313,8 @@ def to_dict(snapshot: Snapshot) -> dict:
                         "state": a.state,
                         "needs_login": a.needs_login,
                         "login_hint": a.login_hint,
+                        "expires_at_ms": a.expires_at_ms,
+                        "status_label": a.status_label,
                         "usage": [
                             {
                                 "label": w.label,
@@ -281,6 +323,7 @@ def to_dict(snapshot: Snapshot) -> dict:
                                 "resets_label": w.resets_label,
                                 "age_label": w.age_label,
                                 "stale": w.stale,
+                                "severity": w.severity,
                             }
                             for w in a.usage
                         ],

@@ -5,8 +5,11 @@ import threading
 
 from .. import eject as eject_mod
 from .. import login
+from .. import migrate as migrate_mod
+from .. import settings as settings_mod
 from .. import state
 from .. import switcher
+from .. import usage as usage_mod
 from ..errors import (AlreadyManagedError, ConfigUnreadableError,
                       ProfileNotFoundError, ShamblesError)
 from ..stores.base import StoreUnavailableError
@@ -64,6 +67,20 @@ class ActionResult:
                          if self.snapshot else None),
             "error": (asdict(self.error) if self.error else None),
         }
+
+
+@dataclass(frozen=True)
+class MigrationNotice:
+    """What a startup migration did, for a frontend to show once.
+
+    Migrations are not offered as a choice, so the notice is the only moment
+    the user learns anything moved. ``ok`` False means it could not run and
+    ``message`` says why; the old layout is then still in place.
+    """
+
+    code: str
+    message: str
+    ok: bool = True
 
 
 class LoginHandle:
@@ -174,7 +191,92 @@ class ShamblesService:
                                       platform=self.platform)
             switcher.restash_active(
                 self.paths, provider, platform=self.platform)
+            # The account in use only otherwise learns its figures at the
+            # moment it is switched away from. A no-op unless the vendor's
+            # cache provably belongs to the marked profile.
+            usage_mod.capture_live(
+                self.paths, provider.id,
+                state.read_active(self.paths, provider.id),
+                now_ms=self.clock_ms())
         return self._result(True, "refresh")
+
+    def forget_marker(self, provider_id):
+        """Clear a marker that names a profile no longer on disk.
+
+        Moves no credential. What is live stays live and, if nobody saved
+        holds it, stays on offer to be saved.
+        """
+        try:
+            switcher.forget_active_marker(self.paths,
+                                          self._provider(provider_id))
+            return self._result(True, "forget_marker")
+        except ShamblesError as exc:
+            return self._failure("forget_marker", exc)
+
+    def run_migrations(self):
+        """Bring an older store up to date, and say what was done.
+
+        Unprompted, for the reason the Tk window gives: the old layouts
+        either hid session history or cannot hold a second provider, and
+        neither is something anyone would choose to keep. Both steps are
+        additive, so there is nothing to undo.
+
+        Returns one :class:`MigrationNotice` per step that ran or could not;
+        an up-to-date home returns none. Never raises a
+        :class:`~shambles.errors.ShamblesError`: a migration that cannot run
+        is a reason to say so, not to refuse the window.
+        """
+        notices = []
+        if migrate_mod.needed(self.paths):
+            try:
+                plan = migrate_mod.run(self.paths, now_ms=self.clock_ms())
+            except ShamblesError as exc:
+                notices.append(MigrationNotice(
+                    "history_merge_failed", str(exc), ok=False))
+            else:
+                others = ", ".join(plan.others) or "the other profiles"
+                notices.append(MigrationNotice(
+                    "history_merged",
+                    "Your session history was split across accounts and has "
+                    f"been merged. {plan.merged_files} files were brought "
+                    f"over from {others} into one shared ~/.claude, so every "
+                    "account can now see every session and switching will "
+                    "not hide them again. Nothing was deleted. The old "
+                    "copies are still on disk if you want to check them."))
+        if migrate_mod.store_migration_needed(self.paths):
+            try:
+                moved = migrate_mod.migrate_store(self.paths)
+            except ShamblesError as exc:
+                notices.append(MigrationNotice(
+                    "store_move_failed", str(exc), ok=False))
+            else:
+                if moved.profiles:
+                    notices.append(MigrationNotice(
+                        "store_moved",
+                        f"Your profiles moved to {moved.dest}. "
+                        f"{len(moved.profiles)} account(s) are now filed "
+                        "under the provider they belong to, which is what "
+                        "lets Shambles hold Codex accounts alongside Claude "
+                        f"ones. Nothing was deleted. The old {moved.source} "
+                        "is still there, and you can remove it once you are "
+                        "satisfied."))
+        return tuple(notices)
+
+    def window_theme(self):
+        """``system``, ``light`` or ``dark``: what the window should draw in."""
+        return settings_mod.window_theme(self.paths)
+
+    def set_window_theme(self, theme):
+        try:
+            settings_mod.set_window_theme(self.paths, theme)
+        except ValueError as exc:
+            return ActionResult(False, "set_window_theme", error=ActionError(
+                "invalid_setting", str(exc)))
+        except OSError as exc:
+            return ActionResult(False, "set_window_theme", error=ActionError(
+                "unwritable",
+                f"Could not save the theme: {exc.strerror or exc}."))
+        return ActionResult(True, "set_window_theme")
 
     def sign_in_url(self, line):
         """The sign-in address in one progress line, or None.
