@@ -47,6 +47,12 @@ Notable changes per release. Dates are the tag date.
   Shambles believe the move out of `~/.claude-profiles` had already happened.
   The window then opened with no Claude accounts and never looked again. The
   move now counts as done only once the Claude accounts are in the new store.
+- **Moving accounts saved with 1.0 into the new store now finishes on the
+  next start if it was cut short.** A full disk or a crash partway through
+  the copy left the new store looking complete with some accounts missing,
+  and nothing tried again. The copy is now put in place in one step once all
+  of it has succeeded, and a failure is shown in a dialog instead of a
+  traceback.
 
 ## 2.1.2 - 2026-09-11
 

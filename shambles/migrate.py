@@ -18,6 +18,7 @@ to remove once satisfied.
 
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -336,6 +337,14 @@ def _file_profile(paths, name, creds, account, now_ms) -> None:
 #: Files a v1.0 profile could hold. Anything else in there was not ours.
 V1_PROFILE_FILES = (CREDENTIALS_NAME, ACCOUNT_NAME)
 
+#: What the directories a v1.0 store is assembled in are called, inside
+#: ``~/.shambles``, until one is renamed to ``claude``. Hidden, so nothing
+#: lists one as a provider or a profile. Each run makes its own with a unique
+#: suffix: two windows opening at once would otherwise share one, and the
+#: second clearing "the leftover" would empty the copy the first is about to
+#: rename into place.
+STAGING_PREFIX = f".{V1_PROVIDER}.migrating."
+
 
 @dataclass
 class StorePlan:
@@ -373,22 +382,64 @@ def migrate_store(paths) -> StorePlan:
 
     Never overwrites: a file already present in the new store wins, which is
     what makes running this twice a no-op.
+
+    ``~/.shambles/claude`` existing is what :func:`store_migration_needed`
+    reads as "done", so it must never exist half-made. When it is not there
+    yet the copy is assembled in a hidden staging directory beside it and
+    renamed into place as the last step: a run that fails or dies before then
+    leaves no provider directory, and the next start begins again. When it is
+    already there the copy is made in place, as it always was.
     """
     plan = StorePlan(source=paths.legacy_profiles_dir,
                      dest=paths.library_dir)
     if not paths.legacy_profiles_dir.is_dir():
         return plan
 
-    paths.ensure_provider(V1_PROVIDER)
+    staging = None
+    try:
+        if paths.provider_dir(V1_PROVIDER).exists():
+            _copy_store(paths, V1_PROVIDER, plan)
+        else:
+            paths.ensure_store()
+            staging = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX,
+                                            dir=paths.library_dir))
+            _copy_store(paths, staging.name, plan)
+            staging.rename(paths.provider_dir(V1_PROVIDER))
+    except OSError as exc:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+        # Only promised when it is true: the window asks again exactly when
+        # the provider directory is still missing.
+        again = (" Shambles will try again the next time it starts."
+                 if store_migration_needed(paths) else "")
+        raise MigrationError(
+            f"Your saved accounts could not be moved to {plan.dest}:\n{exc}"
+            f"\n\nNothing was deleted. The old store is still at "
+            f"{plan.source}.{again}") from exc
+
+    if staging is not None:
+        _clear_staging(paths)
+    return plan
+
+
+def _copy_store(paths, provider_id: str, plan: StorePlan) -> None:
+    """Copy the v1.0 profiles, marker and backups, filling in ``plan``.
+
+    ``provider_id`` names the directory inside ``~/.shambles`` the profiles
+    go under: the Claude provider itself for a copy in place, or a staging
+    directory. Either way the :class:`Paths` helpers build the same layout
+    beneath it, owner-only. Never overwrites.
+    """
+    paths.ensure_provider(provider_id)
 
     for entry in sorted(paths.legacy_profiles_dir.iterdir()):
         if not entry.is_dir() or entry.name.startswith("."):
             continue
-        paths.ensure_profile(V1_PROVIDER, entry.name)
+        paths.ensure_profile(provider_id, entry.name)
         plan.profiles.append(entry.name)
         for filename in V1_PROFILE_FILES:
             source = entry / filename
-            dest = paths.profile_dir(V1_PROVIDER, entry.name) / filename
+            dest = paths.profile_dir(provider_id, entry.name) / filename
             if source.is_file() and not dest.exists():
                 shutil.copy2(source, dest)
                 _lock_down(dest)
@@ -401,10 +452,14 @@ def migrate_store(paths) -> StorePlan:
         marked = paths.legacy_active_marker.read_text(encoding="utf-8").strip() or None
     if marked in plan.profiles:
         plan.active = marked
-        if not paths.active_marker(V1_PROVIDER).exists():
-            paths.active_marker(V1_PROVIDER).write_text(
+        if not paths.active_marker(provider_id).exists():
+            paths.active_marker(provider_id).write_text(
                 marked + "\n", encoding="utf-8")
+            _lock_down(paths.active_marker(provider_id))
 
+    # Not inside the provider directory, so not staged. Copied before the
+    # caller's rename all the same: the provider directory appearing has to
+    # mean these came across too, or a failure here would never be retried.
     if paths.legacy_backup_dir.is_dir():
         paths.backup_dir.mkdir(parents=True, exist_ok=True)
         for snapshot in sorted(paths.legacy_backup_dir.glob("claude.json.*")):
@@ -413,7 +468,24 @@ def migrate_store(paths) -> StorePlan:
                 shutil.copy2(snapshot, dest)
                 plan.backups += 1
 
-    return plan
+
+def _clear_staging(paths) -> None:
+    """Remove staging directories left behind by runs that died.
+
+    Called once this run's own copy is in place, and not before. A leftover
+    cannot be told from the staging directory of a second window that is
+    still copying, and clearing that one first would let it rename a
+    directory with accounts missing into place. Afterwards it is harmless:
+    a rename cannot replace a directory that holds anything, so with the
+    provider directory in place the other run fails instead of committing.
+    Best effort, because the migration has already succeeded.
+    """
+    try:
+        leftovers = list(paths.library_dir.glob(STAGING_PREFIX + "*"))
+    except OSError:
+        return
+    for leftover in leftovers:
+        shutil.rmtree(leftover, ignore_errors=True)
 
 
 def _lock_down(path: Path) -> None:
