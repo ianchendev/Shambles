@@ -23,6 +23,50 @@ Notable changes per release. Dates are the tag date.
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.
+- **A `~/.claude` you symlinked yourself is no longer mistaken for the old
+  Shambles layout.** With `~/.claude` linked from a dotfiles checkout or
+  another drive, every Claude switch was refused with "still a symlink from
+  an older version of Shambles". If an old `~/.claude-profiles` folder was
+  still on disk as well, opening the window removed your link and put one of
+  that folder's profiles in its place. Only a link that points at a profile
+  inside `~/.claude-profiles` is converted now. Any other link is left exactly
+  as it is, and switching works through it.
+- **Converting the old layout no longer signs you in as a different
+  account.** `~/.claude` became the folder of whichever profile had the most
+  history, with that profile's login inside it, while Shambles went on
+  showing the profile you had been using as the active one. The next switch
+  then saved that login over the wrong profile and its own token was gone.
+  You now stay signed in as the account you were using.
+- **Converting the old layout, where `~/.claude` was a link to one profile's
+  folder, now finishes on the next start if it was cut short.** A full disk
+  or a crash partway through used to leave `~/.claude` converted while the
+  other accounts' logins were never copied into the new store. Nothing tried
+  again, so those accounts came back as empty profiles and each one needed a
+  new verification email. Every login is now saved before `~/.claude` is
+  touched, so an attempt that fails leaves the old layout in place and the
+  next start completes it. The failure is shown in a dialog instead of a
+  traceback, and a login already saved in the new store is never replaced by
+  the older copy from the old folder. Session and history files are copied
+  in one step each, so a full disk can no longer leave a cut-off file or an
+  emptied prompt history behind.
+- **Accounts saved with 1.0 are no longer left behind when something else
+  created `~/.shambles` first.** Running `shambles config set update.check
+  true` before the window had opened once, or saving a Codex account, made
+  Shambles believe the move out of `~/.claude-profiles` had already happened.
+  The window then opened with no Claude accounts and never looked again. The
+  move now counts as done only once the Claude accounts are in the new store.
+- **Moving accounts saved with 1.0 into the new store now finishes on the
+  next start if it was cut short.** A full disk or a crash partway through
+  the copy left the new store looking complete with some accounts missing,
+  and nothing tried again. The copy is now put in place in one step once all
+  of it has succeeded, and a failure is shown in a dialog instead of a
+  traceback. An old settings snapshot that cannot be copied no longer holds
+  the accounts back.
+- A prompt history file or an old active marker that is not valid text (the
+  last line cut short by a crash, for instance) no longer stops either
+  conversion, which used to fail the same way at every start. A history
+  entry containing a Unicode line separator is no longer split in two when
+  histories are merged.
 - A sign-in that Shambles refuses to start now says why in the terminal
   interface (for instance, that you are signed in as a different account),
   instead of only "The login could not be completed."
