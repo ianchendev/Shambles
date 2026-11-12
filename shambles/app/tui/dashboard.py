@@ -22,12 +22,14 @@ FULL_FOOTER = (
     "j/k move · ⏎ switch · a add · x eject · m menu · "
     "l login · r refresh · ? help · q quit"
 )
-COMPACT_FOOTER = "⏎ switch · a add · x eject · m menu · ? help · q quit"
+# Eject gives way to login at this width: it is rare, still listed under ?,
+# and l is the only key that fixes an account that needs a login.
+COMPACT_FOOTER = "⏎ switch · l login · a add · m menu · ? help · q quit"
 FULL_FOOTER_ASCII = (
     "j/k move | Enter switch | a add | x eject | m menu | "
     "l login | r refresh | ? help | q quit"
 )
-COMPACT_FOOTER_ASCII = "Enter switch | a add | x eject | m menu | ? help | q quit"
+COMPACT_FOOTER_ASCII = "Enter switch | l login | a add | m menu | ? help | q quit"
 
 
 def _paint_footer(text: str) -> str:
