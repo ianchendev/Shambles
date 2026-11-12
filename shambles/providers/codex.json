@@ -67,7 +67,9 @@
       "pointer": "last_refresh",
       "unit": "rfc3339",
       "stale_after_days": 8
-    }
+    },
+    "renewed_by_use": true,
+    "renewed_by_use_note": "the date is the access token's expiry, which Codex replaces when it refreshes, so an account in use moves it on. Inferred from the client's documented behaviour, not measured."
   },
   "identity": {
     "kind": "jwt",

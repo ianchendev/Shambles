@@ -100,6 +100,13 @@ Notable changes per release. Dates are the tag date.
   and the ChatGPT account (Codex) now count too, the warning names them when
   the addresses match, and usage figures from the other organisation are no
   longer filed under this one.
+- **Claude accounts no longer claim that using them renews their login.** A
+  Claude login lasts about 30 days from when you signed in, and using the
+  account does not push that date back: Claude Code refreshes the token, but
+  the deadline stays where it was. The tooltip said "Using the account renews
+  it", and the documentation said an account in daily use never needs signing
+  in again. Both are corrected, and a Claude card now turns `soon` with fewer
+  than four days left instead of one, a day before Claude Code's own warning.
 - **A cancelled or failed sign-in in the terminal UI puts you back where you
   were.** Pressing `l` and then Esc, or a sign-in that wrote nothing, left the
   expired account live and the working one signed out, with "The vendor

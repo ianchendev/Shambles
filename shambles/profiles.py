@@ -104,6 +104,21 @@ def needs_login(profile: Profile) -> bool:
     return profile.liveness.state in NEEDS_LOGIN
 
 
+def renewed_by_use(profile: Profile) -> bool:
+    """Whether using the account moves its expiry date back on its own.
+
+    True for Codex, whose date is an access token it replaces when used.
+    False for Claude: its date is a deadline fixed at sign-in, which only a
+    new sign-in moves, whatever the account is used for in between.
+    """
+    from .providers import spec as specmod
+    try:
+        block = specmod.load(profile.provider).get("liveness") or {}
+    except (OSError, ValueError):
+        return False
+    return bool(block.get("renewed_by_use"))
+
+
 def list_profile_names(paths, provider_id: str) -> list[str]:
     """Profile directories, case-insensitively sorted for display."""
     return sorted(state.profile_names(paths, provider_id), key=str.casefold)
@@ -152,12 +167,11 @@ def resolve_liveness(paths, provider, name: str, blob, *, active: bool,
     """How much of its refresh window one profile has left.
 
     The active profile's truth is in the live credential, not in our stash.
-    A rolling window is re-minted on every use and written to the live
+    The vendor refreshes it on use and writes the result to the live
     location only; the stash keeps whatever it held when the profile was last
-    switched away from or first saved, and ``restash_active`` deliberately
-    skips a provider whose tokens do not rotate. The stash therefore goes
-    stale *by design* -- and read as liveness, that reports the account you
-    are working in as needing a login, which is the one thing this tool must
+    switched away from or first saved, until ``restash_active`` next catches
+    up. Read as liveness, a stale stash can report the account you are
+    working in as needing a login, which is the one thing this tool must
     never get wrong.
 
     Everyone else has no live credential to consult, so their stash really is

@@ -24,17 +24,23 @@ CHIP_STYLES = {
     profiles.EXPIRY_GONE: ("chip_gone_fg", "chip_gone_bg"),
 }
 
-#: Deliberately names no fixed width. Observed refresh windows differ by an
-#: order of magnitude across platform and plan samples (docs/token-storage.md),
+#: Deliberately names no fixed width: the date is read from the credential,
 #: and the chip beside this tooltip already shows the account's real figure.
 EXPIRY_TOOLTIP = (
     "Refresh token {verb} {date}.\n\n"
-    "This rolling window is what lets Shambles switch to this account without "
-    "a verification email. {remedy}"
+    "Until then Shambles can switch to this account without a verification "
+    "email. {remedy}"
 )
-#: A closing window is renewed by using the account; a closed one is not, and
-#: saying otherwise sent people to Switch, which installs the dead token.
+#: Which remedy is true depends on the vendor. Codex's date is an access
+#: token it replaces when used. Claude's is a deadline fixed at sign-in:
+#: Claude Code refreshes the token on use, but the server keeps the same
+#: deadline (measured 2026-11-13), so telling someone that using it renews
+#: it sends them past the date with nothing done. A closed window is renewed
+#: by neither; saying otherwise sent people to Switch, which installs the
+#: dead token.
 RENEW_BY_USE = "Using the account renews it."
+RENEW_BEFORE = ("Using the account does not move this date. Sign in again "
+                "before then to keep it.")
 RENEW_BY_SIGN_IN = "Sign in again to renew it."
 
 SIGN_IN_TOOLTIP = "Sign in as {who} in your browser and save the new login here."
@@ -295,7 +301,9 @@ def expiry_tooltip(profile) -> str:
     return EXPIRY_TOOLTIP.format(
         verb="expired" if expired else "expires",
         date=when.strftime("%d %b %Y, %H:%M"),
-        remedy=RENEW_BY_SIGN_IN if expired else RENEW_BY_USE)
+        remedy=(RENEW_BY_SIGN_IN if expired
+                else RENEW_BY_USE if profiles.renewed_by_use(profile)
+                else RENEW_BEFORE))
 
 
 def chip_tooltip(profile) -> str:

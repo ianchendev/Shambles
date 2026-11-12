@@ -403,7 +403,8 @@ def test_claude_missing_expiry_is_unknown_not_closed():
 
 @pytest.mark.parametrize("offset_ms, expected", [
     (10 * DAY_MS, LIVE),
-    (2 * DAY_MS, LIVE),
+    (4 * DAY_MS, LIVE),
+    (3 * DAY_MS, CLOSING),           # a fixed deadline needs notice
     (1 * DAY_MS, CLOSING),
     (DAY_MS // 2, CLOSING),          # closes today, but has not closed
     (1, CLOSING),                    # one millisecond left is still open
