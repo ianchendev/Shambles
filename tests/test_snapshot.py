@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from conftest import posix_only
 from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
                      make_profile)
 from shambles import providers, state
@@ -549,6 +550,7 @@ def test_an_unknown_provider_names_the_ones_that_exist(paths, capsys):
 # -- what a window needs beyond the list --------------------------------------
 
 
+@posix_only
 def test_a_group_says_whether_its_vendor_cli_can_sign_in(paths, fake_vendor):
     """A window disables Sign in and Add rather than letting them fail."""
     fake_vendor("claude")
@@ -602,6 +604,7 @@ def test_usage_windows_carry_a_severity_and_when_they_reset(paths):
     assert week.resets_at_ms is None
 
 
+@posix_only
 def test_the_window_fields_reach_the_wire(paths, fake_vendor):
     fake_vendor("claude")
     make_profile(paths, "claude", "Work", email="w@example.test",
