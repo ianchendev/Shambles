@@ -489,10 +489,12 @@ def test_codex_uses_the_same_file_on_every_platform(tmp_path):
     assert len(stores) == 1
 
 
-def test_codex_rotates_and_claude_does_not():
-    """The difference that forbids restoring a stale Codex snapshot."""
+def test_both_vendors_rotate():
+    """What forbids restoring a stale snapshot, for either vendor. Claude was
+    believed not to rotate until a real refresh on 2026-11-13 replaced the
+    refresh token; see rotates_note in claude.json."""
     assert providers.load("codex", env={}).rotates is True
-    assert providers.load("claude", env={}).rotates is False
+    assert providers.load("claude", env={}).rotates is True
 
 
 def test_codex_reads_identity_out_of_the_id_token(tmp_path):

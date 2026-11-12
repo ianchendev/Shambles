@@ -4,6 +4,23 @@ Notable changes per release. Dates are the tag date.
 
 ## Unreleased
 
+### Changed
+
+- **Claude logins are now kept current, as Codex logins already were.**
+  Claude Code replaces its refresh token every time it refreshes, which was
+  not known when Shambles was written: a saved copy taken before a refresh
+  holds a token that no longer works. The active Claude profile is now saved
+  again after its login refreshes, but only when the login provably continues
+  that profile's own, never because `~/.claude.json` names its address.
+- **Shambles no longer decides by itself, from an address, whose login is
+  live.** When you sign in outside Shambles as an account you have saved, the
+  label no longer moves on its own: the interface says which saved account
+  the login names, and switching to that account files the login there,
+  keeping the one it replaces. The address comes from `~/.claude.json`, which
+  a Claude Code session still running rewrites, and trusting it filed one
+  account's login over another's. When the login itself proves it, the label
+  still moves on its own.
+
 ### Added
 
 - **A saved login is no longer replaced without a copy.** When Shambles

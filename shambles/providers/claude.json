@@ -98,7 +98,8 @@
     "stale_note": "cachedUsageUtilization is stashed so a parked profile's card can show its last known figures, but never written back: a cache restored from a switch describes whatever the account was doing days ago and reads as current."
   },
   "policy": {
-    "rotates": false,
+    "rotates": true,
+    "rotates_note": "the refresh token is replaced on every refresh: the client stores whatever refresh_token the server returns (2.1.300, keeping the old one only if none is returned), and on 2026-11-13 a real refresh returned a new one. A stash taken before a refresh holds a spent token, so the active profile is re-stashed after use, as Codex's is -- on proof of lineage only, never on the address in the config file.",
     "warn_days": 1,
     "warn_days_note": "the measured refresh window is roughly four days, so a threshold of seven would render every profile amber permanently"
   },
