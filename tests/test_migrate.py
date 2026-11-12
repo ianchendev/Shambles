@@ -175,6 +175,9 @@ def test_a_symlink_of_the_users_own_is_not_the_legacy_layout(paths):
     (real / "settings.json").write_text("{}", encoding="utf-8")
     os.symlink(real, paths.claude_dir, target_is_directory=True)
     make_v1_profile(paths, "Work", email="w@example.test")
+    # Compared with itself afterwards, not with str(real): Windows reports a
+    # link's target in its extended \\?\ form.
+    link = os.readlink(paths.claude_dir)
 
     assert migrate.needed(paths) is False
     # Asked anyway, the migration refuses rather than converting a home it
@@ -183,7 +186,7 @@ def test_a_symlink_of_the_users_own_is_not_the_legacy_layout(paths):
         migrate.run(paths, now_ms=NOW)
 
     assert paths.claude_dir.is_symlink()
-    assert os.readlink(paths.claude_dir) == str(real)
+    assert os.readlink(paths.claude_dir) == link
     assert sorted(p.name for p in real.iterdir()) == ["projects", "settings.json"]
     assert (real / "settings.json").read_text(encoding="utf-8") == "{}"
     assert (paths.legacy_profiles_dir / "Work").is_dir()
