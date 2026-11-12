@@ -1114,3 +1114,99 @@ def test_the_eject_plan_says_what_eject_does_before_asking(paths):
 
     assert "stop managing" in first
     assert "Nothing is deleted" in first
+
+
+# -- what a window needs beyond the terminal UI --------------------------------
+
+
+def test_forgetting_a_marker_that_names_a_deleted_profile(paths):
+    make_profile(paths, "claude", "Work", email="w@example.test")
+    state.write_active(paths, "claude", "Gone")
+    claude = providers.load("claude")
+    assert state.inspect(paths, claude, platform="linux").kind == \
+        state.MISSING_PROFILE
+
+    result = service(paths).forget_marker("claude")
+
+    assert result.ok and result.action == "forget_marker"
+    assert state.read_active(paths, "claude") is None
+    assert result.snapshot is not None
+
+
+def test_refresh_records_the_live_accounts_usage(paths):
+    """Otherwise the account in use is the one with nothing to show later."""
+    from helpers import account, write_json
+
+    acct = account("w@example.test", uuid="uuid-w")
+    make_profile(paths, "claude", "Work", active=True)
+    write_json(paths.account("claude", "Work"), {"oauthAccount": acct})
+    make_live_claude_login(paths, access_token="tok-Work")
+    live = {"accountUuid": "uuid-w", "fetchedAtMs": NOW,
+            "utilization": {"five_hour": {"utilization": 55}}}
+    make_claude_json(paths, "w@example.test",
+                     extra={"oauthAccount": acct,
+                            "cachedUsageUtilization": live})
+
+    assert service(paths).refresh().ok
+
+    stored = json.loads(paths.account("claude", "Work").read_text())
+    assert stored["usage"] == live
+
+
+def test_migrations_report_nothing_on_a_current_home(paths):
+    make_profile(paths, "claude", "Work", email="w@example.test")
+
+    assert service(paths).run_migrations() == ()
+
+
+def test_a_v1_store_is_moved_and_the_move_is_reported(paths):
+    from helpers import make_v1_profile
+    from shambles import migrate
+
+    make_v1_profile(paths, "Work", email="w@example.test", active=True)
+    make_v1_profile(paths, "Personal", email="p@example.test")
+    assert migrate.store_migration_needed(paths)
+
+    notices = service(paths).run_migrations()
+
+    assert not migrate.store_migration_needed(paths)
+    assert [n.code for n in notices] == ["store_moved"]
+    assert notices[0].ok and "2" in notices[0].message
+    assert "Nothing was deleted" in notices[0].message
+
+
+def test_a_migration_that_cannot_run_is_reported_not_raised(paths,
+                                                            monkeypatch):
+    from helpers import make_v1_profile
+    from shambles import migrate
+    from shambles.errors import ShamblesError
+
+    make_v1_profile(paths, "Work", email="w@example.test")
+
+    def refuse(_paths):
+        raise ShamblesError("The old store could not be read.")
+
+    monkeypatch.setattr(migrate, "migrate_store", refuse)
+
+    notices = service(paths).run_migrations()
+
+    assert [(n.code, n.ok) for n in notices] == [("store_move_failed", False)]
+    assert notices[0].message == "The old store could not be read."
+
+
+def test_the_window_theme_defaults_to_the_system_and_is_remembered(paths):
+    svc = service(paths)
+    assert svc.window_theme() == "system"
+
+    assert svc.set_window_theme("dark").ok
+    assert service(paths).window_theme() == "dark"
+
+
+def test_an_unknown_window_theme_is_refused_and_nothing_is_written(paths):
+    svc = service(paths)
+
+    result = svc.set_window_theme("sepia")
+
+    assert not result.ok and result.error.code == "invalid_setting"
+    assert svc.window_theme() == "system"
+    assert not paths.settings_path.exists()

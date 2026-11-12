@@ -25,6 +25,13 @@ Notable changes per release. Dates are the tag date.
   your previous account if the sign-in is cancelled or fails. The profile is
   kept so you can retry without naming it again.
 
+- **`shambles list --json` says more about each account.** Every group now
+  carries `can_sign_in` and `cli` (whether the vendor's command is there to
+  run, and its name). Every account carries `expires_at_ms` and
+  `status_label`, and every usage window carries `severity` and a filled-in
+  `resets_at_ms`. All additions; nothing existing changed, and the contract
+  version stays at 1.
+
 ### Fixed
 
 - **A cancelled or failed sign-in in the terminal UI puts you back where you

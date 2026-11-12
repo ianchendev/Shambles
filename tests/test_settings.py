@@ -85,3 +85,19 @@ def test_settings_are_written_owner_only_like_the_rest_of_the_store(paths):
     settings.set_update_check(paths, True)
     assert oct(os.stat(paths.settings_path).st_mode)[-3:] == "600"
     assert oct(os.stat(paths.library_dir).st_mode)[-3:] == "700"
+
+
+def test_a_stored_theme_that_is_not_a_theme_reads_as_system(paths):
+    """A hand-edited file must not hand the window a colour it cannot draw."""
+    settings.save_settings(paths, {settings.WINDOW_THEME: "sepia"})
+
+    assert settings.window_theme(paths) == "system"
+
+
+def test_setting_the_theme_keeps_the_other_settings(paths):
+    settings.set_update_check(paths, True)
+
+    settings.set_window_theme(paths, "light")
+
+    assert settings.window_theme(paths) == "light"
+    assert settings.update_check_enabled(paths) is True
