@@ -78,6 +78,7 @@ belongs to the machine and stays shared.
 | `~/.claude/projects/`, `plugins/`, `file-history/`, `settings.json` | **never touched** |
 | `~/.codex/auth.json` | swapped. Codex's whole login, identity included |
 | `~/.shambles/<provider>/<Name>/credentials.json` | that account's tokens |
+| `~/.shambles/<provider>/<Name>/credentials.json.previous` | the login that file last replaced with a different one, kept in case it was filed under the wrong account. Rename it back over `credentials.json` to undo |
 | `~/.shambles/claude/<Name>/account.json` | that account's identity (Claude only) |
 | `~/.shambles/<provider>/active` | which profile is live, per provider |
 | `~/.shambles/.backups/` | last 10 copies of `~/.claude.json` |

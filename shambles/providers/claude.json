@@ -131,6 +131,11 @@
     "sample_size": 1
   },
   "surfaces_note": "one switch moves both \u2014 they share one credential store, so a shell must show them together or 'why did VS Code change too' needs explaining",
+  "lineage": {
+    "pointer": "claudeAiOauth.refreshTokenExpiresAt",
+    "tolerance_ms": 10000,
+    "note": "the sign-in deadline. It does not roll: the server keeps one absolute deadline, about 30 days after sign-in, and returns the seconds left on every refresh, which Claude Code adds to its own clock. So the stored value wobbles by rounding and network delay (-1.375 s across an 8-hour refresh, measured 2026-11-13) while the deadline holds. Two credentials whose deadlines agree within tolerance_ms (10 s, against a measured wobble of 1.4 s) are one login, refreshed. Two sign-ins less than ten seconds apart are the one case it cannot tell apart; a deadline that moved further (network delay, a clock that jumped) is read as another login, which costs a backup, never a login."
+  },
   "token": {
     "pointer": "claudeAiOauth.refreshToken",
     "note": "emptied in place when the login is cleared; the expiry and scopes around it survive, so a credential with no token still reads as healthy unless this is checked"

@@ -195,13 +195,15 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
 def _write_credential(paths, provider, name, blob: bytes, *, sleep) -> None:
     """Write a credential into a profile, 0600, atomically.
 
+    Through :func:`profiles.save_credential`, which keeps the login it
+    replaces.
+
     Retried: a running session, an antivirus scan or the Windows indexer can
     hold the file for a moment, and a single refusal is not a reason to fail
     the whole switch.
     """
-    from .stores import FileStore
-    destination = FileStore(paths.credentials(provider.id, name), 0o600)
-    retry.with_retry(lambda: destination.write(blob),
+    retry.with_retry(lambda: profiles.save_credential(paths, provider, name,
+                                                      blob),
                      f"write {paths.credentials(provider.id, name).name}",
                      sleep=sleep)
 
