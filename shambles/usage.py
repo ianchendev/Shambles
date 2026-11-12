@@ -4,8 +4,8 @@ Claude Code stores both windows in ``~/.claude.json``. Codex writes the
 same 5h / week pair onto ``token_count`` events in ``~/.codex/sessions``.
 
 **Display only.** These figures are never written back into ``~/.claude.json``
--- see :data:`shambles.configjson.STALE_ON_SWITCH` for why restoring a cached
-copy misleads the extension. A profile's stashed usage is kept solely so the
+-- see ``stale_on_switch`` in ``providers/claude.json`` for why restoring a
+cached copy misleads the extension. A profile's stashed usage is kept solely so the
 window can show what an idle account looked like when you left it, always
 labelled with its age.
 """
