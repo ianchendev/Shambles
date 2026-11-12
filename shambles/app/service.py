@@ -310,9 +310,18 @@ class ShamblesService:
             return self._failure("eject", exc)
 
     def _failure(self, action, exc):
-        code, recovery = ERROR_CODES.get(
-            type(exc), ("operation_refused", "Review the message and retry."))
+        # The nearest mapped class, not only an exact one: a store may raise
+        # something more specific than StoreUnavailableError, and it is still
+        # a store failure with the same way out.
+        code, recovery = next(
+            (ERROR_CODES[cls] for cls in type(exc).__mro__
+             if cls in ERROR_CODES),
+            ("operation_refused", "Review the message and retry."))
         if isinstance(exc, AlreadyManagedError) and action != "remove":
+            # One exception class, four refusals. Only Remove raises it to
+            # mean "this is the active profile"; from anywhere else that code
+            # would tell a client to offer the wrong remedy.
+            code = "operation_refused"
             recovery = "Review the current login and saved accounts before retrying."
         message = "The login could not be completed." if action == "login" else str(exc)
         return self._result(False, action,
