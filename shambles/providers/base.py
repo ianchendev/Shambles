@@ -74,17 +74,6 @@ class Liveness:
     def needs_login(self) -> bool:
         return self.state in NEEDS_LOGIN
 
-    @property
-    def switchable(self) -> bool:
-        """Whether switching achieves anything.
-
-        Always true. Switching to a lapsed profile is not an error -- Shambles
-        copies bytes, it does not validate tokens, and the vendor prompts for
-        ``/login`` which overwrites them anyway. The distinction the user needs
-        is :attr:`needs_login`, not permission.
-        """
-        return True
-
 
 @runtime_checkable
 class Provider(Protocol):
