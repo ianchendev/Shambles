@@ -134,10 +134,13 @@ class AccountMenu(ModalScreen[str | None]):
     AccountMenu { align: center middle; }
     """
 
-    def __init__(self, provider: str, account: str):
+    def __init__(self, provider: str, account: str, *, removable: bool = True):
         super().__init__(id="account-menu")
         self.provider = provider
         self.account = account
+        #: The active account cannot be removed. Offering it anyway meant a
+        #: confirmation and then a refusal, two steps to learn nothing.
+        self.removable = removable
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes=overlay_panel_classes(self)):
@@ -148,12 +151,15 @@ class AccountMenu(ModalScreen[str | None]):
                 "s Save current login\n"
                 "a Add new profile\n"
                 "n Rename\n"
-                "d Remove\n\n"
-                "Esc Cancel   q Quit",
+                + ("d Remove\n" if self.removable else
+                   "(switch to another account to remove this one)\n")
+                + "\nEsc Cancel   q Quit",
                 markup=False,
             )
 
     def action_choose(self, choice: str) -> None:
+        if choice == "remove" and not self.removable:
+            return
         self.dismiss(choice)
 
     def action_cancel(self) -> None:

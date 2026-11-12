@@ -66,6 +66,28 @@ UPDATE_CHECK_ON = (
 UPDATE_CHECK_OFF = "Update checks are off. Shambles will not contact GitHub."
 
 
+#: What a person at this prompt does next, per notice code. The snapshot says
+#: what is true in words that suit any frontend; only the CLI knows its own
+#: commands, and it has no save of its own, so it sends people to the one
+#: interface that does.
+CLI_REMEDIES = {
+    "unsaved_login": "Run 'shambles' and press s to save it.",
+    "signed_in_elsewhere": "Run 'shambles switch {provider} {account}' to "
+                           "settle it.",
+}
+
+
+def _notice_lines(group) -> list[str]:
+    lines = []
+    for notice in group["notices"]:
+        remedy = CLI_REMEDIES.get(notice["code"], notice["remedy"])
+        lines.append(f"  ! {notice['message']}")
+        if remedy:
+            lines.append("    " + remedy.format(
+                provider=group["provider"], account=notice["account"] or ""))
+    return lines
+
+
 def _paths(args) -> Paths:
     override = getattr(args, "home", None)
     return Paths.for_home(override) if override else Paths.real()
@@ -140,6 +162,8 @@ def cmd_list(args) -> int:
     for group in payload["groups"]:
         surfaces = ", ".join(s["label"] for s in group["surfaces"])
         print(f"{group['display_name']}  ({surfaces})")
+        for line in _notice_lines(group):
+            print(line)
         if not group["accounts"]:
             print("    no accounts yet")
         for account in group["accounts"]:
@@ -158,7 +182,8 @@ def cmd_list(args) -> int:
 
     # Only when there is nothing at all. A provider with no accounts beside one
     # that has them is a normal arrangement, not a person who needs onboarding.
-    if not any(group["accounts"] for group in payload["groups"]):
+    if not any(group["accounts"] or group["can_save"]
+               for group in payload["groups"]):
         print(NO_ACCOUNTS_HINT)
     return EXIT_OK
 
@@ -166,8 +191,11 @@ def cmd_list(args) -> int:
 def cmd_switch(args) -> int:
     try:
         result = _service(args).switch(args.provider, args.account)
-    except KeyError as exc:
-        return _fail(args, "unknown_provider", str(exc).strip("'"))
+    except KeyError:
+        known = ", ".join(registry.ids())
+        return _fail(args, "unknown_provider",
+                     f"Unknown provider '{args.provider}'. Shambles knows: "
+                     f"{known}.")
 
     if not result.ok:
         return _fail(args, "refused", result.error.message)

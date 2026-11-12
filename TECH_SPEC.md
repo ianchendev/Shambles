@@ -232,6 +232,38 @@ discrepancy is strictly better than displaying a confidently wrong account name.
 A profile that has never been logged into carries no stored identity, so it has
 no expectation to violate and is not treated as drift.
 
+**The credential is asked before the address.** `~/.claude.json` is rewritten
+from memory by any Claude Code session still running, so the address in it can
+lag a switch or contradict it. A stashed credential identical to the live one,
+byte for byte, is proof no other process can forge, and `state.inspect()`,
+`state.owner_of_live()` and `switcher.belongs_to()` all consult it first:
+
+- the marked profile holds the live bytes: `MANAGED`, whatever the address says;
+- another saved profile holds them: `DRIFTED`, even when the addresses agree.
+  That is what a switch interrupted between replacing the credential and
+  moving the marker looks like, and running the switch again finishes it;
+- nobody holds them: fall back to comparing addresses, as above.
+
+This proof lasts only while the bytes are unchanged. Once the vendor refreshes
+the live token nothing matches, and the address is all there is again. An
+interrupted switch that is not retried before then is not recoverable this
+way, and neither is a marker moved on the strength of a stale address.
+
+**A live login always has somewhere to go.** Every operation that replaces the
+live credential (`switch`, `add_empty_account`, `begin_relogin`, and the
+service's `start_login`) first files it under the profile it belongs to, and
+refuses when there is none: no profile marked, or the marked one gone from
+disk, while the vendor is signed in as an account no saved profile holds. The
+refusal says to save that login first. A store that is empty, holds an empty
+file, or holds a credential the vendor has cleared has nothing to protect and
+is not refused.
+
+Bytes another profile already holds are not copied again, and the address in
+the vendor's config is never filed beside them: when the marker is wrong,
+that address usually is too. An empty live file is treated as no login at
+all, because neither vendor replaces its credential file atomically and a
+read can land between the truncate and the write.
+
 ### 1.8 Environment override
 
 `CLAUDE_CONFIG_DIR` relocates Claude Code's entire config tree — config,
