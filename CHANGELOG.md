@@ -54,7 +54,8 @@ Notable changes per release. Dates are the tag date.
     and relied on the core to refuse.
 
 - **The installers fetch the new window as its own download.** It carries
-  Qt, about 70 MB, so it ships beside the `shambles` binary instead of inside
+  Qt (a 36 to 82 MB download, depending on the platform), so it ships beside
+  the `shambles` binary instead of inside
   it: every other command stays as fast as it was. `install.sh` unpacks it
   to `~/.local/share/shambles/window` and `install.ps1` to
   `%LOCALAPPDATA%\Shambles\window`, and `shambles gui --new` opens it from

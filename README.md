@@ -377,9 +377,9 @@ it can tell and remembers your choice where it cannot, which includes WSL.
 `SHAMBLES_SCALE` (1.0 to 4.0) sets its size and `SHAMBLES_MOTION=0` turns
 animation off.
 
-**Where the window comes from.** It is built on Qt, which is about 70 MB, so
-it ships as its own archive beside the `shambles` binary instead of inside
-it. The install scripts fetch it for you into
+**Where the window comes from.** It is built on Qt, a 36 to 82 MB download
+depending on the platform, so it ships as its own archive beside the
+`shambles` binary instead of inside it. The install scripts fetch it for you into
 `~/.local/share/shambles/window` (or `%LOCALAPPDATA%\Shambles\window`); set
 `SHAMBLES_NO_WINDOW=1` first to skip it. It carries the system libraries Qt
 needs, so there is nothing to `apt install`.
