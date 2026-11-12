@@ -15,6 +15,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import ShamblesError
 from .providers import spec as specmod
 
 #: The marker names a profile, and the live identity matches it.
@@ -97,10 +98,17 @@ def profile_names(paths, provider_id: str) -> list[str]:
 
 
 def live_email(paths, provider, *, platform: str) -> str | None:
-    """Who the provider's live store says is signed in."""
+    """Who the provider's live store says is signed in.
+
+    ``None`` when the store cannot be read. A locked Keychain or a credential
+    file with the wrong permissions is not evidence of anybody, and raising
+    here took the window down on startup before it could say what was wrong.
+    The operations that would actually move a credential read the store
+    themselves, and still refuse.
+    """
     try:
         blob = provider.store(home=paths.home, platform=platform).read()
-    except OSError:
+    except (OSError, ShamblesError):
         return None
     return provider.identity(blob, home=paths.home, active=True).email
 

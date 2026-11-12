@@ -12,7 +12,7 @@ from textual.widgets import Static
 
 from ..snapshot import Account, Group, Snapshot
 from .brand import LOCKUP_MIN_HEIGHT, header_kind, header_text
-from .widgets import AccountDetails, AccountList
+from .widgets import AccountDetails, AccountList, notices_text
 
 
 MINIMUM_HEIGHT = 16
@@ -82,6 +82,12 @@ class Dashboard(Widget):
             id="terminal-too-small",
         )
         yield Static(id="dashboard-header", markup=False)
+        # What is true about a provider rather than an account: a login
+        # nobody saved, a stale marker, an override. Hidden when all is well.
+        notices = Static(notices_text(self.snapshot), id="provider-notices",
+                         markup=False)
+        notices.display = bool(notices_text(self.snapshot))
+        yield notices
         with Vertical(id="dashboard-body"):
             with Horizontal(id="main-panes"):
                 yield AccountList(self.snapshot, id="account-list")

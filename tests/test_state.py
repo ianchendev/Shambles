@@ -90,3 +90,26 @@ def test_pointing_the_variable_at_the_default_is_not_an_override(paths, codex):
     must not raise a false alarm."""
     env = {"CODEX_HOME": str(paths.home / ".codex")}
     assert state.config_dir_override(codex, home=paths.home, env=env) is None
+
+
+def test_an_unreadable_live_store_reads_as_nobody_signed_in(paths, claude,
+                                                            monkeypatch):
+    """Reproduced: a live credential with mode 000 made the window's first
+    state.inspect raise StoreUnavailableError, and the window never opened.
+    A locked Keychain takes the same path. An unreadable store is not
+    evidence of anyone, which is how holder_of_live_credential already
+    treats it."""
+    from shambles.stores import FileStore
+    from shambles.stores.base import StoreUnavailableError
+
+    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
+    make_claude_json(paths, email="w@example.com")
+    make_live_claude_login(paths)
+
+    def locked(self):
+        raise StoreUnavailableError("locked")
+
+    monkeypatch.setattr(FileStore, "read", locked)
+
+    assert state.live_email(paths, claude, platform="linux") is None
+    assert state.inspect(paths, claude, platform="linux").kind == state.MANAGED
