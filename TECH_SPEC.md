@@ -14,7 +14,7 @@ Architectural reference for the account switcher.
 |---|---|
 | **Version** | 1.1 (multi-provider) |
 | **Target** | Claude Code 2.1.x and Codex 0.147.x — CLI and VS Code extension |
-| **Platforms** | Linux and WSL2 confirmed for Claude. Codex unverified everywhere — no install was available. Windows unverified — see §1.11. macOS unsupported |
+| **Platforms** | Linux and WSL2 in daily use for Claude. macOS, native Windows and Codex verified on CI runners with made-up credentials and the vendors' own status commands, not yet with a real account. See §1.11 |
 | **Runtime** | Python 3.10+, Tkinter. No third-party dependencies |
 | **Source** | ~3,740 lines across 24 modules |
 | **Tests** | 303 cases, all passing |
@@ -266,37 +266,49 @@ Idempotent, and refuses on the legacy layout — ejecting a symlinked
 
 Nothing in eject deletes a credentials file.
 
-### 1.11 Platform reach is narrower than the build matrix suggests
+### 1.11 Where the login lives on each platform, and how we know
 
-Shambles swaps `~/.claude/.credentials.json`. That file is not where Claude Code
-keeps credentials on every platform. Per source analysis of the shipping bundle
-([token-storage.md](docs/token-storage.md)), the binary defines **three**
-backends:
+Claude Code does not keep its login in one place. Read out of the 2.1.322
+binaries and confirmed on CI runners
+([token-storage.md](docs/token-storage.md) has the evidence):
 
-| Platform | Backend | Store |
+| Platform | Claude Code's backend | Store Shambles uses |
 |---|---|---|
-| Linux / fallback | `plaintext` | `$CLAUDE_CONFIG_DIR/.credentials.json`, mode 0600 |
-| macOS | `keychain` | Keychain generic password, service name **computed** from a hash of the config dir |
-| Windows | `windows-credman` | Credential Manager, values **chunked** at 2000 chars |
+| Linux | `plaintext` | `FileStore`: `.credentials.json` in the config directory, mode 0600 |
+| macOS | `keychain-with-plaintext-fallback` | `FallbackStore(KeychainStore, FileStore)`: the Keychain item, whose name is **computed** from a hash of the config directory, layered over the same file |
+| Windows, by default | `plaintext` | `FileStore`: `%USERPROFILE%\.claude\.credentials.json` |
+| Windows, with Credential Manager switched on | `windows-credman-with-plaintext-fallback` | `FallbackStore(CredmanStore, FileStore)` |
 
-Consequences for this codebase:
+Credential Manager on Windows is a staged rollout. Claude Code uses it only
+when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` or when its cached copy of a
+server-side flag (`cachedGrowthBookFeatures.tengu_windows_credman` in
+`.claude.json`) is true. `providers.claude.gate_open` reads the same two
+places in the same order, and treats anything unreadable as off, because
+with the gate closed the vendor never looks at Credential Manager.
 
-- **Linux and WSL2 — confirmed working.** The plaintext backend is the one
-  Shambles manipulates, verified in daily use on the development host.
-- **Windows — unverified, and likely non-functional.** If Claude Code uses
-  Credential Manager there, `~/.claude/.credentials.json` never exists, so
-  `save_current_account` would report nothing to save and a switch would move a
-  file no reader consults. CI builds and tests a Windows binary, which proves
-  the *app* runs — not that account switching works. Supporting Windows
-  properly means a Credential Manager backend that reassembles chunked entries,
-  which does not exist.
-- **macOS — unsupported, correctly.** The Keychain is the sole store; there is
-  no file to swap. Any future support must compute
-  `` `Claude Code${suffix}-credentials${dirHash}` `` rather than hardcode it.
+`FallbackStore` restates the vendor's own combinator: read the primary, else
+the file; write the primary and clear the file it supersedes; write the file
+when an empty primary refuses; delete both. A locked Keychain
+(`StoreLockedError`, exit 36 from `security`) falls through to a file that
+answers, and is reported as locked when there is none.
 
-The Windows and macOS rows are graded [SRC] in the source document — read out of
-the shipping bundle on a macOS host, not executed on Windows. The Linux row is
-the only one this project has exercised.
+Codex uses `$CODEX_HOME/auth.json` on every platform, but only in its default
+`file` storage mode. `CodexProvider.storage_mode` resolves
+`cli_auth_credentials_store` from the layers it can see, and any other mode
+yields an `UnsupportedStore` that refuses to write and says why.
+
+Neither the Keychain nor the Credential Manager is ever used for a home
+directory other than the real one (`ClaudeProvider._is_real_home`), so
+`--home` cannot reach a real login.
+
+What this rests on:
+
+- **Verified on runners** (`real-machine` workflow): macOS 15 and 26 on Apple
+  Silicon, macOS 15 on Intel, Windows Server 2022 and 2025, Windows 11 on
+  Arm, Ubuntu 22.04 x64 and 24.04 arm64. A switch changes who
+  `claude auth status` and `codex login status` report.
+- **Not verified by anything:** a sign-in with a real account on macOS or
+  native Windows, or with Codex anywhere.
 
 ### 1.10 Migration from the legacy layout
 
@@ -636,8 +648,12 @@ Implementing real Windows ACLs would require `pywin32` or shelling out to
 `icacls`, contradicting the zero-dependency constraint for a threat model
 (hostile local user on a single-user developer machine) that does not justify it.
 
-**macOS.** Unsupported. Credentials live in the system Keychain, not in
-`.credentials.json`, so there is no file to swap.
+**macOS.** The Keychain item is created by Claude Code with no access-control
+list, so any process running as the user can already read it; writing to it
+does not change that posture in either direction. A write of up to about
+1.9 KB goes through `security -i` on standard input; a larger one is passed
+as an argument and is visible in the process list for the life of the write,
+which is also what Claude Code does.
 
 ### 3.4 Other properties
 
@@ -863,9 +879,9 @@ Stated explicitly rather than implied:
 - **The browser-bypass claim is structural**, not observed end to end (§5.1).
 - **The 8-hour refresh interaction is undemonstrated** (§4.4). Reproducing it
   requires an 8-hour session straddling a switch.
-- **Windows account switching is unverified and probably broken** (§1.11). The
-  CI Windows job proves the app starts and its tests pass; it does not exercise
-  a real Claude Code login, because the runner has none. macOS is unsupported by
-  design.
+- **No real-account sign-in has been observed on macOS or native Windows**,
+  or with Codex anywhere (§1.11). The CI runners have no account; they prove
+  the stored login moves and the vendor reads it, not that the vendor's own
+  browser sign-in works when Shambles starts it there.
 - **Migration ran once on real data**, verified complete afterwards. It is
   one-way; re-running is refused.
