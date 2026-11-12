@@ -75,6 +75,14 @@ Notable changes per release. Dates are the tag date.
 - The window's heading no longer says "Not signed in" or "Not sure which
   account is live" while a login it can name is live, and offers to save it
   when the marked profile has been deleted.
+- At 80 columns the terminal UI's footer shows `l login` instead of
+  `x eject`. The narrow footer had dropped the one key that fixes an account
+  that needs a login; eject is still under `?`.
+- The terminal UI no longer offers Remove for the active account, which it
+  then refused after you confirmed. Removing another account now says what
+  it costs: signing that address back in needs a new verification email.
+- The terminal UI's eject confirmation says what eject does before asking.
+  It used to show only the after-the-fact summary, as if it had happened.
 - The tooltip on an expired account no longer says that using the account
   renews it. A closed window cannot be renewed that way; it now says to sign
   in again.

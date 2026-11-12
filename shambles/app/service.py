@@ -398,9 +398,17 @@ class ShamblesService:
             code, message, f"{where} Sign in to '{name}' to try again."))
 
     def plan_remove(self, provider_id, name):
+        """Ask before deleting a login, and say what getting it back costs."""
+        try:
+            email = state.profile_email(
+                self.paths, self._provider(provider_id), name)
+        except Exception:
+            email = None
+        who = email or "that account"
         return ActionPlan(
             "remove", provider_id, name, True, f"Remove {name}?",
-            ("The saved login will be removed.",),
+            (f"Its saved login is deleted. Signing {who} back in here will "
+             "need a new verification email.",),
         )
 
     def remove(self, plan):
@@ -421,9 +429,14 @@ class ShamblesService:
     def plan_eject(self):
         plan = eject_mod.survey(
             self.paths, self.providers, platform=self.platform)
+        # What eject does comes first. The survey's summary is written for
+        # after the fact, and shown alone it read as if eject had happened.
         return ActionPlan(
             "eject", None, None, True, "Eject Shambles?",
-            (eject_mod.summary(plan),),
+            ("Shambles will stop managing your accounts. Each provider keeps "
+             "the login it has now and goes back to being an ordinary "
+             "install. Nothing is deleted.",
+             "Afterwards:\n" + eject_mod.summary(plan)),
         )
 
     def eject(self, plan):
