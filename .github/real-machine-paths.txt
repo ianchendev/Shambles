@@ -1,0 +1,32 @@
+# A pull request that changes any of these cannot merge until every machine
+# in the real-machine workflow passes. On other pull requests the machines
+# still run, and a failure is shown without blocking. One entry per line: a
+# path ending in "/" means everything under that directory, anything else is
+# one file. The list is read from the branch being merged into, so a change
+# to it takes effect once it is merged.
+#
+# These are the parts of Shambles that decide where a login is read from and
+# written to, and how the program reaches a stranger's machine. The fakes in
+# the unit suite cannot say whether a change here still agrees with the real
+# Keychain, the real Credential Manager or the vendors' own programs.
+
+# Where a login is kept, per system.
+shambles/stores/
+shambles/providers/
+shambles/paths.py
+
+# How Shambles is installed and built.
+scripts/
+shambles/release_assets.py
+pyproject.toml
+.github/actions/build-binary/
+
+# The Swift panel, which the workflow builds and tests.
+macos/
+
+# The workflow itself and what it runs.
+.github/workflows/real-machine.yml
+.github/real-machine-paths.txt
+.github/scripts/real_machine_required.py
+tests/real/
+tests/release_server.py
