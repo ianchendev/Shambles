@@ -310,13 +310,19 @@ def capture_live(paths, provider_id, active_name, *, now_ms) -> bool:
     """
     if not active_name:
         return False
-    live = configjson.load(paths.claude_json).get("cachedUsageUtilization")
-    if not isinstance(live, dict):
+
+    # The profile's own sidecar first. It is a few hundred bytes, and without
+    # an account in it nothing below can match -- which is every profile of a
+    # provider with no companion file. ~/.claude.json is the largest file
+    # Shambles reads, and this runs for every provider on every refresh.
+    sidecar = configjson.load(paths.account(provider_id, active_name))
+    account = sidecar.get("oauthAccount")
+    expected = account.get("accountUuid") if isinstance(account, dict) else None
+    if not expected:
         return False
 
-    sidecar = configjson.load(paths.account(provider_id, active_name))
-    expected = (sidecar.get("oauthAccount") or {}).get("accountUuid")
-    if not expected or live.get("accountUuid") != expected:
+    live = configjson.load(paths.claude_json).get("cachedUsageUtilization")
+    if not isinstance(live, dict) or live.get("accountUuid") != expected:
         return False
 
     if sidecar.get("usage") == live:
