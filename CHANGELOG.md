@@ -31,6 +31,16 @@ Notable changes per release. Dates are the tag date.
   that folder's profiles in its place. Only a link that points at a profile
   inside `~/.claude-profiles` is converted now. Any other link is left exactly
   as it is, and switching works through it.
+- **Converting the old layout, where `~/.claude` was a link to one profile's
+  folder, now finishes on the next start if it was cut short.** A full disk
+  or a crash partway through used to leave `~/.claude` converted while the
+  other accounts' logins were never copied into the new store. Nothing tried
+  again, so those accounts came back as empty profiles and each one needed a
+  new verification email. Every login is now saved before `~/.claude` is
+  touched, so an attempt that fails leaves the old layout in place and the
+  next start completes it. The failure is shown in a dialog instead of a
+  traceback, and a login already saved in the new store is never replaced by
+  the older copy from the old folder.
 
 ## 2.1.2 - 2026-09-11
 

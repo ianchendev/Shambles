@@ -24,6 +24,7 @@ from pathlib import Path
 from . import configjson, state
 from .errors import ShamblesError
 from .paths import ACCOUNT_NAME, CREDENTIALS_NAME
+from .stores import FileStore, StoreUnavailableError
 
 #: Directories inside a profile that hold machine-scoped state and must be
 #: merged rather than picked from one profile. ``plugins`` belongs here for the
@@ -48,6 +49,16 @@ V1_PROVIDER = "claude"
 
 class MigrationError(ShamblesError):
     """The migration could not run safely."""
+
+
+#: A run that stopped before ``~/.claude`` was touched. Everything up to that
+#: point is additive and safe to repeat, and :func:`needed` is still true,
+#: which is what makes the last sentence a promise the window keeps.
+NOT_CONVERTED = (
+    "The old layout could not be converted, and ~/.claude is still the link "
+    "it was:\n{error}\n\n"
+    "Nothing was deleted. Shambles will try again the next time it starts."
+)
 
 
 @dataclass
@@ -183,7 +194,13 @@ def _merge_jsonl(src: Path, dest: Path) -> int:
 
 
 def run(paths, *, now_ms: int) -> Plan:
-    """Perform the migration. Additive: nothing is deleted."""
+    """Perform the migration. Additive: nothing is deleted.
+
+    Every login is filed before ``~/.claude`` is touched, and replacing the
+    link comes after. Until that happens :func:`needed` stays true, so a run
+    cut short by a full disk or a crash is simply run again at the next
+    start, and everything before the swap is safe to repeat.
+    """
     if not needed(paths):
         raise MigrationError(
             "~/.claude is not a link into the old profile store; nothing to "
@@ -194,6 +211,43 @@ def run(paths, *, now_ms: int) -> Plan:
     if not base_dir.is_dir():
         raise MigrationError(f"Base profile '{plan.base}' is missing.")
 
+    try:
+        _prepare(paths, plan, base_dir, now_ms)
+        link_target = os.readlink(paths.claude_dir)
+        paths.claude_dir.unlink()
+    except (OSError, StoreUnavailableError) as exc:
+        raise MigrationError(NOT_CONVERTED.format(error=exc)) from exc
+
+    # 4. Replace the symlink with the real merged directory. Guarded: if the
+    #    rename fails, put the symlink back rather than leaving no ~/.claude
+    #    at all. Both operations are metadata-only, so the window is tiny.
+    try:
+        base_dir.rename(paths.claude_dir)
+    except OSError as exc:
+        try:
+            os.symlink(link_target, paths.claude_dir, target_is_directory=True)
+        except OSError as undo:
+            raise MigrationError(
+                f"Could not move '{plan.base}' into place, and the ~/.claude "
+                f"link could not be put back either:\n{undo}\n\n"
+                f"Nothing was deleted. ~/.claude was a link to {link_target}, "
+                f"and everything it held is still there.") from exc
+        raise MigrationError(
+            f"Could not move '{plan.base}' into place, so nothing was "
+            f"changed and ~/.claude was restored:\n{exc}") from exc
+
+    # 5. Leave ~/.claude looking like a stock install: the sidecar's contents
+    #    were filed in step 3. The conversion is complete by now, so a file
+    #    that will not go is left behind rather than reported as a failure.
+    try:
+        (paths.claude_dir / LEGACY_SIDECAR).unlink(missing_ok=True)
+    except OSError:
+        pass
+    return plan
+
+
+def _prepare(paths, plan, base_dir, now_ms) -> None:
+    """Steps 1 to 3: everything that happens before ``~/.claude`` changes."""
     # 1. Merge everyone else's machine-scoped state into the base.
     merged = skipped = 0
     for name in plan.others:
@@ -234,36 +288,49 @@ def run(paths, *, now_ms: int) -> Plan:
         if live.get("oauthAccount"):
             identities[active] = (identities[active][0], live)
 
-    # 3. Replace the symlink with the real merged directory. Guarded: if the
-    #    rename fails, put the symlink back rather than leaving no ~/.claude
-    #    at all. Both operations are metadata-only, so the window is tiny.
-    link_target = os.readlink(paths.claude_dir)
-    paths.claude_dir.unlink()
-    try:
-        base_dir.rename(paths.claude_dir)
-    except OSError as exc:
-        os.symlink(link_target, paths.claude_dir, target_is_directory=True)
-        raise MigrationError(
-            f"Could not move '{plan.base}' into place, so nothing was "
-            f"changed and ~/.claude was restored:\n{exc}") from exc
-
-    # 4. Leave ~/.claude looking like a stock install: the sidecar's contents
-    #    are already captured in `identities` above.
-    (paths.claude_dir / LEGACY_SIDECAR).unlink(missing_ok=True)
-
-    # 5. Write the slim profile store, provider-scoped. Everything the pre-1.0
+    # 3. Write the slim profile store, provider-scoped. Everything the pre-1.0
     #    layout held was a Claude login -- there was no second provider.
-    for name, (creds, account) in identities.items():
-        paths.ensure_profile(V1_PROVIDER, name)
-        if creds is not None:
-            paths.credentials(V1_PROVIDER, name).write_bytes(creds)
-            _lock_down(paths.credentials(V1_PROVIDER, name))
-        configjson.write_sidecar(paths.account(V1_PROVIDER, name), account,
-                                 now_ms)
+    #
+    #    The linked profile goes last. Its login is the live one, which Claude
+    #    Code can refresh between a failed run and the retry. Filed early by
+    #    the failed run, the superseded copy would already be in the store on
+    #    the retry, and the copy already in the store is the one kept.
+    for name in sorted(identities, key=lambda each: each == active):
+        _file_profile(paths, name, *identities[name], now_ms)
 
     if active:
         state.write_active(paths, V1_PROVIDER, active)
-    return plan
+
+
+def _file_profile(paths, name, creds, account, now_ms) -> None:
+    """File one pre-1.0 profile's login and identity in the slim store.
+
+    Safe to repeat, because a migration that was cut short is run again from
+    the top. A login already in the store wins, the rule :func:`migrate_store`
+    documents: on a retry it is the same bytes, and otherwise a newer Shambles
+    saved it and has kept it current, which nothing did for the copy in the
+    old directory. The write is atomic, so a half-written credential can never
+    be the one that wins.
+
+    The identity is only filed beside the login it came with. Next to a login
+    that was kept instead, it would put one account's address on another
+    account's token. And an identity already there is not replaced by an old
+    profile that has none to offer.
+    """
+    paths.ensure_profile(V1_PROVIDER, name)
+    store = FileStore(paths.credentials(V1_PROVIDER, name), 0o600)
+    held = store.read()
+    if held is None and creds is not None:
+        store.write(creds)
+        held = creds
+    if held != creds:
+        return
+
+    sidecar = paths.account(V1_PROVIDER, name)
+    if (configjson.read_sidecar(sidecar).get("oauthAccount")
+            and not account.get("oauthAccount")):
+        return
+    configjson.write_sidecar(sidecar, account, now_ms)
 
 
 #: Files a v1.0 profile could hold. Anything else in there was not ours.
