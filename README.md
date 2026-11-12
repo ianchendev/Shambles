@@ -384,6 +384,16 @@ Installed that way on a bare Linux or WSL machine, Qt needs three system
 libraries and says so if they are missing: `sudo apt install libegl1
 libxcb-cursor0 libxkbcommon-x11-0`.
 
+**Licences in the window.** The window archive contains Qt and Qt for
+Python (PySide6), which are LGPL-3.0, alongside Shambles' own MIT code. Qt
+is kept as separate shared libraries inside the folder, unmodified, so you
+can replace it with your own build. The archive's `licenses` folder holds
+the LGPL-3.0 and GPL-3.0 texts, a notice saying where Qt's source is, the
+SIL Open Font License for the bundled Inter typeface, and Shambles' MIT
+licence. Python (PSF), Textual and Rich (MIT) and the PyInstaller bootloader
+(GPL with a bundling exception) are listed there too. The small `shambles`
+binary contains no Qt.
+
 Because the window's QML engine is linked against Qt's own C++ network
 library, that library is inside the window archive. Nothing in Shambles
 calls it: the window loads only files that ship with it, and the rule that

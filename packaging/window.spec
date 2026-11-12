@@ -102,3 +102,15 @@ exe = EXE(
     console=sys.platform != "win32",
 )
 COLLECT(exe, analysis.binaries, analysis.datas, name="shambles-window")
+
+# Licence texts go at the top of the folder, beside the executable, where a
+# person looking for them will find them. Qt is LGPL: the archive has to
+# carry the licence, say where the source is, and leave Qt replaceable --
+# which is the other reason this is a folder of separate libraries and must
+# never become a one-file build.
+import shutil
+
+licences = Path(DISTPATH) / "shambles-window" / "licenses"
+shutil.copytree(ROOT / "packaging" / "licenses", licences, dirs_exist_ok=True)
+shutil.copyfile(ROOT / "LICENSE", licences / "LICENSE-Shambles.txt")
+shutil.copyfile(QT / "fonts" / "OFL.txt", licences / "OFL-Inter.txt")

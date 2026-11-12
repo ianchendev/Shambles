@@ -149,3 +149,35 @@ def test_the_spec_bundles_what_is_read_from_disk_at_runtime():
     for needed in ('"providers" / "*.json"', '"tui" / "*.tcss"',
                    '"qml" / "*.qml"', '"fonts" / "*"', "libEGL.so.1"):
         assert needed in spec, f"window.spec no longer bundles {needed}"
+
+
+# -- licences ------------------------------------------------------------------
+
+
+def test_the_window_ships_the_licences_of_what_it_bundles():
+    """Qt is LGPL-3.0: the download has to carry the text and say where the
+    source is. A bundle without them is one the project may not distribute."""
+    licences = ROOT / "packaging" / "licenses"
+    spec = (ROOT / "packaging" / "window.spec").read_text(encoding="utf-8")
+
+    assert "GNU LESSER GENERAL PUBLIC LICENSE" in \
+        (licences / "LGPL-3.0.txt").read_text(encoding="utf-8")
+    assert "GNU GENERAL PUBLIC LICENSE" in \
+        (licences / "GPL-3.0.txt").read_text(encoding="utf-8")
+    notice = (licences / "NOTICE.txt").read_text(encoding="utf-8")
+    for needed in ("LGPL-3.0.txt", "download.qt.io", "replace those libraries",
+                   "OFL-Inter.txt", "LICENSE-Shambles.txt"):
+        assert needed in notice, f"NOTICE.txt no longer mentions {needed}"
+    for copied in ('"packaging" / "licenses"', "LICENSE-Shambles.txt",
+                   "OFL-Inter.txt"):
+        assert copied in spec, f"window.spec no longer ships {copied}"
+
+
+def test_the_window_stays_a_folder_of_separate_libraries():
+    """The LGPL lets a user swap in their own Qt. In a one-file build they
+    cannot, so the spec must keep COLLECT and never pack the binaries into
+    the executable."""
+    spec = (ROOT / "packaging" / "window.spec").read_text(encoding="utf-8")
+
+    assert "COLLECT(" in spec
+    assert "exclude_binaries=True" in spec
