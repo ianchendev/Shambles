@@ -53,6 +53,11 @@ Notable changes per release. Dates are the tag date.
   and nothing tried again. The copy is now put in place in one step once all
   of it has succeeded, and a failure is shown in a dialog instead of a
   traceback.
+- A prompt history file or an old active marker that is not valid text (the
+  last line cut short by a crash, for instance) no longer stops either
+  conversion, which used to fail the same way at every start. A history
+  entry containing a Unicode line separator is no longer split in two when
+  histories are merged.
 
 ## 2.1.2 - 2026-09-11
 

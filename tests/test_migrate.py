@@ -549,3 +549,48 @@ def test_the_stale_shambles_sidecar_is_cleared_from_claude(paths):
     assert not (paths.claude_dir / ".shambles.json").exists()
     # but the identity it carried is not lost
     assert configjson.read_sidecar(paths.account("claude", "Admin")).get("oauthAccount")
+
+
+def test_prompt_history_that_is_not_valid_text_does_not_stop_the_migration(
+        paths):
+    """history.jsonl is appended to by a program that can be killed mid-write,
+    so its last line can end inside a multi-byte character. Reading it as
+    text raised UnicodeDecodeError, which is not a ShamblesError: a traceback
+    at every start, the layout never converted, and every Claude switch
+    refused for good. The promise is that unparseable lines are carried
+    across verbatim, and bytes are the only way to keep it."""
+    make_legacy_profile(paths, "Work", email="w@example.test", sessions=2)
+    make_legacy_profile(paths, "Personal", email="p@example.test", sessions=1)
+    os.symlink(paths.legacy_profiles_dir / "Work", paths.claude_dir,
+               target_is_directory=True)
+    torn = b'{"display": "caf\xc3'
+    (paths.legacy_profiles_dir / "Work" / "history.jsonl").write_bytes(
+        b'{"display": "one"}\n')
+    (paths.legacy_profiles_dir / "Personal" / "history.jsonl").write_bytes(
+        b'{"display": "two"}\n' + torn + b"\n")
+
+    migrate.run(paths, now_ms=NOW)
+
+    merged = (paths.claude_dir / "history.jsonl").read_bytes().splitlines()
+    assert merged == [b'{"display": "one"}', b'{"display": "two"}', torn]
+    assert paths.credentials("claude", "Personal").exists()
+
+
+def test_a_line_separator_inside_a_prompt_does_not_split_the_line(paths):
+    """JSON allows U+2028 unescaped inside a string. str.splitlines treats it
+    as a line break, so merging cut that entry in two and neither half was
+    JSON any more."""
+    make_legacy_profile(paths, "Work", email="w@example.test", sessions=2)
+    make_legacy_profile(paths, "Personal", email="p@example.test", sessions=1)
+    os.symlink(paths.legacy_profiles_dir / "Work", paths.claude_dir,
+               target_is_directory=True)
+    entry = '{"display": "first second"}'
+    (paths.legacy_profiles_dir / "Work" / "history.jsonl").write_text(
+        '{"display": "one"}\n', encoding="utf-8")
+    (paths.legacy_profiles_dir / "Personal" / "history.jsonl").write_text(
+        entry + "\n", encoding="utf-8")
+
+    migrate.run(paths, now_ms=NOW)
+
+    merged = (paths.claude_dir / "history.jsonl").read_text(encoding="utf-8")
+    assert merged == '{"display": "one"}\n' + entry + "\n"

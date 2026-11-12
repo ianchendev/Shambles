@@ -287,3 +287,19 @@ def test_a_marker_naming_a_missing_profile_is_not_carried_over(paths):
 
     assert plan.active is None
     assert not paths.active_marker("claude").exists()
+
+
+def test_an_old_marker_that_is_not_text_does_not_stop_the_migration(paths):
+    """A torn write to the old `active` file. Reading it raised
+    UnicodeDecodeError past every handler, at every start, with the new store
+    never appearing. It names nobody, so no profile is carried over as
+    active and everything else comes across."""
+    make_v1_profile(paths, "Work", email="w@example.test")
+    paths.legacy_active_marker.write_bytes(b"\xff\xfe\xfa")
+
+    plan = migrate.migrate_store(paths)
+
+    assert plan.profiles == ["Work"]
+    assert plan.active is None
+    assert paths.credentials("claude", "Work").exists()
+    assert not migrate.store_migration_needed(paths)

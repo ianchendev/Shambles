@@ -179,18 +179,24 @@ def _merge_jsonl(src: Path, dest: Path) -> int:
     Prompt history is append-only and each line stands alone, so concatenating
     the two and removing exact duplicates is faithful. Unparseable lines are
     carried across verbatim rather than dropped.
+
+    Read and written as bytes, which is what makes that last sentence true.
+    As text, a final line cut inside a multi-byte character (the writer was
+    killed mid-append) fails to decode and takes the whole migration with it,
+    and ``str.splitlines`` breaks a line at U+2028, which JSON allows inside a
+    string, leaving two halves that are no longer JSON. Bytes split only at
+    the newline the writer put there.
     """
     if not src.is_file():
         return 0
-    existing = dest.read_text(encoding="utf-8").splitlines() if dest.is_file() else []
+    existing = dest.read_bytes().splitlines() if dest.is_file() else []
     seen = {line for line in existing if line.strip()}
-    added = [line for line in src.read_text(encoding="utf-8").splitlines()
+    added = [line for line in src.read_bytes().splitlines()
              if line.strip() and line not in seen]
     if not added:
         return 0
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text("\n".join(existing + added).rstrip("\n") + "\n",
-                    encoding="utf-8")
+    dest.write_bytes(b"\n".join(existing + added).rstrip(b"\n") + b"\n")
     return len(added)
 
 
@@ -448,8 +454,12 @@ def _copy_store(paths, provider_id: str, plan: StorePlan) -> None:
     # MISSING_PROFILE on a brand-new layout, which is a confusing thing to
     # greet someone with after an automatic migration.
     marked = None
-    if paths.legacy_active_marker.is_file():
-        marked = paths.legacy_active_marker.read_text(encoding="utf-8").strip() or None
+    try:
+        if paths.legacy_active_marker.is_file():
+            marked = (paths.legacy_active_marker.read_text(encoding="utf-8")
+                      .strip() or None)
+    except ValueError:
+        marked = None  # not text: a torn write, and it names nobody
     if marked in plan.profiles:
         plan.active = marked
         if not paths.active_marker(provider_id).exists():
