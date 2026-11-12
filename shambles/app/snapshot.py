@@ -70,6 +70,10 @@ class Account:
     expires_at_ms: int | None = None
     #: The one or two words for a state that needs the user, else None.
     status_label: str | None = None
+    #: Whether this provider publishes usage figures at all. Tells "none
+    #: recorded yet", which is worth a line of explanation, from "never will
+    #: be", which is not.
+    publishes_usage: bool = False
 
 
 @dataclass(frozen=True)
@@ -160,6 +164,7 @@ def _group(paths, provider, *, platform: str, now_ms: int) -> Group:
             usage=_windows(profile, now_ms=now_ms),
             expires_at_ms=profile.liveness.expires_at_ms,
             status_label=profiles_mod.expiry_label(profile),
+            publishes_usage=profile.publishes_usage,
         ))
     return Group(provider.id, provider.display_name, surfaces, accounts,
                  state=current.kind, live_email=current.live_email,
@@ -315,6 +320,7 @@ def to_dict(snapshot: Snapshot) -> dict:
                         "login_hint": a.login_hint,
                         "expires_at_ms": a.expires_at_ms,
                         "status_label": a.status_label,
+                        "publishes_usage": a.publishes_usage,
                         "usage": [
                             {
                                 "label": w.label,

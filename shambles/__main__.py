@@ -19,6 +19,7 @@ shambles — switch between Claude Code and Codex accounts
   shambles                     open the terminal interface, on a terminal
   shambles tui                 open the terminal interface explicitly
   shambles gui                 open the window instead
+  shambles gui --new           open the new window (preview)
   shambles list                list every account and its state
   shambles list --json         the same thing, machine-readable
   shambles switch claude Work  switch without opening an interface
@@ -50,6 +51,25 @@ Shambles needs Tkinter, which is not installed.
 
 On Windows and macOS, Tkinter ships with Python — if you see this there,
 reinstall Python from python.org rather than using the Store build.
+"""
+
+QT_MISSING = """\
+The new Shambles window needs PySide6 (Qt), which could not be loaded:
+
+  {reason}
+
+If PySide6 is not installed, add it:
+
+  pip install 'shambles[gui]'
+
+If it is installed and the message names a missing library, that library is
+part of a normal desktop but absent from a bare Linux or WSL install:
+
+  Debian/Ubuntu   sudo apt install libegl1 libxcb-cursor0 libxkbcommon-x11-0
+
+The released window bundle carries those libraries itself. Until this
+works, `shambles gui` opens the classic window and `shambles` the terminal
+dashboard.
 """
 
 TEXTUAL_MISSING = """\

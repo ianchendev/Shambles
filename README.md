@@ -360,6 +360,21 @@ gets labelled `as of 20m ago`.
 Every control, the add-account walkthrough, and the two migrations the window
 runs on its own are in [docs/how-it-works.md](docs/how-it-works.md).
 
+**A redesigned window is in preview.** `shambles gui --new` opens it. It does
+everything above in one resizable window with no separate dialogs, adds light
+and dark themes, and can be driven from the keyboard (`1` to `9` switch,
+`/` filters, `Ctrl+N` adds). It is built on Qt, which is an optional extra
+and not in the release binaries yet:
+
+```bash
+pip install 'shambles[gui]'      # or: pipx inject shambles PySide6-Essentials
+shambles gui --new
+```
+
+On a bare Linux or WSL install Qt also needs three system libraries, and
+says so if they are missing: `sudo apt install libegl1 libxcb-cursor0
+libxkbcommon-x11-0`.
+
 ### The terminal dashboard
 
 `shambles` opens a keyboard dashboard instead of the window whenever you run
