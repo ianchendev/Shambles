@@ -85,6 +85,14 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **One address in two organisations is no longer treated as one account.**
+  With a personal subscription and a Team or Console seat under the same
+  address, or two ChatGPT workspaces, Shambles saw one account: the "signed in
+  as someone else" warning never appeared between them, and a switch could
+  file one login's token over the other's saved one. The organisation (Claude)
+  and the ChatGPT account (Codex) now count too, the warning names them when
+  the addresses match, and usage figures from the other organisation are no
+  longer filed under this one.
 - **A cancelled or failed sign-in in the terminal UI puts you back where you
   were.** Pressing `l` and then Esc, or a sign-in that wrote nothing, left the
   expired account live and the working one signed out, with "The vendor

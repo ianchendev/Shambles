@@ -75,7 +75,9 @@
     "email": "https://api.openai.com/profile.email",
     "display_name": "https://api.openai.com/profile.name",
     "org": "https://api.openai.com/auth.organizations.0.title",
-    "plan": "https://api.openai.com/auth.chatgpt_plan_type"
+    "plan": "https://api.openai.com/auth.chatgpt_plan_type",
+    "account": "https://api.openai.com/auth.chatgpt_account_id",
+    "account_note": "one address can belong to several ChatGPT accounts (personal, team workspace), each a separate login; a known mismatch is drift"
   },
   "companion": null,
   "companion_note": "none \u2014 auth.json is self-contained, so there is no splice step and no way for identity and token to desynchronize",

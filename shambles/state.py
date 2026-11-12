@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import ShamblesError
+from .providers import Identity
 from .providers import spec as specmod
 
 #: The marker names a profile, and the live identity matches it.
@@ -99,10 +100,10 @@ def profile_names(paths, provider_id: str) -> list[str]:
     return [p.name for p in entries if not p.name.startswith(".")]
 
 
-def live_email(paths, provider, *, platform: str) -> str | None:
-    """Who the provider's live store says is signed in.
+def live_identity(paths, provider, *, platform: str):
+    """Who the provider's live store says is signed in, as an ``Identity``.
 
-    ``None`` when the store cannot be read. A locked Keychain or a credential
+    Empty when the store cannot be read. A locked Keychain or a credential
     file with the wrong permissions is not evidence of anybody, and raising
     here took the window down on startup before it could say what was wrong.
     The operations that would actually move a credential read the store
@@ -111,19 +112,62 @@ def live_email(paths, provider, *, platform: str) -> str | None:
     try:
         blob = provider.store(home=paths.home, platform=platform).read()
     except (OSError, ShamblesError):
-        return None
-    return provider.identity(blob, home=paths.home, active=True).email
+        return Identity()
+    return provider.identity(blob, home=paths.home, active=True)
 
 
-def profile_email(paths, provider, name: str) -> str | None:
-    """Who a stashed profile belongs to."""
+def live_email(paths, provider, *, platform: str) -> str | None:
+    """Who the provider's live store says is signed in: the address only."""
+    return live_identity(paths, provider, platform=platform).email
+
+
+def profile_identity(paths, provider, name: str):
+    """Who a stashed profile belongs to, as an ``Identity``."""
     directory = paths.profile_dir(provider.id, name)
     try:
         blob = paths.credentials(provider.id, name).read_bytes()
     except OSError:
         blob = None
     return provider.identity(blob, home=paths.home, profile_dir=directory,
-                             active=False).email
+                             active=False)
+
+
+def profile_email(paths, provider, name: str) -> str | None:
+    """Who a stashed profile belongs to: the address only."""
+    return profile_identity(paths, provider, name).email
+
+
+def disagree(one, other) -> bool:
+    """Whether two identities are provably different logins.
+
+    A known mismatch in the address, or in the organisation or ChatGPT
+    account behind it: one address can sign in to several, and each is a
+    separate login with its own token. Anything unknown on either side is
+    not evidence of anything -- a brand new profile has no expectation to
+    violate, and a sidecar saved before a field existed is not a mismatch.
+    """
+    if one.email and other.email and one.email != other.email:
+        return True
+    return bool(one.account and other.account and one.account != other.account)
+
+
+def describe(identity, other=None) -> str | None:
+    """How to name ``identity`` beside ``other`` so the two read differently.
+
+    The address, plus the organisation when the addresses are the same:
+    "signed in as me@, but this profile holds me@" explains nothing. When
+    the organisations have no names, or the same one, their ids tell them
+    apart.
+    """
+    if not identity.email:
+        return None
+    if (other is None or other.email != identity.email
+            or not disagree(identity, other)):
+        return identity.email
+    if identity.org and identity.org != other.org:
+        return f"{identity.email} ({identity.org})"
+    tag = (identity.account or "")[:8] or "unknown"
+    return f"{identity.email} (organisation {tag})"
 
 
 def holders_of_live_credential(paths, provider, *,
@@ -246,20 +290,26 @@ def owner_by_address(paths, provider, *, platform: str = sys.platform):
     and lineage no profile can share yet, it is the only clue there is, and
     switching to the profile it names is how the user confirms it.
     """
-    live = live_email(paths, provider, platform=platform)
-    if not live:
+    live = live_identity(paths, provider, platform=platform)
+    if not live.email:
         return None
+    exact, loose = [], []
     for name in profile_names(paths, provider.id):
-        if profile_email(paths, provider, name) == live:
-            return name
-    return None
+        saved = profile_identity(paths, provider, name)
+        if saved.email != live.email or disagree(saved, live):
+            continue
+        # The same organisation known on both sides beats one not recorded.
+        (exact if saved.account and saved.account == live.account
+         else loose).append(name)
+    return (exact or loose or [None])[0]
 
 
 def inspect(paths, provider, *, platform: str = sys.platform) -> State:
     """Classify one provider's login without touching anything."""
     names = profile_names(paths, provider.id)
     marked = read_active(paths, provider.id)
-    live = live_email(paths, provider, platform=platform)
+    live_id = live_identity(paths, provider, platform=platform)
+    live = live_id.email
 
     # A marker naming a profile that is gone matters more than the store being
     # empty -- otherwise deleting the last profile reads as a clean unmanaged
@@ -271,7 +321,8 @@ def inspect(paths, provider, *, platform: str = sys.platform) -> State:
     if marked is None:
         return State(UNKNOWN, provider.id, live_email=live)
 
-    expected = profile_email(paths, provider, marked)
+    expected_id = profile_identity(paths, provider, marked)
+    expected = expected_id.email
 
     # Ask the credential before the address, exactly as owner_of_live does.
     # The address is whatever the vendor's config file says, and for Claude
@@ -290,15 +341,18 @@ def inspect(paths, provider, *, platform: str = sys.platform) -> State:
         return State(MANAGED, provider.id, profile=marked,
                      live_email=expected or live)
     if owners:
+        theirs = profile_identity(paths, provider, owners[0])
+        if not theirs.email:
+            theirs = live_id
         return State(DRIFTED, provider.id, profile=marked,
-                     live_email=(profile_email(paths, provider, owners[0])
-                                 or live),
-                     expected_email=expected)
+                     live_email=describe(theirs, expected_id),
+                     expected_email=describe(expected_id, theirs))
 
     # Only call it drift when both sides actually name someone. A profile that
     # has never been logged into has no expectation to violate.
-    if expected and live and expected != live:
-        return State(DRIFTED, provider.id, profile=marked, live_email=live,
-                     expected_email=expected)
+    if disagree(expected_id, live_id):
+        return State(DRIFTED, provider.id, profile=marked,
+                     live_email=describe(live_id, expected_id),
+                     expected_email=describe(expected_id, live_id))
 
     return State(MANAGED, provider.id, profile=marked, live_email=live or expected)

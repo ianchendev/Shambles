@@ -308,6 +308,7 @@ class CodexProvider:
             display_name=specmod.pointer(claims, block["display_name"]),
             org=specmod.pointer(claims, block["org"]),
             plan=specmod.pointer(claims, block["plan"]),
+            account=specmod.pointer(claims, block.get("account", "")),
         )
 
     # -- what else has to move --------------------------------------------

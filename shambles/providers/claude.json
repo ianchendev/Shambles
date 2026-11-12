@@ -83,6 +83,8 @@
     "display_name": "oauthAccount.displayName",
     "org": "oauthAccount.organizationName",
     "plan": "oauthAccount.organizationRateLimitTier",
+    "account": "oauthAccount.organizationUuid",
+    "account_note": "one address can belong to several organisations (a subscription and a Team or Console seat), each a separate login; a known mismatch is drift",
     "plan_note": "NOT claudeAiOauth.subscriptionType, which read 'team' for a Max 5x account"
   },
   "companion": {

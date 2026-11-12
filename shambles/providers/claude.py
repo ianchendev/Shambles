@@ -373,6 +373,7 @@ class ClaudeProvider:
             display_name=specmod.pointer(data, block["display_name"]),
             org=specmod.pointer(data, block["org"]),
             plan=specmod.pointer(data, block["plan"]),
+            account=specmod.pointer(data, block.get("account", "")),
         )
 
     # -- what else has to move --------------------------------------------
