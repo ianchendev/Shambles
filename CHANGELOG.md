@@ -159,6 +159,13 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **The terminal UI no longer loses the account list after a resize.**
+  Making the window narrower could leave the header as tall as the wide
+  banner it had just replaced, around the one-line header, with the account
+  list pushed off the screen until the next restart. The header now takes
+  its size from the window it is drawn in. In ASCII mode the details pane no
+  longer draws a block-glyph scrollbar when it overflows.
+
 - **The new window no longer says using a Claude account renews its login.**
   Claude's login lasts a fixed time from sign-in, about thirty days, and no
   amount of use moves it. An opened row now says "Using the account does
