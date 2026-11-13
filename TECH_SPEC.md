@@ -819,10 +819,30 @@ a refresh in flight lands first. Whose login is live, and where it goes, is
 decided again once the locks are held, because a refresh that landed during
 the wait changed the bytes that answer was about. A lock directory untouched
 for 60 s is cleared as the client would; anything else in the way is waited
-on, and still there after 15 s refuses the switch with nothing moved. The
-switch touches its locks as it works and removes them only if they still
-carry its last touch, so a lock the client has since taken over is left
-alone. With no config directory there is no client and no lock.
+on, and still there after 15 s refuses the switch with nothing moved.
+
+The switch removes a lock only while it can prove the lock is its own: the
+directory is unchanged (device, inode, mtime) and is less than 50 s old, 10 s
+inside the client's 60 s stale interval. Its age is the greater of the client's
+own reckoning (the wall clock against the lock's mtime, which counts time the
+machine slept; the monotonic clock on macOS does not) and the time the switch
+saw pass (in case the wall clock was set back). The client takes a lock over in
+only two ways: a lock untouched for 60 s, or a dead holder's lock whose owner
+record (`lockBirthtimeMs`) matches, and Shambles writes no owner record. So
+nothing that follows the protocol can have taken the lock in that time. Past
+it, the lock may be the client's own, made in the same place, and on Windows,
+whose file times move in coarse ticks, possibly with the very same mtime. It is
+left for the stale rule to clear. The same proof is checked before the outgoing
+login is stashed and before the live login is written; a switch that fails it
+is refused there, before the live login moves. A lock that passes is touched,
+so the step that follows (a Keychain call can sit behind a dialog) starts with
+the whole stale interval. The touch counts only if, once it is done, the lock
+as it was would still be under 50 s old: then nobody can have taken it between
+the proof and the touch. Otherwise the lock is never trusted again. A touch
+changes whatever directory is at the path, and an earlier version that touched
+without proof adopted a lock the client had taken over and then removed it
+(seen as an intermittent Windows CI failure).
+With no config directory there is no client and no lock.
 
 ### 4.4 Known edge case — the 8-hour access token
 
