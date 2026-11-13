@@ -72,3 +72,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
 asyncio_mode = "auto"
+# A test stuck longer than this dumps every thread's stack, so a hang leaves
+# evidence instead of an idle process (one did, for 80 minutes, on a shared
+# WSLg display).
+faulthandler_timeout = 300
