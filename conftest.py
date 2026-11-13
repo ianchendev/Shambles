@@ -107,6 +107,76 @@ def no_real_window(monkeypatch):
     monkeypatch.setattr(launch, "window_bundle", lambda **_kw: None)
 
 
+#: Every native Tk dialog, and the answer that changes nothing: No, Cancel,
+#: nothing typed. "ok" is what a message box returns once dismissed.
+SAFE_ANSWERS = {
+    "tkinter.messagebox": {
+        "showinfo": "ok", "showwarning": "ok", "showerror": "ok",
+        "askquestion": "no", "askokcancel": False, "askyesno": False,
+        "askyesnocancel": None, "askretrycancel": False,
+    },
+    "tkinter.simpledialog": {
+        "askstring": None, "askinteger": None, "askfloat": None,
+    },
+}
+
+
+class RealDialogs:
+    """The native dialogs a test opened without standing in for them."""
+
+    def __init__(self):
+        self.opened = []
+
+    def verdict(self):
+        if self.opened:
+            pytest.fail(
+                "a native dialog would have opened and waited for a person; "
+                "stand in for it, as the tests that expect one do:\n"
+                + "\n".join(f"  {kind}({title!r}, {text!r})"
+                            for kind, title, text in self.opened),
+                pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def no_real_dialogs(monkeypatch):
+    """No test ever waits on a native dialog.
+
+    They are modal, and on a CI runner nobody answers one: three Windows jobs
+    sat in ``tests/test_gui_import.py`` until the six-hour job limit killed
+    them, and the one ``faulthandler_timeout`` caught was parked in
+    ``messagebox.askyesno`` behind a remove button no test had pressed (a
+    timer that outlived its card ran the button; see ``motion.later``). A
+    retry cannot rescue a hang, and the next bug that opens a dialog should
+    fail one test, not stop the run.
+
+    So every dialog answers the safe way at once, and the test that opened
+    one fails, naming it. Raising instead would not do: Tk prints an error
+    from a callback and carries on, and the test would pass. Tests that
+    expect a dialog patch it themselves, on top of this.
+    """
+    seen = RealDialogs()
+    if "tkinter" not in sys.modules:
+        try:
+            import tkinter  # noqa: F401
+        except ImportError:
+            yield seen
+            return
+    import importlib
+
+    def stand_in(kind, answer):
+        def ask(title=None, message=None, *_args, **_kwargs):
+            seen.opened.append((kind, title, message))
+            return answer
+        return ask
+
+    for module_name, answers in SAFE_ANSWERS.items():
+        module = importlib.import_module(module_name)
+        for kind, answer in answers.items():
+            monkeypatch.setattr(module, kind, stand_in(kind, answer))
+    yield seen
+    seen.verdict()
+
+
 @pytest.fixture
 def home(tmp_path):
     """A synthetic home directory. Never the real one."""
@@ -128,6 +198,12 @@ def make_app():
     cannot leak a window into the next test.
     """
     created = []
+    foreign = []
+
+    def _described(event):
+        what = (f"key {event.keysym}" if str(event.type) == "KeyPress"
+                else f"button {event.num}")
+        return f"{what} on {event.widget} at {event.x_root},{event.y_root}"
 
     def _make(paths, *, platform="linux"):
         """Build the window against a synthetic home.
@@ -147,6 +223,14 @@ def make_app():
         except tk.TclError as exc:
             pytest.skip(f"no usable display: {exc}")
         created.append(app)
+        # No test presses a mouse button or a key: they call commands
+        # directly and generate only <Enter> and <Leave>. A press or a key
+        # here came from outside the process, and whatever the test then
+        # saw is not what it set up.
+        app.bind_all("<ButtonPress>", lambda e: foreign.append(_described(e)),
+                     add="+")
+        app.bind_all("<KeyPress>", lambda e: foreign.append(_described(e)),
+                     add="+")
         return app
 
     yield _make
@@ -156,6 +240,10 @@ def make_app():
             app.destroy()
         except Exception:
             pass
+    if foreign:
+        pytest.fail("real input reached a test window, so the test saw "
+                    "something it did not set up:\n  " + "\n  ".join(foreign),
+                    pytrace=False)
 
 
 posix_only = pytest.mark.skipif(

@@ -10,6 +10,8 @@ import pytest
 from textual.events import Key
 from textual.widgets import Input
 
+from settling import screen_text, settled
+
 from shambles import login, settings, update_check
 from shambles.app.service import (
     HIDDEN_LINE, ActionError, ActionPlan, ActionResult,
@@ -221,8 +223,6 @@ def empty_service():
     return SnapshotService(Snapshot(1, groups=[Group("claude", "Claude")]))
 
 
-def screen_text(app):
-    return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
 
 
 def flattened(app):
@@ -257,7 +257,16 @@ async def test_enter_switches_selected_account_and_shows_fresh_result(service):
     async with app.run_test() as pilot:
         assert app.query_one(AccountList).has_focus
         await pilot.press("j", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.switch_calls == [('claude', 'Work')]
+            and service.plan_calls == [('claude', 'Work')]
+            and service.switch_thread != threading.get_ident()
+            and app.screen.id == 'result'
+            and app.screen.result is service.switch_result
+            and 'Switched to Work.' in screen_text(app)
+            and 'Restart existing sessions.' in screen_text(app)
+            and 'Launch' in screen_text(app)
+            and app.snapshot is service.switch_result.snapshot))
 
         assert service.switch_calls == [("claude", "Work")]
         assert service.plan_calls == [("claude", "Work")]
@@ -270,6 +279,11 @@ async def test_enter_switches_selected_account_and_shows_fresh_result(service):
         assert app.snapshot is service.switch_result.snapshot
 
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            (app.selected_provider, app.selected_account) == ('claude', 'Work')
+            and app.query_one(AccountList).highlighted == 0
+            and 'updated@example.test' in screen_text(app)
+            and service.current == before))
         assert (app.selected_provider, app.selected_account) == ("claude", "Work")
         assert app.query_one(AccountList).highlighted == 0
         assert "updated@example.test" in screen_text(app)
@@ -282,20 +296,29 @@ async def test_switch_worker_rejects_duplicate_input_and_refresh_but_allows_navi
     async with app.run_test() as pilot:
         try:
             await pilot.press("j", "enter", "enter", "enter", "r")
-            await pilot.pause()
+            await settled(pilot, app, lambda: (
+                service.switch_started.is_set()
+                and service.switch_calls == [('claude', 'Work')]
+                and service.refresh_calls == 0))
             assert service.switch_started.is_set()
             assert service.switch_calls == [("claude", "Work")]
             assert service.refresh_calls == 0
             await pilot.press("j", "?")
+            await settled(pilot, app, lambda: app.screen.id == 'help')
             assert app.screen.id == "help"
             await pilot.press("escape")
+            await settled(pilot, app, lambda: (
+                (app.selected_provider, app.selected_account) == ('codex', 'Personal')))
             assert (app.selected_provider, app.selected_account) == ("codex", "Personal")
         finally:
             service.release_switch.set()
         await app.workers.wait_for_complete()
-        await pilot.pause()
+        await settled(pilot, app, lambda: app.screen.id == 'result')
         assert app.screen.id == "result"
         await pilot.press("escape", "r")
+        await settled(pilot, app, lambda: (
+            service.refresh_calls == 1
+            and (app.selected_provider, app.selected_account) == ('codex', 'Personal')))
         assert service.refresh_calls == 1
         assert (app.selected_provider, app.selected_account) == ("codex", "Personal")
 
@@ -305,7 +328,8 @@ async def test_rapid_switch_uses_visible_cursor_before_selection_messages_arrive
     async with app.run_test() as pilot:
         app.post_message(Key("j", "j"))
         app.post_message(Key("enter", "enter"))
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.switch_calls == [('claude', 'Work')]))
         assert service.switch_calls == [("claude", "Work")]
 
 
@@ -313,6 +337,11 @@ async def test_active_account_enter_performs_no_switch(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("enter")
+        await settled(pilot, app, lambda: (
+            service.switch_calls == []
+            and service.plan_calls == []
+            and app.is_running
+            and app.screen.id != 'result'))
         assert service.switch_calls == []
         assert service.plan_calls == []
         assert app.is_running
@@ -335,20 +364,37 @@ async def test_undersized_terminal_cannot_begin_switch(service, monkeypatch, hei
         await pilot.press("j")
         if resize:
             await pilot.resize_terminal(80, height)
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.selected_account == 'Work'
+            and not app.query_one('#dashboard-body').display
+            and 'Terminal is too small' in screen_text(app)))
         assert app.selected_account == "Work"
         assert not app.query_one("#dashboard-body").display
         assert "Terminal is too small" in screen_text(app)
 
         await pilot.press("enter")
+        await settled(pilot, app, lambda: (
+            begin_calls == []
+            and service.plan_calls == []
+            and service.switch_calls == []))
         assert begin_calls == []
         assert service.plan_calls == []
         assert service.switch_calls == []
 
         await pilot.press("k", "j", "?")
+        await settled(pilot, app, lambda: (
+            app.selected_account == 'Work'
+            and app.screen.id == 'help'))
         assert app.selected_account == "Work"
         assert app.screen.id == "help"
+        # Keys are handled in order, so the Enter before "?" is done with.
+        assert begin_calls == []
+        assert service.plan_calls == []
+        assert service.switch_calls == []
         await pilot.press("escape", "q")
+        await settled(pilot, app, lambda: (
+            not app.is_running
+            and app.return_value is None))
         assert not app.is_running
         assert app.return_value is None
 
@@ -357,10 +403,13 @@ async def test_switch_reenabled_when_terminal_reaches_minimum_height(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(80, 8)) as pilot:
         await pilot.press("j", "enter")
+        await settled(pilot, app, lambda: service.switch_calls == [])
         assert service.switch_calls == []
         await pilot.resize_terminal(80, 16)
         await pilot.press("enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.switch_calls == [('claude', 'Work')]
+            and app.screen.id == 'result'))
         assert service.switch_calls == [("claude", "Work")]
         assert app.screen.id == "result"
 
@@ -372,9 +421,13 @@ async def test_confirmed_switch_refuses_mutation_after_terminal_shrinks(service)
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "enter")
+        await settled(pilot, app, lambda: app.screen.id == 'confirm-action')
         assert app.screen.id == "confirm-action"
         await pilot.resize_terminal(80, 8)
         await pilot.press("enter")
+        await settled(pilot, app, lambda: (
+            service.switch_calls == []
+            and not app.mutation_running))
         assert service.switch_calls == []
         assert not app.mutation_running
 
@@ -390,19 +443,31 @@ async def test_switch_failure_stays_visible_until_escape(service, key):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'The store is locked.' in screen_text(app)
+            and 'Unlock it and retry.' in screen_text(app)
+            and 'Account status is unavailable.' in screen_text(app)
+            and 'Launch' not in screen_text(app)))
         assert app.screen.id == "result"
         assert "The store is locked." in screen_text(app)
         assert "Unlock it and retry." in screen_text(app)
         assert "Account status is unavailable." in screen_text(app)
         assert "Launch" not in screen_text(app)
         await pilot.press(key)
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and app.is_running
+            and service.switch_calls == [('claude', 'Work')]
+            and service.refresh_calls == 0))
         assert app.screen.id == "result"
         assert app.is_running
         assert service.switch_calls == [("claude", "Work")]
         assert service.refresh_calls == 0
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            app.snapshot is service.current
+            and app.selected_account == 'Work'))
         assert app.snapshot is service.current
         assert app.selected_account == "Work"
 
@@ -413,14 +478,20 @@ async def test_switch_launch_choice_exits_with_original_provider_after_navigatio
     async with app.run_test() as pilot:
         try:
             await pilot.press("j", "enter", "j")
+            await settled(pilot, app, lambda: app.selected_provider == 'codex')
             assert app.selected_provider == "codex"
         finally:
             service.release_switch.set()
         await app.workers.wait_for_complete()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.return_value is None
+            and app.is_running))
         assert app.return_value is None
         assert app.is_running
         await pilot.press("enter")
+        await settled(pilot, app, lambda: (
+            not app.is_running
+            and app.return_value == 'claude'))
         assert not app.is_running
         assert app.return_value == "claude"
 
@@ -431,8 +502,12 @@ async def test_switch_result_is_quittable_without_launching(service, ok):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "enter")
-        await pilot.pause()
+        # q on the dashboard quits too, so be on the result screen first.
+        await settled(pilot, app, lambda: app.screen.id == "result")
         await pilot.press("q")
+        await settled(pilot, app, lambda: (
+            not app.is_running
+            and app.return_value is None))
         assert not app.is_running
         assert app.return_value is None
 
@@ -442,7 +517,13 @@ async def test_unexpected_switch_failure_stays_visible_without_exception_details
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.is_running
+            and app.screen.id == 'result'
+            and not app.screen.result.ok
+            and 'Could not switch accounts.' in screen_text(app)
+            and 'sensitive upstream' not in screen_text(app)
+            and not app.mutation_running))
         assert app.is_running
         assert app.screen.id == "result"
         assert not app.screen.result.ok
@@ -450,6 +531,7 @@ async def test_unexpected_switch_failure_stays_visible_without_exception_details
         assert "sensitive upstream" not in screen_text(app)
         assert not app.mutation_running
         await pilot.press("escape", "r")
+        await settled(pilot, app, lambda: service.refresh_calls == 1)
         assert service.refresh_calls == 1
 
 
@@ -461,16 +543,26 @@ async def test_switch_honors_service_confirmation_plan_and_cancel(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "enter")
+        await settled(pilot, app, lambda: (
+            service.switch_calls == []
+            and 'Confirm switching Work?' in screen_text(app)
+            and 'The running session retains its login.' in screen_text(app)))
         assert service.switch_calls == []
         assert "Confirm switching Work?" in screen_text(app)
         assert "The running session retains its login." in screen_text(app)
         await pilot.press("r", "j")
+        await settled(pilot, app, lambda: service.refresh_calls == 0)
         assert service.refresh_calls == 0
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            service.switch_calls == []
+            and app.selected_account == 'Work'))
         assert service.switch_calls == []
         assert app.selected_account == "Work"
         await pilot.press("enter", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.switch_calls == [('claude', 'Work')]
+            and app.screen.id == 'result'))
         assert service.switch_calls == [("claude", "Work")]
         assert app.screen.id == "result"
 
@@ -481,16 +573,21 @@ async def test_switch_finishing_while_help_is_open_keeps_result_visible(service)
     async with app.run_test() as pilot:
         try:
             await pilot.press("j", "enter", "?")
+            await settled(pilot, app, lambda: app.screen.id == 'help')
             assert app.screen.id == "help"
         finally:
             service.release_switch.set()
         await app.workers.wait_for_complete()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'Switched to Work.' in screen_text(app)))
         assert app.screen.id == "result"
         assert "Switched to Work." in screen_text(app)
         await pilot.press("escape")
+        await settled(pilot, app, lambda: app.screen.id == 'help')
         assert app.screen.id == "help"
         await pilot.press("escape")
+        await settled(pilot, app, lambda: app.selected_account == 'Work')
         assert app.selected_account == "Work"
 
 
@@ -500,6 +597,13 @@ async def test_menu_opens_for_selected_account_and_lists_its_actions(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "m")
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'account-menu'
+            and 'Actions for Work' in screen_text(app)
+            and 'Save current login' in screen_text(app)
+            and 'Add new profile' in screen_text(app)
+            and 'Rename' in screen_text(app)
+            and 'Remove' in screen_text(app)))
         assert app.screen.id == "account-menu"
         assert "Actions for Work" in screen_text(app)
         assert "Save current login" in screen_text(app)
@@ -512,8 +616,16 @@ async def test_menu_can_be_cancelled_without_any_mutation(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("m")
+        await settled(pilot, app, lambda: app.screen.id == 'account-menu')
         assert app.screen.id == "account-menu"
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            app.screen.id != 'account-menu'
+            and app.is_running
+            and service.save_calls == []
+            and service.add_calls == []
+            and service.rename_calls == []
+            and service.remove_calls == []))
         assert app.screen.id != "account-menu"
         assert app.is_running
         assert service.save_calls == []
@@ -527,10 +639,20 @@ async def test_undersized_terminal_cannot_open_menu_login_or_eject(service, heig
     app = ShamblesTUI(service)
     async with app.run_test(size=(80, height)) as pilot:
         await pilot.press("m")
+        await settled(pilot, app, lambda: app.screen.id != 'account-menu')
         assert app.screen.id != "account-menu"
         await pilot.press("l")
+        await settled(pilot, app, lambda: service.login_calls == [])
         assert service.login_calls == []
         await pilot.press("x")
+        await settled(pilot, app, lambda: service.eject_plan_calls == 0)
+        assert service.eject_plan_calls == 0
+        # Help is not gated on height. Keys are handled in order, so once it
+        # is open, m, l and x have each been refused or not.
+        await pilot.press("?")
+        await settled(pilot, app, lambda: app.screen.id == "help")
+        assert app.screen.id != "account-menu"
+        assert service.login_calls == []
         assert service.eject_plan_calls == 0
 
 
@@ -540,10 +662,16 @@ async def test_save_prompts_for_a_name_and_saves_the_current_login(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("m", "s")
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'name-input'
+            and 'Save the current claude login' in screen_text(app)))
         assert app.screen.id == "name-input"
         assert "Save the current claude login" in screen_text(app)
         await pilot.press(*"backup", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.save_calls == [('claude', 'backup')]
+            and app.screen.id == 'result'
+            and 'Saved backup.' in screen_text(app)))
         assert service.save_calls == [("claude", "backup")]
         assert app.screen.id == "result"
         assert "Saved backup." in screen_text(app)
@@ -553,8 +681,12 @@ async def test_save_can_be_cancelled_without_calling_the_service(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("m", "s")
+        await settled(pilot, app, lambda: app.screen.id == 'name-input')
         assert app.screen.id == "name-input"
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            service.save_calls == []
+            and app.screen.id != 'name-input'))
         assert service.save_calls == []
         assert app.screen.id != "name-input"
 
@@ -568,7 +700,10 @@ async def test_save_failure_shows_the_service_error(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("m", "s", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'No live login found.' in screen_text(app)
+            and 'Log in first.' in screen_text(app)))
         assert app.screen.id == "result"
         assert "No live login found." in screen_text(app)
         assert "Log in first." in screen_text(app)
@@ -582,16 +717,22 @@ async def test_add_prompts_for_a_name_then_signs_it_in(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("a")  # top-level
+        await settled(pilot, app, lambda: app.screen.id == 'add-account')
         assert app.screen.id == "add-account"
         await pilot.press("tab")  # name Input
         await pilot.press(*"fresh", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.add_calls == [('claude', 'fresh')]
+            and app.screen.id == 'login-progress'))
         assert service.add_calls == [("claude", "fresh")]
         assert app.screen.id == "login-progress"
         service.finish_login(ActionResult(
             True, "add", "Added fresh and signed in.",
             snapshot=service.current))
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'Added fresh and signed in.' in screen_text(app)
+            and not app.mutation_running))
         assert app.screen.id == "result"
         assert "Added fresh and signed in." in screen_text(app)
         assert not app.mutation_running
@@ -601,14 +742,18 @@ async def test_cancelled_add_says_where_the_user_is(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("a", "tab", *"fresh", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: app.screen.id == "login-progress")
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            service.login_handle.cancelled is True))
         assert service.login_handle.cancelled is True
         service.finish_login(ActionResult(
             False, "add", error=ActionError(
                 "login_cancelled", "Sign-in cancelled.",
                 "You are back on 'Personal'. Nothing was lost.")))
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and "You are back on 'Personal'" in screen_text(app)))
         assert app.screen.id == "result"
         assert "You are back on 'Personal'" in screen_text(app)
 
@@ -617,12 +762,17 @@ async def test_add_j_changes_the_selected_provider(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("a")
+        await settled(pilot, app, lambda: app.screen.id == 'add-account')
         assert app.screen.id == "add-account"
         await pilot.press("j")
+        await settled(pilot, app, lambda: (
+            app.screen.query_one('#add-providers').highlighted == 1
+            and app.screen.query_one(Input).value == ''))
         assert app.screen.query_one("#add-providers").highlighted == 1
         assert app.screen.query_one(Input).value == ""
         await pilot.press("tab", *"fresh", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.add_calls == [('codex', 'fresh')]))
         assert service.add_calls == [("codex", "fresh")]
 
 
@@ -630,6 +780,7 @@ async def test_menu_a_uses_the_same_add_overlay(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("m", "a")
+        await settled(pilot, app, lambda: app.screen.id == 'add-account')
         assert app.screen.id == "add-account"
 
 
@@ -638,6 +789,7 @@ async def test_empty_welcome_can_add(empty_service):
     app = ShamblesTUI(empty_service)
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.press("a")
+        await settled(pilot, app, lambda: app.screen.id == 'add-account')
         assert app.screen.id == "add-account"
 
 
@@ -645,8 +797,12 @@ async def test_add_can_be_cancelled_without_calling_the_service(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("a")
+        await settled(pilot, app, lambda: app.screen.id == 'add-account')
         assert app.screen.id == "add-account"
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            service.add_calls == []
+            and app.screen.id != 'add-account'))
         assert service.add_calls == []
         assert app.screen.id != "add-account"
 
@@ -657,11 +813,18 @@ async def test_rename_prefills_the_selected_account_name(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "m", "n")
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'name-input'
+            and 'Rename Work' in screen_text(app)
+            and app.screen.query_one(Input).value == 'Work'))
         assert app.screen.id == "name-input"
         assert "Rename Work" in screen_text(app)
         assert app.screen.query_one(Input).value == "Work"
         await pilot.press("enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.rename_calls == [('claude', 'Work', 'Work')]
+            and app.screen.id == 'result'
+            and 'Renamed to Work.' in screen_text(app)))
         assert service.rename_calls == [("claude", "Work", "Work")]
         assert app.screen.id == "result"
         assert "Renamed to Work." in screen_text(app)
@@ -674,7 +837,8 @@ async def test_rename_can_edit_the_prefilled_name(service):
         for _ in "Work":
             await pilot.press("backspace")
         await pilot.press(*"Job", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.rename_calls == [('claude', 'Work', 'Job')]))
         assert service.rename_calls == [("claude", "Work", "Job")]
 
 
@@ -687,7 +851,9 @@ async def test_rename_failure_shows_the_service_error(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "m", "n", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'That account no longer exists.' in screen_text(app)))
         assert app.screen.id == "result"
         assert "That account no longer exists." in screen_text(app)
 
@@ -698,9 +864,15 @@ async def test_remove_needs_explicit_confirmation(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "m", "d")
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'confirm-action'
+            and service.remove_calls == []))
         assert app.screen.id == "confirm-action"
         assert service.remove_calls == []
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            app.screen.id != 'confirm-action'
+            and service.remove_calls == []))
         assert service.remove_calls == []
 
 
@@ -708,10 +880,17 @@ async def test_remove_confirmed_calls_the_service_and_shows_a_result(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "m", "d")
+        await settled(pilot, app, lambda: (
+            'Remove Work?' in screen_text(app)
+            and 'The saved login will be removed.' in screen_text(app)))
         assert "Remove Work?" in screen_text(app)
         assert "The saved login will be removed." in screen_text(app)
         await pilot.press("enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            len(service.remove_calls) == 1
+            and (service.remove_calls[0].provider, service.remove_calls[0].account) == ('claude', 'Work')
+            and app.screen.id == 'result'
+            and 'Removed Work.' in screen_text(app)))
         assert len(service.remove_calls) == 1
         assert (service.remove_calls[0].provider,
                 service.remove_calls[0].account) == ("claude", "Work")
@@ -729,7 +908,9 @@ async def test_remove_failure_shows_the_service_error(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "m", "d", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'Switch away before removing it.' in screen_text(app)))
         assert app.screen.id == "result"
         assert "Switch away before removing it." in screen_text(app)
 
@@ -738,9 +919,13 @@ async def test_undersized_terminal_refuses_a_confirmed_removal(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "m", "d")
+        await settled(pilot, app, lambda: app.screen.id == 'confirm-action')
         assert app.screen.id == "confirm-action"
         await pilot.resize_terminal(80, 8)
         await pilot.press("enter")
+        await settled(pilot, app, lambda: (
+            service.remove_calls == []
+            and not app.mutation_running))
         assert service.remove_calls == []
         assert not app.mutation_running
 
@@ -751,20 +936,29 @@ async def test_concurrent_mutation_blocks_new_lifecycle_actions_until_released(s
     async with app.run_test() as pilot:
         try:
             await pilot.press("j", "m", "d", "enter")
+            await settled(pilot, app, lambda: (
+                service.mutation_started.is_set()
+                and app.mutation_running))
             assert service.mutation_started.wait(5)
             assert app.mutation_running
             await pilot.press("m")
+            await settled(pilot, app, lambda: app.screen.id != 'account-menu')
             assert app.screen.id != "account-menu"
             await pilot.press("l")
+            await settled(pilot, app, lambda: service.login_calls == [])
             assert service.login_calls == []
             await pilot.press("x")
+            await settled(pilot, app, lambda: service.eject_plan_calls == 0)
             assert service.eject_plan_calls == 0
             await pilot.press("r")
+            await settled(pilot, app, lambda: service.refresh_calls == 0)
             assert service.refresh_calls == 0
         finally:
             service.release_mutation.set()
         await app.workers.wait_for_complete()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and not app.mutation_running))
         assert app.screen.id == "result"
         assert not app.mutation_running
 
@@ -775,11 +969,19 @@ async def test_eject_needs_explicit_confirmation(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("x")
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'confirm-action'
+            and 'Eject Shambles?' in screen_text(app)
+            and '1 account will be ejected.' in screen_text(app)
+            and service.eject_calls == []))
         assert app.screen.id == "confirm-action"
         assert "Eject Shambles?" in screen_text(app)
         assert "1 account will be ejected." in screen_text(app)
         assert service.eject_calls == []
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            app.screen.id != 'confirm-action'
+            and service.eject_calls == []))
         assert service.eject_calls == []
 
 
@@ -787,7 +989,10 @@ async def test_eject_confirmed_calls_the_service_and_shows_a_result(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("x", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            len(service.eject_calls) == 1
+            and app.screen.id == 'result'
+            and 'Ejected.' in screen_text(app)))
         assert len(service.eject_calls) == 1
         assert app.screen.id == "result"
         assert "Ejected." in screen_text(app)
@@ -802,7 +1007,9 @@ async def test_eject_failure_shows_the_service_error(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("x", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'Eject was refused.' in screen_text(app)))
         assert app.screen.id == "result"
         assert "Eject was refused." in screen_text(app)
 
@@ -813,6 +1020,10 @@ async def test_login_starts_immediately_and_shows_progress(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "l")
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'login-progress'
+            and service.login_calls == [('claude', 'Work')]
+            and 'Logging in to Work' in screen_text(app)))
         assert app.screen.id == "login-progress"
         assert service.login_calls == [("claude", "Work")]
         assert "Logging in to Work" in screen_text(app)
@@ -822,8 +1033,11 @@ async def test_login_progress_surfaces_a_printed_address_to_the_user(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.send_login_line("Open https://example.test/authorize")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'https://example.test/authorize' in flattened(app)))
         assert "https://example.test/authorize" in flattened(app)
 
 
@@ -840,7 +1054,10 @@ async def test_enter_on_a_lapsed_account_signs_it_in_instead_of_switching(
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.switch_calls == []
+            and service.login_calls == [('claude', 'Old')]
+            and app.screen.id == 'login-progress'))
         assert service.switch_calls == []
         assert service.login_calls == [("claude", "Old")]
         assert app.screen.id == "login-progress"
@@ -851,6 +1068,8 @@ async def test_login_can_be_cancelled(service):
     async with app.run_test() as pilot:
         await pilot.press("l")
         await pilot.press("escape")
+        await settled(pilot, app, lambda: (
+            service.login_handle.cancelled is True))
         assert service.login_handle.cancelled is True
 
 
@@ -859,13 +1078,16 @@ async def test_login_finished_after_cancel_still_shows_a_result(service):
     async with app.run_test() as pilot:
         await pilot.press("l")
         await pilot.press("escape")
+        await settled(pilot, app, lambda: app.screen.id != 'login-progress')
         assert app.screen.id != "login-progress"
         service.finish_login(ActionResult(
             False, "login",
             error=ActionError("login_failed", "The vendor login command failed.",
                               "Review the output and retry."),
         ))
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and not app.mutation_running))
         assert app.screen.id == "result"
         assert not app.mutation_running
 
@@ -884,8 +1106,14 @@ async def test_login_success_shows_result_and_refreshes_snapshot(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.finish_login()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'Logged in to Personal.' in screen_text(app)
+            and app.snapshot is service.login_result.snapshot
+            and not app.mutation_running))
         assert app.screen.id == "result"
         assert "Logged in to Personal." in screen_text(app)
         assert app.snapshot is service.login_result.snapshot
@@ -901,8 +1129,13 @@ async def test_login_failure_shows_result_without_a_launch_option(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.finish_login()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'The vendor login command failed.' in screen_text(app)
+            and 'Launch' not in screen_text(app)))
         assert app.screen.id == "result"
         assert "The vendor login command failed." in screen_text(app)
         assert "Launch" not in screen_text(app)
@@ -939,7 +1172,10 @@ async def test_a_default_install_shows_no_notice_and_looks_nothing_up(
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         app.wait_for_update_lookup()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            not app.query_one('#update-notice').display
+            and 'is available' not in screen_text(app)
+            and not (paths.library_dir / update_check.CACHE_NAME).exists()))
         assert not app.query_one("#update-notice").display
         assert "is available" not in screen_text(app)
         assert not (paths.library_dir / update_check.CACHE_NAME).exists()
@@ -953,7 +1189,12 @@ async def test_a_cached_newer_release_arrives_as_a_one_line_notice(
     app = ShamblesTUI(service)
     async with app.run_test(size=(140, 32)) as pilot:
         app.wait_for_update_lookup()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one('#update-notice').display
+            and app.query_one('#update-notice').size.height == 1
+            and 'Shambles 99.0.0 is available' in screen_text(app)
+            and 'Re-run the install script' in screen_text(app)
+            and app.query_one(Dashboard).display))
         assert app.query_one("#update-notice").display
         assert app.query_one("#update-notice").size.height == 1
         assert "Shambles 99.0.0 is available" in screen_text(app)
@@ -970,10 +1211,14 @@ async def test_the_notice_can_be_dismissed(service, paths):
     app = ShamblesTUI(service)
     async with app.run_test(size=(140, 32)) as pilot:
         app.wait_for_update_lookup()
-        await pilot.pause()
+        await settled(pilot, app, lambda: '99.0.0' in screen_text(app))
         assert "99.0.0" in screen_text(app)
 
         await pilot.press("u")
+        await settled(pilot, app, lambda: (
+            not app.query_one('#update-notice').display
+            and '99.0.0' not in screen_text(app)
+            and app.selected_account == 'Personal'))
 
         assert not app.query_one("#update-notice").display
         assert "99.0.0" not in screen_text(app)
@@ -987,7 +1232,8 @@ async def test_a_cached_tag_that_is_not_newer_says_nothing(service, paths):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         app.wait_for_update_lookup()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            not app.query_one('#update-notice').display))
         assert not app.query_one("#update-notice").display
 
 
@@ -1015,6 +1261,9 @@ async def test_startup_never_waits_for_the_lookup(service, paths, monkeypatch):
             assert started.wait(5)
             assert ran_on[0] != threading.get_ident()
             await pilot.press("j")
+            await settled(pilot, app, lambda: (
+                app.selected_account == 'Work'
+                and app.is_running))
             assert app.selected_account == "Work"
             assert app.is_running
         finally:
@@ -1047,7 +1296,7 @@ async def test_the_lookup_cannot_hold_the_shell_after_a_quit(
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         try:
-            await pilot.pause()
+            await settled(pilot, app, lambda: daemonic == [True])
             assert daemonic == [True]
         finally:
             release.set()
@@ -1068,7 +1317,7 @@ async def test_a_default_install_starts_no_lookup_at_all(service, paths,
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         app.wait_for_update_lookup()
-        await pilot.pause()
+        await settled(pilot, app, lambda: asked == [])
         assert asked == []
 
 
@@ -1086,11 +1335,15 @@ async def test_a_lookup_that_raises_does_not_take_the_interface_down(
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         app.wait_for_update_lookup()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.is_running
+            and not app.query_one('#update-notice').display
+            and 'sensitive upstream' not in screen_text(app)))
         assert app.is_running
         assert not app.query_one("#update-notice").display
         assert "sensitive upstream" not in screen_text(app)
         await pilot.press("j")
+        await settled(pilot, app, lambda: app.selected_account == 'Work')
         assert app.selected_account == "Work"
 
 
@@ -1112,7 +1365,8 @@ async def test_the_lookup_does_not_block_a_switch_or_count_as_a_mutation(
         try:
             assert not app.mutation_running
             await pilot.press("j", "enter")
-            await pilot.pause()
+            await settled(pilot, app, lambda: (
+                service.switch_calls == [('claude', 'Work')]))
             assert service.switch_calls == [("claude", "Work")]
         finally:
             release.set()
@@ -1127,6 +1381,10 @@ async def test_help_says_how_to_hide_the_notice_and_what_the_check_does(
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("?")
+        await settled(pilot, app, lambda: (
+            'Hide the update notice' in screen_text(app)
+            and 'No telemetry' in screen_text(app)
+            and ('No telemetry or update checks.' not in screen_text(app))))
         assert "Hide the update notice" in screen_text(app)
         assert "No telemetry" in screen_text(app)
         assert "No telemetry or update checks." not in screen_text(app)
@@ -1136,6 +1394,12 @@ async def test_help_lists_lifecycle_shortcuts(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("?")
+        await settled(pilot, app, lambda: (
+            'Account actions' in screen_text(app)
+            and 'Sign in to selected account again' in screen_text(app)
+            and 'Add' in screen_text(app)
+            and 'Eject' in screen_text(app)
+            and 'skip welcome motion' not in screen_text(app)))
         help_text = screen_text(app)
         assert "Account actions" in help_text
         assert "Sign in to selected account again" in help_text
@@ -1148,9 +1412,13 @@ async def test_overlays_use_ascii_borders_when_unicode_is_disabled(service):
     app = ShamblesTUI(service, unicode=False)
     async with app.run_test() as pilot:
         await pilot.press("?")
+        await settled(pilot, app, lambda: (
+            'ascii' in app.screen.query_one('.overlay-panel').classes))
         assert "ascii" in app.screen.query_one(".overlay-panel").classes
         await pilot.press("escape")
         await pilot.press("a")
+        await settled(pilot, app, lambda: (
+            'ascii' in app.screen.query_one('.overlay-panel').classes))
         assert "ascii" in app.screen.query_one(".overlay-panel").classes
 
 
@@ -1161,10 +1429,15 @@ async def test_cursor_keys_update_selection_and_visible_details(service, keys, w
     async with app.run_test(size=(width, 32)) as pilot:
         assert (app.selected_provider, app.selected_account) == ("claude", "Personal")
         await pilot.press(keys[0])
+        await settled(pilot, app, lambda: (
+            (app.selected_provider, app.selected_account) == ('claude', 'Work')
+            and app.query_one(AccountList).highlighted == 1
+            and 'work@example.test' in screen_text(app)))
         assert (app.selected_provider, app.selected_account) == ("claude", "Work")
         assert app.query_one(AccountList).highlighted == 1
         assert "work@example.test" in screen_text(app)
         await pilot.press(keys[1])
+        await settled(pilot, app, lambda: app.selected_account == 'Personal')
         assert app.selected_account == "Personal"
 
 
@@ -1172,6 +1445,8 @@ async def test_navigation_stops_at_list_edges(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("k", "j", "j", "j")
+        await settled(pilot, app, lambda: (
+            (app.selected_provider, app.selected_account) == ('codex', 'Personal')))
         assert (app.selected_provider, app.selected_account) == ("codex", "Personal")
 
 
@@ -1179,7 +1454,8 @@ async def test_dashboard_selection_messages_update_shell_state(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         app.query_one(AccountList).highlighted = 2
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            (app.selected_provider, app.selected_account) == ('codex', 'Personal')))
         assert (app.selected_provider, app.selected_account) == ("codex", "Personal")
 
 
@@ -1195,7 +1471,12 @@ async def test_refresh_keeps_provider_and_account_after_reordering(service):
             service.current.groups[0],
         ])
         await pilot.press("r")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            (app.selected_provider, app.selected_account) == ('codex', 'Personal')
+            and app.query_one(AccountList).highlighted == 0
+            and 'new@example.test' in screen_text(app)
+            and app.snapshot is service.refreshed
+            and service.current == before))
         assert (app.selected_provider, app.selected_account) == ("codex", "Personal")
         assert app.query_one(AccountList).highlighted == 0
         assert "new@example.test" in screen_text(app)
@@ -1221,7 +1502,10 @@ async def test_rapid_refresh_preserves_cursor_before_selection_messages_arrive(
         # pending when refresh starts handling the very next input event.
         app.post_message(Key(key, key))
         app.post_message(Key("r", "r"))
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            (app.selected_provider, app.selected_account) == ('claude', 'Work')
+            and app.query_one(AccountList).highlighted == (0 if reorder else 1)
+            and 'work@example.test' in screen_text(app)))
 
         assert (app.selected_provider, app.selected_account) == ("claude", "Work")
         assert app.query_one(AccountList).highlighted == (0 if reorder else 1)
@@ -1238,6 +1522,9 @@ async def test_refresh_falls_back_to_active_account_if_selection_disappears(serv
             ]),
         ])
         await pilot.press("r")
+        await settled(pilot, app, lambda: (
+            (app.selected_provider, app.selected_account) == ('codex', 'Active')
+            and app.query_one(AccountList).highlighted == 1))
         assert (app.selected_provider, app.selected_account) == ("codex", "Active")
         assert app.query_one(AccountList).highlighted == 1
 
@@ -1251,6 +1538,10 @@ async def test_refresh_without_snapshot_keeps_accounts_and_shows_feedback(servic
             warnings=("Account status is unavailable. Refresh to retry.",),
         )
         await pilot.press("r")
+        await settled(pilot, app, lambda: (
+            app.selected_account == 'Work'
+            and app.snapshot is service.current
+            and 'Refresh unavailable' in screen_text(app)))
         assert app.selected_account == "Work"
         assert app.snapshot is service.current
         assert "Refresh unavailable" in screen_text(app)
@@ -1269,6 +1560,10 @@ async def test_refresh_reports_a_raised_store_error_instead_of_crashing(service)
         await pilot.press("j")
         service.refresh_exception = StoreUnavailableError("store locked")
         await pilot.press("r")
+        await settled(pilot, app, lambda: (
+            app.selected_account == 'Work'
+            and app.snapshot is service.current
+            and 'Could not refresh local state' in screen_text(app)))
         assert app.selected_account == "Work"
         assert app.snapshot is service.current
         assert "Could not refresh local state" in screen_text(app)
@@ -1279,10 +1574,16 @@ async def test_refresh_can_enter_and_leave_onboarding(service, empty_service):
     async with app.run_test() as pilot:
         service.refreshed = empty_service.current
         await pilot.press("r", "j", "k")
+        await settled(pilot, app, lambda: (
+            app.query_one('#onboarding').display
+            and app.selected_account is None))
         assert app.query_one("#onboarding").display
         assert app.selected_account is None
         service.refreshed = service.current
         await pilot.press("r")
+        await settled(pilot, app, lambda: (
+            app.query_one(Dashboard).display
+            and app.selected_account == 'Personal'))
         assert app.query_one(Dashboard).display
         assert app.selected_account == "Personal"
 
@@ -1291,13 +1592,20 @@ async def test_help_can_be_dismissed_without_changing_selection(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("j", "?")
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'help'
+            and 'Refresh' in screen_text(app)
+            and 'Enter' in screen_text(app)
+            and 'Switch to selected account' in screen_text(app)))
         assert app.screen.id == "help"
         assert "Refresh" in screen_text(app)
         assert "Enter" in screen_text(app)
         assert "Switch to selected account" in screen_text(app)
         await pilot.press("escape")
+        await settled(pilot, app, lambda: app.selected_account == 'Work')
         assert app.selected_account == "Work"
         await pilot.press("k")
+        await settled(pilot, app, lambda: app.selected_account == 'Personal')
         assert app.selected_account == "Personal"
 
 
@@ -1305,15 +1613,20 @@ async def test_help_remains_quittable(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("?", "q")
+        await settled(pilot, app, lambda: not app.is_running)
         assert not app.is_running
 
 
 async def test_too_short_terminal_remains_quittable(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(80, 8)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'Terminal is too small' in screen_text(app)))
         assert "Terminal is too small" in screen_text(app)
         await pilot.press("q")
+        await settled(pilot, app, lambda: (
+            app.return_value is None
+            and not app.is_running))
         assert app.return_value is None
         assert not app.is_running
 
@@ -1321,7 +1634,11 @@ async def test_too_short_terminal_remains_quittable(service):
 async def test_empty_welcome_shows_lockup_and_add_footer(empty_service):
     app = ShamblesTUI(empty_service, motion=True)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'No saved accounts yet.' in screen_text(app)
+            and 'OFFLINE' in screen_text(app)
+            and 'a add' in screen_text(app)
+            and 'x eject' in screen_text(app)))
         screen = screen_text(app)
         assert "No saved accounts yet." in screen
         assert "OFFLINE" in screen
@@ -1334,7 +1651,10 @@ async def test_empty_welcome_shows_lockup_and_add_footer(empty_service):
 async def test_empty_welcome_compact_header_when_short(empty_service):
     app = ShamblesTUI(empty_service)
     async with app.run_test(size=(78, 16)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'OFFLINE' not in screen_text(app)
+            and 'No saved accounts yet.' in screen_text(app)
+            and 'a add' in screen_text(app)))
         screen = screen_text(app)
         assert "OFFLINE" not in screen
         assert "No saved accounts yet." in screen
@@ -1347,7 +1667,14 @@ async def test_wide_onboarding_keeps_controls_visible_at_minimum_height(
 ):
     app = ShamblesTUI(empty_service, motion=False)
     async with app.run_test(size=(width, 16)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            not app.query_one('#terminal-too-small').display
+            and app.query_one('#welcome-body').display
+            and app.query_one('#welcome-copy').region.bottom <= 16
+            and 'OFFLINE' not in screen_text(app)
+            and 'No saved accounts yet.' in screen_text(app)
+            and 'a add' in screen_text(app)
+            and ('>_ ⇄ SHAMBLES' in screen_text(app) or '>_ <-> SHAMBLES' in screen_text(app))))
         screen = screen_text(app)
         assert not app.query_one("#terminal-too-small").display
         assert app.query_one("#welcome-body").display
@@ -1364,7 +1691,10 @@ async def test_wide_onboarding_keeps_controls_visible_at_minimum_height(
 async def test_narrow_onboarding_is_static_and_fits(empty_service, width):
     app = ShamblesTUI(empty_service)
     async with app.run_test(size=(width, 24)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'OFFLINE' not in screen_text(app)
+            and 'SHAMBLES' in screen_text(app)
+            and 'No saved accounts yet.' in screen_text(app)))
         screen = screen_text(app)
         assert "OFFLINE" not in screen
         assert "SHAMBLES" in screen
@@ -1374,7 +1704,10 @@ async def test_narrow_onboarding_is_static_and_fits(empty_service, width):
 async def test_ascii_onboarding_fallback_is_readable(empty_service):
     app = ShamblesTUI(empty_service, unicode=False)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            screen_text(app).isascii()
+            and 'SHAMBLES' in screen_text(app)
+            and 'OFFLINE' in screen_text(app)))
         assert screen_text(app).isascii()
         assert "SHAMBLES" in screen_text(app)
         assert "OFFLINE" in screen_text(app)
@@ -1383,7 +1716,10 @@ async def test_ascii_onboarding_fallback_is_readable(empty_service):
 async def test_empty_welcome_too_short_shows_size_message(empty_service):
     app = ShamblesTUI(empty_service)
     async with app.run_test(size=(80, 8)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one('#terminal-too-small').display
+            and 'Terminal is too small' in screen_text(app)
+            and 'No saved accounts yet.' not in screen_text(app)))
         assert app.query_one("#terminal-too-small").display
         assert "Terminal is too small" in screen_text(app)
         assert "No saved accounts yet." not in screen_text(app)
@@ -1405,8 +1741,13 @@ async def test_login_offers_the_signin_link_when_the_vendor_prints_one(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.send_login_line(AUTH_URL)
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'finish signing in' in screen_text(app)
+            and 'o Open' in screen_text(app)
+            and 'c Copy' in screen_text(app)))
         rendered = screen_text(app)
         assert "finish signing in" in rendered
         assert "o Open" in rendered
@@ -1418,8 +1759,10 @@ async def test_login_link_is_shown_in_full_so_it_can_be_retyped(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.send_login_line(AUTH_URL)
-        await pilot.pause()
+        await settled(pilot, app, lambda: AUTH_URL in flattened(app))
         assert AUTH_URL in flattened(app)
 
 
@@ -1428,9 +1771,13 @@ async def test_login_hides_the_placeholder_noise(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         for _ in range(3):
             service.send_login_line(HIDDEN_LINE)
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            HIDDEN_LINE not in screen_text(app)
+            and 'Waiting for' in screen_text(app)))
         rendered = screen_text(app)
         assert HIDDEN_LINE not in rendered
         assert "Waiting for" in rendered
@@ -1440,8 +1787,11 @@ async def test_login_still_shows_real_vendor_lines(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.send_login_line("Paste this code: WXYZ")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'Paste this code: WXYZ' in screen_text(app)))
         assert "Paste this code: WXYZ" in screen_text(app)
 
 
@@ -1450,10 +1800,13 @@ async def test_login_link_can_be_copied_to_the_clipboard(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.send_login_line(AUTH_URL)
-        await pilot.pause()
+        # The line arrives as a message; the keys act on the link it offers.
+        await settled(pilot, app, lambda: AUTH_URL in flattened(app))
         await pilot.press("c")
-        await pilot.pause()
+        await settled(pilot, app, lambda: app.clipboard == AUTH_URL)
         assert app.clipboard == AUTH_URL
 
 
@@ -1461,11 +1814,14 @@ async def test_login_link_opens_through_the_browser_openers(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.send_login_line(AUTH_URL)
-        await pilot.pause()
+        # The line arrives as a message; the keys act on the link it offers.
+        await settled(pilot, app, lambda: AUTH_URL in flattened(app))
         await pilot.press("o")
         await app.workers.wait_for_complete()
-        await pilot.pause()
+        await settled(pilot, app, lambda: service.opened == [AUTH_URL])
         assert service.opened == [AUTH_URL]
 
 
@@ -1474,11 +1830,14 @@ async def test_opening_the_link_also_copies_it(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.send_login_line(AUTH_URL)
-        await pilot.pause()
+        # The line arrives as a message; the keys act on the link it offers.
+        await settled(pilot, app, lambda: AUTH_URL in flattened(app))
         await pilot.press("o")
         await app.workers.wait_for_complete()
-        await pilot.pause()
+        await settled(pilot, app, lambda: app.clipboard == AUTH_URL)
         assert app.clipboard == AUTH_URL
 
 
@@ -1487,11 +1846,16 @@ async def test_a_failed_open_says_so_and_keeps_the_link(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.press("l")
+        await settled(pilot, app, lambda: (
+            service._login_on_line is not None))
         service.send_login_line(AUTH_URL)
-        await pilot.pause()
+        # The line arrives as a message; the keys act on the link it offers.
+        await settled(pilot, app, lambda: AUTH_URL in flattened(app))
         await pilot.press("o")
         await app.workers.wait_for_complete()
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'clipboard' in screen_text(app)
+            and AUTH_URL in flattened(app)))
         rendered = screen_text(app)
         assert "clipboard" in rendered
         assert AUTH_URL in flattened(app)
@@ -1501,7 +1865,10 @@ async def test_the_link_panel_is_not_shown_before_a_url_arrives(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("l")
-        await pilot.pause()
+        # On the sign-in screen, which is where the panel would be.
+        await settled(pilot, app, lambda: (
+            app.screen.id == "login-progress"
+            and "Logging in to Personal" in screen_text(app)))
         assert "finish signing in" not in screen_text(app)
 
 
@@ -1513,7 +1880,7 @@ async def test_the_empty_welcome_says_which_key_adds_an_account(empty_service):
     """
     app = ShamblesTUI(empty_service)
     async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: 'Press a to add' in screen_text(app))
         assert "Press a to add" in screen_text(app)
 
 
@@ -1547,16 +1914,22 @@ async def test_first_run_while_signed_in_offers_to_save_that_login():
     service = signed_in_unsaved()
     app = ShamblesTUI(service)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'me@example.test' in words(app)
+            and 'Press s to save it' in words(app)))
         text = words(app)
         assert "me@example.test" in text
         assert "Press s to save it" in text
 
         await pilot.press("s")
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'name-input'
+            and 'me@example.test' in screen_text(app)))
         assert app.screen.id == "name-input"
         assert "me@example.test" in screen_text(app)
         await pilot.press(*"Mine", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.save_calls == [('claude', 'Mine')]))
         assert service.save_calls == [("claude", "Mine")]
 
 
@@ -1573,7 +1946,9 @@ async def test_the_dashboard_says_what_is_wrong_with_a_provider(service):
     ])
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'stranger@example.test' in words(app)
+            and 'Press s to save it' in words(app)))
         text = words(app)
         assert "stranger@example.test" in text
         assert "Press s to save it" in text
@@ -1589,9 +1964,11 @@ async def test_s_saves_the_provider_that_has_something_to_save(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.press("s")
+        await settled(pilot, app, lambda: app.screen.id == 'name-input')
         assert app.screen.id == "name-input"
         await pilot.press(*"Mine", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.save_calls == [('claude', 'Mine')]))
         assert service.save_calls == [("claude", "Mine")]
 
 
@@ -1599,7 +1976,9 @@ async def test_s_with_nothing_to_save_says_so(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.press("s")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.save_calls == []
+            and 'Nothing to save' in screen_text(app)))
         assert service.save_calls == []
         assert "Nothing to save" in screen_text(app)
 
@@ -1616,7 +1995,8 @@ async def test_a_saved_account_signed_in_elsewhere_names_the_account(service):
     ])
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            "Press f to switch to 'Work'" in words(app)))
         assert "Press f to switch to 'Work'" in words(app)
 
 
@@ -1639,9 +2019,14 @@ async def test_the_active_account_menu_does_not_offer_remove(service):
     app = ShamblesTUI(service)
     async with app.run_test() as pilot:
         await pilot.press("m")
+        await settled(pilot, app, lambda: (
+            'switch to another account to remove this one' in screen_text(app)
+            and 'Remove' not in screen_text(app)))
         assert "Remove" not in screen_text(app)
         await pilot.press("d")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.remove_plan_calls == []
+            and app.screen.id != 'confirm-action'))
         assert service.remove_plan_calls == []
         assert app.screen.id != "confirm-action"
 
@@ -1683,7 +2068,9 @@ def soon_service(*notices):
 async def test_a_login_near_its_deadline_says_why_and_which_key_renews_it():
     app = ShamblesTUI(soon_service())
     async with app.run_test(size=(110, 40)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'however much you use it' in words(app)
+            and "Press f to sign in to 'Work' again" in words(app)))
         text = words(app)
         assert "however much you use it" in text
         assert "Press f to sign in to 'Work' again" in text
@@ -1694,7 +2081,9 @@ async def test_f_signs_in_the_account_whose_deadline_is_near():
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.press("f")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.login_calls == [('claude', 'Work')]
+            and app.screen.id == 'login-progress'))
         assert service.login_calls == [("claude", "Work")]
         assert app.screen.id == "login-progress"
 
@@ -1703,14 +2092,18 @@ async def test_f_settles_a_stale_marker_in_one_key():
     service = soon_service(ELSEWHERE, SOON)
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            "Press f to switch to 'Home'" in words(app)
+            and "Select 'Work' and press l to sign in again" in words(app)))
         text = words(app)
         # The marker comes first: it is what a switch would otherwise trip on.
         assert "Press f to switch to 'Home'" in text
         assert "Select 'Work' and press l to sign in again" in text
 
         await pilot.press("f")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.plan_calls == [('claude', 'Home')]
+            and service.switch_calls == [('claude', 'Home')]))
         assert service.plan_calls == [("claude", "Home")]
         assert service.switch_calls == [("claude", "Home")]
 
@@ -1719,14 +2112,17 @@ async def test_f_with_nothing_to_fix_does_nothing(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.press("f")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            service.switch_calls == [] and service.login_calls == []))
         assert service.switch_calls == [] and service.login_calls == []
 
 
 async def test_the_pane_of_a_login_near_its_deadline_offers_sign_in():
     app = ShamblesTUI(soon_service())
     async with app.run_test(size=(110, 40)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'l to sign in again' in words(app)
+            and 'Mon 16 Nov, 14:00' in words(app)))
         text = words(app)
         assert "l to sign in again" in text
         assert "Mon 16 Nov, 14:00" in text
@@ -1741,7 +2137,7 @@ async def test_a_parked_login_near_its_deadline_says_so_in_the_list():
     ]))
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: 'expires soon' in screen_text(app))
         assert "expires soon" in screen_text(app)
 
 
@@ -1751,12 +2147,16 @@ async def test_a_switch_waiting_on_claude_code_says_so(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.press("j", "enter")
+        await settled(pilot, app, lambda: service.switch_started.is_set())
         assert service.switch_started.wait(2)
-        await pilot.pause(0.2)
+        await settled(pilot, app, lambda: (
+            'Waiting for Claude Code' in words(app)))
         assert "Waiting for Claude Code" in words(app)
 
         service.release_switch.set()
-        await pilot.pause(0.3)
+        await settled(pilot, app, lambda: (
+            app.screen.id == 'result'
+            and 'Waiting for Claude Code' not in words(app)))
         assert app.screen.id == "result"
         assert "Waiting for Claude Code" not in words(app)
 
@@ -1765,7 +2165,10 @@ async def test_help_lists_save_and_fix_and_why_claude_needs_signing_in(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 50)) as pilot:
         await pilot.press("question_mark")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            's Save a signed-in login' in words(app)
+            and 'f Do what the notice at the top says' in words(app)
+            and 'about 30 days after you sign in' in words(app)))
         text = words(app)
         assert "s Save a signed-in login" in text
         assert "f Do what the notice at the top says" in text

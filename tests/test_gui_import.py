@@ -758,6 +758,26 @@ def test_the_footer_offers_a_refresh(paths, make_app):
     assert app.glyph["refresh"] in _label_texts(app), "no refresh control"
 
 
+def test_a_dialog_no_test_expected_answers_no_instead_of_waiting(
+        paths, make_app, no_real_dialogs):
+    """A native dialog is modal, and on a CI runner nobody answers it: the
+    whole run then sits out the six-hour job limit, which it did three times
+    on Windows. Under test every one answers the safe way at once -- No,
+    Cancel, nothing typed -- and the test that opened it fails, naming it."""
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.test")
+    app = make_app(paths)
+    app.update()
+
+    app.on_remove("claude", "Other")
+
+    assert [kind for kind, *_ in no_real_dialogs.opened] == ["askyesno"]
+    assert paths.credentials("claude", "Other").exists(), "answered yes"
+    with pytest.raises(pytest.fail.Exception, match="Remove Profile"):
+        no_real_dialogs.verdict()
+    no_real_dialogs.opened.clear()       # seen here, so not a teardown failure
+
+
 def test_refresh_only_reads(paths, make_app):
     """Safe to press at any time: no switch, no credential written, nothing a
     running session would notice."""
@@ -1105,6 +1125,59 @@ def test_an_ordinary_refresh_pulses_nothing(paths, make_app, monkeypatch):
     app.update()
 
     assert not pulsed
+
+
+def _orphaned_timers(app):
+    """Pending ``after`` scripts whose command Tk has already deleted.
+
+    tkinter names a callback's Tcl command after the address of a Python
+    object plus the function's name -- ``4372781376<lambda>``. Destroying a
+    widget deletes its commands but not its timers, so a timer left behind
+    either fails with "invalid command name", or, once a new callback lands
+    at the same address with the same name, runs that one instead.
+    """
+    orphans = []
+    for job in app.tk.splitlist(app.tk.call("after", "info")):
+        try:
+            script = app.tk.splitlist(app.tk.call("after", "info", job))[0]
+        except tk.TclError:
+            continue                      # fired while we looked
+        command = app.tk.splitlist(script)[0]
+        if not app.tk.call("info", "commands", command):
+            orphans.append(script)
+    return orphans
+
+
+def test_a_refresh_while_the_cards_fade_in_leaves_no_timer_behind(paths,
+                                                                  make_app):
+    """Caught on CI as buttons nobody pressed: a refresh straight after
+    another one ran the new list's Switch on one runner and Remove on the
+    next. Each card starts its fade after a stagger, and that timer outlived
+    the card the refresh destroyed; the new card's button command was
+    allocated where the timer's callback had been, took its name, and the
+    timer ran it. In the window that is a switch the user never asked for,
+    if they act while the list is still arriving."""
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    for name in ("Two", "Three", "Four"):
+        make_profile(paths, "claude", name, email=f"{name}@example.test")
+    app = make_app(paths)
+    app.update()
+
+    app.refresh()                    # the first list is still fading in
+
+    assert _orphaned_timers(app) == []
+
+
+def test_a_bar_destroyed_before_it_starts_growing_leaves_no_timer(paths,
+                                                                  make_app):
+    app = make_app(paths)
+    app.update()
+    track = tk.Frame(app)
+    app._grow_bar(track, "#336699", 0.5, index=3)
+
+    track.destroy()
+
+    assert _orphaned_timers(app) == []
 
 
 def test_a_failed_switch_does_not_leave_a_pulse_armed(paths, make_app,

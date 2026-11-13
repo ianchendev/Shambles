@@ -226,3 +226,40 @@ def test_cancelling_a_finished_tween_is_harmless(root):
     _pump(root, lambda: running.finished)
     running.cancel()
     running.cancel()
+
+
+def test_a_delayed_start_runs_when_its_widget_lives(root):
+    ran = []
+    motion.later(root, 10, lambda: ran.append(True))
+
+    assert _pump(root, lambda: ran), "never ran"
+
+
+def test_a_delayed_start_never_runs_once_its_widget_is_gone(root):
+    """A bare after() outlives its widget, and its callback's command name
+    can be taken by a new button's: the timer then presses that button."""
+    import tkinter as tk
+    widget = tk.Frame(root)
+    pending = motion.later(widget, 10_000, lambda: None)
+
+    widget.destroy()
+
+    assert not pending.running
+    assert root.tk.call("after", "info") == ""
+
+
+def test_one_tween_letting_go_leaves_the_others_watching(root):
+    """Before Python 3.12, ``unbind(sequence, funcid)`` cleared every binding
+    for the sequence, not just that one: the first tween on a card to finish
+    took the others' <Destroy> watch with it, and their timers outlived the
+    card (Ubuntu 3.10, every run)."""
+    import tkinter as tk
+    widget = tk.Frame(root)
+    first = motion.later(widget, 10_000, lambda: None)
+    second = motion.later(widget, 10_000, lambda: None)
+
+    first.cancel()                       # lets go of its own watch
+    widget.destroy()
+
+    assert not second.running, "the second lost its watch with the first"
+    assert root.tk.call("after", "info") == ""

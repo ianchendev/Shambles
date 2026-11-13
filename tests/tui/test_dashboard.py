@@ -1,7 +1,6 @@
 """The dashboard renders one immutable snapshot at every terminal size."""
 
 import ast
-import time
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -10,6 +9,8 @@ import pytest
 from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+
+from settling import layout_report, screen_text, settled
 
 from shambles.app.snapshot import Account, Group, Snapshot, Surface, Window
 from shambles.app.tui.dashboard import Dashboard
@@ -121,45 +122,6 @@ def rendered_text(widget) -> str:
     return table_text(widget.content)
 
 
-def screen_text(app) -> str:
-    return "\n".join(
-        strip.text for strip in app.screen._compositor.render_strips()
-    )
-
-
-async def screen_showing(pilot, app, text: str, *, within: float = 5.0) -> str:
-    """The screen once ``text`` is on it, or once ``within`` seconds pass.
-
-    Waits on the clock, not on a count of pumps: ``pilot.pause()`` with no
-    delay drains the message queue and lets no time pass, so a frame Textual
-    finishes on a timer can miss any number of them. Returns either way, so
-    the caller's assertion reports the real screen.
-
-    Waiting longer was not what this test needed, though. When it failed on
-    CI the screen never recovered: the header had kept the height of the
-    text before the resize (see BrandHeader). Waiting is for frames; a
-    screen that is wrong for good fails here with the layout attached.
-    """
-    deadline = time.monotonic() + within
-    screen = screen_text(app)
-    while text not in screen and time.monotonic() < deadline:
-        await pilot.pause(0.02)
-        screen = screen_text(app)
-    return screen
-
-
-def layout_report(app, screen: str) -> str:
-    """The whole screen and where each widget is, for a failed assertion.
-
-    pytest shortens a long string to its first and last lines, which is all
-    CI ever showed of this failure; this keeps the middle.
-    """
-    regions = "\n".join(
-        f"  #{w.id}: display={w.display} region={tuple(w.region)}"
-        for w in app.screen.walk_children() if w.id)
-    return f"\n--- screen ---\n{screen}\n--- widgets ---\n{regions}"
-
-
 class _LateText(App[None]):
     """Shows its text only after real time passes, as a slow runner does.
 
@@ -176,16 +138,33 @@ class _LateText(App[None]):
         self.set_timer(0.3, lambda: self.query_one("#late").update("Taylor"))
 
 
-async def test_screen_showing_waits_for_time_not_for_a_count_of_pumps():
+async def test_settled_waits_for_time_not_for_a_count_of_pumps():
     app = _LateText()
     async with app.run_test(size=(40, 5)) as pilot:
-        assert "Taylor" in await screen_showing(pilot, app, "Taylor")
+        await settled(pilot, app, lambda: "Taylor" in screen_text(app))
+
+
+async def test_a_condition_that_never_holds_fails_with_the_whole_screen():
+    app = _LateText()
+    async with app.run_test(size=(40, 5)) as pilot:
+        with pytest.raises(AssertionError) as failed:
+            await settled(pilot, app, lambda: "Morgan" in screen_text(app),
+                          within=0.5)
+    message = str(failed.value)
+    assert "Morgan" in message            # the condition, by its source
+    assert "--- widgets ---" in message and "#late" in message
 
 
 async def test_wide_dashboard_has_list_and_detail_panes(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one(Dashboard).has_class('wide')
+            and app.query_one('#account-list').display and app.query_one('#account-details').display
+            and app.query_one('#account-list').region.right <= app.query_one('#account-details').region.x
+            and app.query_one('#account-list').region.y == app.query_one('#account-details').region.y
+            and not app.query_one('#inline-details').display
+            and 'work@example.test' in screen_text(app)))
         assert app.query_one(Dashboard).has_class("wide")
         accounts = app.query_one("#account-list")
         details = app.query_one("#account-details")
@@ -227,7 +206,19 @@ def test_hero_details_use_meters_pills_and_context(snapshot):
 async def test_wide_hero_shows_identity_meter_and_surfaces(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'work@example.test' in screen_text(app)
+            and 'Max 5x' in screen_text(app)
+            and 'USAGE' in screen_text(app)
+            and '5h' in screen_text(app)
+            and 'week' in screen_text(app)
+            and 'unavailable' in screen_text(app)
+            and '22%' in screen_text(app)
+            and 'SWITCHES' in screen_text(app)
+            and 'Terminal' in screen_text(app)
+            and 'Already active' in screen_text(app)
+            and 'Claude / Work' not in screen_text(app)
+            and 'session: 22% used' not in screen_text(app)))
         screen = screen_text(app)
         assert "work@example.test" in screen
         assert "Max 5x" in screen
@@ -248,7 +239,11 @@ async def test_hero_needs_login_callout(snapshot):
     async with app.run_test(size=(100, 32)) as pilot:
         app.query_one(AccountList).highlighted = 1
         await pilot.press("enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'needs login' in screen_text(app)
+            and ('Enter or l to sign in' in screen_text(app))
+            and 'Run claude login' not in screen_text(app)
+            and 'cannot switch' not in screen_text(app)))
         screen = screen_text(app)
         assert "needs login" in screen
         assert "Enter or l to sign in" in screen
@@ -270,7 +265,13 @@ def test_an_active_account_that_needs_login_says_how_to_sign_in(snapshot):
 async def test_medium_dashboard_expands_selected_row(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(60, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one(Dashboard).has_class('medium')
+            and app.query_one('#inline-details').display
+            and app.query_one('#inline-details').region.width >= 50
+            and not app.query_one('#account-details').display
+            and '22%' in screen_text(app)
+            and 'SWITCHES' not in screen_text(app)))
         assert app.query_one(Dashboard).has_class("medium")
         details = app.query_one("#inline-details")
         assert details.display
@@ -283,13 +284,18 @@ async def test_medium_dashboard_expands_selected_row(snapshot):
 async def test_medium_details_expand_directly_after_the_selected_account(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(60, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            screen_text(app).index('Work') < screen_text(app).index('work@example.test')
+            and screen_text(app).index('work@example.test') < screen_text(app).index('needs login')))
         screen = screen_text(app)
         assert screen.index("Work") < screen.index("work@example.test")
         assert screen.index("work@example.test") < screen.index("needs login")
 
         await pilot.press("down", "enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            screen_text(app).index('Personal') < screen_text(app).index('personal@example.test')
+            and screen_text(app).index('personal@example.test') < screen_text(app).index('Saved')
+            and 'work@example.test' not in screen_text(app)))
         screen = screen_text(app)
         assert screen.index("Personal") < screen.index("personal@example.test")
         assert screen.index("personal@example.test") < screen.index("Saved")
@@ -299,7 +305,17 @@ async def test_medium_details_expand_directly_after_the_selected_account(snapsho
 async def test_narrow_dashboard_hides_decoration(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(40, 24)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one(Dashboard).has_class('compact')
+            and list(app.query('#surface-pills')) == []
+            and not app.query_one('#account-details').display
+            and app.query_one('#shortcut-footer').display
+            and 'a add' in screen_text(app)
+            and 'j/k move' not in screen_text(app)
+            and app.query_one('#account-list').region.width > 30
+            and app.query_one('#inline-details').region.width > 30
+            and 'Work' in screen_text(app)
+            and 'Claude / Work' not in screen_text(app)))
         assert app.query_one(Dashboard).has_class("compact")
         assert list(app.query("#surface-pills")) == []
         assert not app.query_one("#account-details").display
@@ -315,7 +331,10 @@ async def test_narrow_dashboard_hides_decoration(snapshot):
 async def test_compact_dashboard_keeps_usage_percentage_readable(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(40, 24)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            '22%' in screen_text(app)
+            and 'session: 22% used' not in screen_text(app)
+            and 'week' not in screen_text(app)))
         screen = screen_text(app)
         assert "22%" in screen
         assert "session: 22% used" not in screen
@@ -338,7 +357,13 @@ async def test_wide_codex_hero_shows_5h_and_week(snapshot):
     async with app.run_test(size=(100, 32)) as pilot:
         app.query_one(AccountList).highlighted = 2
         await pilot.press("enter")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'Taylor' in screen_text(app)
+            and '5h' in screen_text(app)
+            and '22%' not in screen_text(app)
+            and '2%' in screen_text(app)
+            and 'week' in screen_text(app)
+            and '4%' in screen_text(app)))
         screen = screen_text(app)
         assert "Taylor" in screen
         assert "5h" in screen
@@ -351,7 +376,8 @@ async def test_wide_codex_hero_shows_5h_and_week(snapshot):
 async def test_provider_headers_are_spaced_from_accounts(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            len(list(app.query('.group-header'))) == 2))
         headers = list(app.query(".group-header"))
         assert len(headers) == 2
         first, second = headers
@@ -365,7 +391,11 @@ async def test_provider_headers_are_spaced_from_accounts(snapshot):
 async def test_wide_account_headers_keep_identity_separate_from_login_state(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(78, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'Personal' in screen_text(app)
+            and 'needs login' in screen_text(app)
+            and 'Claude / Personal' not in screen_text(app)
+            and 'Login required' not in screen_text(app)))
         screen = screen_text(app)
         assert "Personal" in screen
         assert "needs login" in screen
@@ -376,7 +406,11 @@ async def test_wide_account_headers_keep_identity_separate_from_login_state(snap
 async def test_list_groups_by_provider_and_keeps_one_line_rows(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'Claude' in screen_text(app)
+            and 'Codex' in screen_text(app)
+            and 'Claude / Work' not in screen_text(app)
+            and app.query_one(AccountList).highlighted == 0))
         screen = screen_text(app)
         assert "Claude" in screen  # Group.display_name in fixture
         assert "Codex" in screen
@@ -384,6 +418,7 @@ async def test_list_groups_by_provider_and_keeps_one_line_rows(snapshot):
         accounts = app.query_one(AccountList)
         assert accounts.highlighted == 0  # Work is active
         await pilot.press("down")
+        await settled(pilot, app, lambda: accounts.highlighted == 1)
         assert accounts.highlighted == 1
 
 
@@ -395,7 +430,11 @@ async def test_usage_percentage_and_stale_copy_remain_visible(snapshot, width):
     group = replace(group, accounts=[replace(account, usage=[window])])
     app = DashboardHarness(replace(snapshot, groups=[group]))
     async with app.run_test(size=(width, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            '22%' in screen_text(app)
+            and 'session: 22% used' not in screen_text(app)
+            and 'stale' in screen_text(app)
+            and 'just now' in screen_text(app)))
         screen = screen_text(app)
         assert "22%" in screen
         assert "session: 22% used" not in screen
@@ -406,7 +445,11 @@ async def test_usage_percentage_and_stale_copy_remain_visible(snapshot, width):
 async def test_short_wide_details_are_accessible_by_keyboard(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(78, 16)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            not app.query_one(Dashboard).has_class('wide')
+            and 'OFFLINE' not in screen_text(app)
+            and app.query_one('#inline-details').display
+            and '22%' in rendered_text(app.query_one('#inline-details'))))
         dash = app.query_one(Dashboard)
         assert not dash.has_class("wide")
         screen = screen_text(app)
@@ -417,7 +460,7 @@ async def test_short_wide_details_are_accessible_by_keyboard(snapshot):
         assert "22%" in rendered
         accounts = app.query_one(AccountList)
         await pilot.press("j")
-        await pilot.pause()
+        await settled(pilot, app, lambda: accounts.highlighted == 1)
         assert accounts.highlighted == 1
 
 
@@ -434,14 +477,17 @@ async def test_ascii_fallback_covers_long_values_and_scrolled_lists(snapshot, wi
     ])
     app = DashboardHarness(replace(snapshot, groups=[group]), unicode=False)
     async with app.run_test(size=(width, 24)) as pilot:
-        await pilot.pause()
+        # Drawn first: a screen that has not drawn yet is ASCII too.
+        await settled(pilot, app, lambda: "Account 0" in screen_text(app))
         screen = screen_text(app)
         assert "⏎" not in screen
         assert "·" not in screen
         assert "▊" not in screen
         assert screen.isascii()
         await pilot.press("pagedown")
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one(AccountList).scroll_y > 0
+            and screen_text(app).isascii()))
         assert app.query_one(AccountList).scroll_y > 0
         assert screen_text(app).isascii()
 
@@ -449,7 +495,13 @@ async def test_ascii_fallback_covers_long_values_and_scrolled_lists(snapshot, wi
 async def test_ascii_dashboard_chrome_is_strict_ascii(snapshot):
     app = DashboardHarness(snapshot, unicode=False)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            screen_text(app).isascii()
+            and '⏎' not in screen_text(app)
+            and '·' not in screen_text(app)
+            and '▊' not in screen_text(app)
+            and 'Enter switch' in screen_text(app)
+            and app.query_one(Dashboard).has_class('ascii')))
         screen = screen_text(app)
         assert screen.isascii()
         assert "⏎" not in screen
@@ -473,22 +525,26 @@ async def test_needs_login_callout_is_reachable_at_78x28(snapshot):
     async with app.run_test(size=(78, 28)) as pilot:
         app.query_one(AccountList).highlighted = 1
         await pilot.press("enter")
-        await pilot.pause()
-        screen = screen_text(app)
         details = app.query_one("#account-details")
-        if "l to sign in" not in screen:
+        # On screen already, or reachable by scrolling the pane.
+        await settled(pilot, app, lambda: (
+            "l to sign in" in screen_text(app) or details.max_scroll_y > 0))
+        if "l to sign in" not in screen_text(app):
             assert details.styles.scrollbar_size_vertical > 0
             details.scroll_end(animate=False)
-            await pilot.pause()
-            screen = screen_text(app)
-        assert "l to sign in" in screen
+        await settled(pilot, app, lambda: "l to sign in" in screen_text(app))
 
 
 @pytest.mark.parametrize("size", [(80, 8), (48, 10)])
 async def test_too_short_terminal_shows_a_safe_size_message(snapshot, size):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=size) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one('#terminal-too-small').display
+            and not app.query_one('#dashboard-body').display
+            and 'Terminal is too small' in screen_text(app)
+            and 'Work' not in screen_text(app)
+            and 'Claude / Work' not in screen_text(app)))
         assert app.query_one("#terminal-too-small").display
         assert not app.query_one("#dashboard-body").display
         assert "Terminal is too small" in screen_text(app)
@@ -499,7 +555,10 @@ async def test_too_short_terminal_shows_a_safe_size_message(snapshot, size):
 async def test_minimum_height_still_leaves_an_account_row_visible(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(48, 16)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            not app.query_one('#terminal-too-small').display
+            and 'Work' in screen_text(app)
+            and 'Claude / Work' not in screen_text(app)))
         assert not app.query_one("#terminal-too-small").display
         assert "Work" in screen_text(app)
         assert "Claude / Work" not in screen_text(app)
@@ -508,7 +567,12 @@ async def test_minimum_height_still_leaves_an_account_row_visible(snapshot):
 async def test_wide_dashboard_shows_lockup_and_footer(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            'OFFLINE' in screen_text(app)
+            and 'a add' in screen_text(app)
+            and 'x eject' in screen_text(app)
+            and 'j/k move' in screen_text(app)
+            and app.query_one(Dashboard).has_class('wide')))
         screen = screen_text(app)
         assert "OFFLINE" in screen
         assert "a add" in screen
@@ -520,7 +584,13 @@ async def test_wide_dashboard_shows_lockup_and_footer(snapshot):
 async def test_wide_minimum_shows_full_bleed_lockup_and_fitting_footer(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(78, 24)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one(Dashboard).has_class('wide')
+            and 'OFFLINE' in screen_text(app)
+            and 'j/k move' not in screen_text(app)
+            and 'q quit' in screen_text(app)
+            and '? help' in screen_text(app)
+            and 'a add' in screen_text(app)))
         screen = screen_text(app)
         assert app.query_one(Dashboard).has_class("wide")
         assert "OFFLINE" in screen
@@ -533,7 +603,12 @@ async def test_wide_minimum_shows_full_bleed_lockup_and_fitting_footer(snapshot)
 async def test_wide_but_short_drops_lockup_and_uses_inline_details(snapshot):
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(78, 16)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            not app.query_one(Dashboard).has_class('wide')
+            and 'OFFLINE' not in screen_text(app)
+            and ('>_ ⇄ SHAMBLES' in screen_text(app) or '>_ <-> SHAMBLES' in screen_text(app))
+            and not app.query_one('#account-details').display
+            and app.query_one('#inline-details').display))
         dash = app.query_one(Dashboard)
         assert not dash.has_class("wide")
         assert "OFFLINE" not in screen_text(app)
@@ -552,10 +627,10 @@ async def test_dashboard_uses_the_shared_brand_breakpoints(snapshot):
         # that event has actually been processed. Without this the assertion
         # races the event loop -- Linux happened to win the race and Windows
         # lost it, which is how this passed locally and failed in CI.
-        await pilot.pause()
+        await settled(pilot, app, lambda: dashboard.has_class('medium'))
         assert dashboard.has_class("medium")
         await pilot.resize_terminal(47, 24)
-        await pilot.pause()
+        await settled(pilot, app, lambda: dashboard.has_class('compact'))
         assert dashboard.has_class("compact")
 
 
@@ -563,21 +638,20 @@ async def test_resizing_preserves_selection_and_recovers_from_too_short(snapshot
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.press("down", "down", "enter")
+        await settled(pilot, app, lambda: (
+            app.selected_messages == [('codex', 'Personal')]))
         assert app.selected_messages == [("codex", "Personal")]
         for size in [(60, 32), (40, 24), (80, 8), (100, 32)]:
             await pilot.resize_terminal(*size)
-            await pilot.pause()
+            shown = ("Terminal is too small" if size == (80, 8)
+                     else "Taylor")
+            await settled(pilot, app, lambda: shown in screen_text(app))
             assert app.query_one(AccountList).highlighted == 2
             assert app.selected_messages == [("codex", "Personal")]
+            screen = screen_text(app)
             if size == (80, 8):
-                screen = await screen_showing(pilot, app,
-                                              "Terminal is too small")
-                assert "Terminal is too small" in screen, layout_report(
-                    app, screen)
                 assert "Taylor" not in screen, layout_report(app, screen)
             else:
-                screen = await screen_showing(pilot, app, "Taylor")
-                assert "Taylor" in screen, layout_report(app, screen)
                 assert "Terminal is too small" not in screen, layout_report(
                     app, screen)
 
@@ -588,6 +662,10 @@ async def test_selecting_an_account_updates_both_detail_views(snapshot):
         account_list = app.query_one(AccountList)
         account_list.highlighted = 1
         await pilot.press("enter")
+        await settled(pilot, app, lambda: (
+            'Personal' in rendered_text(app.query_one('#account-details'))
+            and 'Personal' in rendered_text(app.query_one('#inline-details'))
+            and app.selected_messages == [('claude', 'Personal')]))
 
         assert "Personal" in rendered_text(app.query_one("#account-details"))
         assert "Personal" in rendered_text(app.query_one("#inline-details"))
@@ -659,10 +737,9 @@ async def test_details_are_not_truncated_to_a_width_the_pane_no_longer_has(
     """
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(width, 32)) as pilot:
-        await pilot.pause()
-        screen = screen_text(app)
-    assert "work@example.test" in screen
-    assert "22%" in screen
+        await settled(pilot, app, lambda: (
+            "work@example.test" in screen_text(app)
+            and "22%" in screen_text(app)))
 
 
 async def test_an_80_column_footer_still_names_the_sign_in_key(snapshot):
@@ -670,7 +747,7 @@ async def test_an_80_column_footer_still_names_the_sign_in_key(snapshot):
     so the one key that fixes a lapsed account was not on screen."""
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: 'l login' in screen_text(app))
         assert "l login" in screen_text(app)
 
 
@@ -687,7 +764,10 @@ async def test_the_header_measures_for_the_size_it_is_measured_at(snapshot):
 
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: (
+            app.query_one('#dashboard-header').region.height == 11
+            and app.query_one('#dashboard-header').get_content_height(Size(60, 32), Size(60, 32), 60) == 1
+            and app.query_one('#dashboard-header').get_content_height(Size(100, 32), Size(100, 32), 100) == 11))
         header = app.query_one("#dashboard-header")
         assert header.region.height == 11
 
@@ -703,6 +783,7 @@ async def test_the_header_follows_every_resize(snapshot):
         for size, rows in [((60, 32), 1), ((100, 32), 11), ((40, 24), 1),
                            ((100, 32), 11)]:
             await pilot.resize_terminal(*size)
-            await pilot.pause()
+            await settled(pilot, app, lambda: (
+                app.query_one('#dashboard-header').region.height == rows))
             header = app.query_one("#dashboard-header")
             assert header.region.height == rows, (size, header.region)

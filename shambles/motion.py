@@ -130,7 +130,7 @@ class Animation:
         death, self._death = self._death, None
         if death is not None:
             try:
-                self._widget.unbind("<Destroy>", death)
+                _unbind_one(self._widget, "<Destroy>", death)
             except tk.TclError:
                 pass
 
@@ -144,6 +144,23 @@ class Animation:
             except tk.TclError:
                 pass  # the widget, or the interpreter, is already gone
         self.release()
+
+
+def _unbind_one(widget, sequence: str, funcid: str) -> None:
+    """Remove one binding and leave the widget's others in place.
+
+    ``widget.unbind(sequence, funcid)`` does that from Python 3.12 on. Before
+    that it cleared every binding for the sequence, so the first tween on a
+    card to finish took the other tweens' ``<Destroy>`` watch with it, and
+    their timers outlived the card (see :func:`later`). This is what the
+    newer tkinter does, for every supported Python.
+    """
+    script = widget.tk.call("bind", widget._w, sequence)
+    marker = f"[{funcid} "
+    keep = "\n".join(line for line in str(script).split("\n")
+                     if marker not in line)
+    widget.tk.call("bind", widget._w, sequence, keep if keep.strip() else "")
+    widget.deletecommand(funcid)
 
 
 def animate(widget, duration_ms: int, step, *, ease=ease_out_cubic, done=None):
@@ -199,6 +216,35 @@ def animate(widget, duration_ms: int, step, *, ease=ease_out_cubic, done=None):
     running._job = _schedule(widget, tick, running)
     running.watch_widget()
     return running
+
+
+def later(widget, delay_ms: int, callback):
+    """``widget.after(delay_ms, callback)``, cancelled if the widget goes first.
+
+    A bare ``after`` outlives its widget. Destroying the widget deletes the
+    Tcl command tkinter made for the callback, but not the timer, and that
+    command is named after the address of a Python object plus the
+    function's name: ``4372781376<lambda>``. Once ``refresh()`` has rebuilt
+    the list, a new button's ``command=lambda`` can sit at that address and
+    take that name, and the timer then runs the button -- a switch nobody
+    pressed. Otherwise it fails with "invalid command name".
+    """
+    pending = Animation(widget)
+
+    def fire():
+        pending._job = None
+        pending.finished = True
+        pending.release()
+        if not pending._cancelled:
+            callback()
+
+    try:
+        pending._job = widget.after(delay_ms, fire)
+    except tk.TclError:
+        pending.finished = True
+        return pending
+    pending.watch_widget()
+    return pending
 
 
 def _schedule(widget, callback, running):
