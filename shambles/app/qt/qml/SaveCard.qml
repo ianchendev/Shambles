@@ -63,6 +63,7 @@ Rectangle {
                 id: saveButton
                 kind: "primary"
                 text: "Save login"
+                enabled: !ui.busy
                 implicitHeight: 40
                 onClicked: ui.saveCurrent(root.save.provider, nameField.text)
             }

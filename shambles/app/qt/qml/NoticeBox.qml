@@ -49,9 +49,13 @@ Rectangle {
         }
         Btn {
             visible: root.open && (root.notice.action || "") !== ""
+            kind: root.notice.action === "signin" ? "primary" : "plain"
             text: root.notice.actionLabel || ""
+            enabled: !ui.busy
             implicitHeight: 34
-            onClicked: ui.forgetMarker(root.notice.provider)
+            onClicked: root.notice.action === "signin"
+                       ? ui.signIn(root.notice.provider, root.notice.account)
+                       : ui.forgetMarker(root.notice.provider)
         }
     }
     Btn {
