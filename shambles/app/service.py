@@ -484,6 +484,8 @@ class ShamblesService:
 
         if outcome.restored:
             where = f"You are back on '{outcome.previous}'. Nothing was lost."
+        elif outcome.still_works:
+            where = f"'{name}' still works as it did. Nothing was lost."
         elif action == "add":
             where = f"'{name}' was created but has no login yet."
         else:

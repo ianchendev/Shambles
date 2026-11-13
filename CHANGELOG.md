@@ -23,6 +23,20 @@ Notable changes per release. Dates are the tag date.
 
 ### Added
 
+- **Sign in again before a Claude login runs out, from any interface.**
+  Claude ends a login about 30 days after it was signed in, however much it
+  is used, and only a new sign-in moves that date. In its last days an
+  account now says so: `shambles list` marks it `expires soon` and names the
+  date, the terminal UI shows a notice at the top with the key that renews
+  it, and the window offers **Sign in** beside Switch. A sign-in that is
+  cancelled or does not finish leaves the account exactly as it was. Codex
+  accounts are marked `expires soon` too, but using one renews it, so they
+  get no notice.
+- **One key for what the notice says.** In the terminal UI, `f` does what
+  the notice at the top says: sign that account in again, or switch to the
+  saved account a login belongs to when the label names another. Both took
+  finding the account in the list first.
+
 - **A saved login is no longer replaced without a copy.** When Shambles
   saves the live login over a profile's saved one and the two are different
   logins, the old one is kept beside it as `credentials.json.previous`
@@ -103,6 +117,27 @@ Notable changes per release. Dates are the tag date.
   `status_label`, and every usage window carries `severity` and a filled-in
   `resets_at_ms`. All additions; nothing existing changed, and the contract
   version stays at 1.
+
+- **`shambles doctor`.** Checks whether switching can work on this machine
+  and says why not, without changing anything. It reports an environment
+  variable that makes the vendor ignore its stored login (`ANTHROPIC_API_KEY`
+  and friends, `CODEX_ACCESS_TOKEN`), a `claude` inside WSL that is really
+  the Windows install, Codex not keeping its login in `auth.json`, a
+  relocated config directory, a missing vendor program, and where each login
+  is kept. On Windows it also lists the Credential Manager entries that
+  Shambles 2.1.2 or older left behind, without touching them. Exits 1 on a
+  problem; `--json` for scripts.
+
+- **A native Windows on Arm binary**, `shambles-windows-arm64.exe`, and an
+  installer that picks it. On releases without one the installer falls back
+  to the x64 build, which Windows 11 on Arm runs under emulation.
+
+- **macOS and native Windows are now exercised on every pull request.** A
+  `real-machine` workflow installs the current Claude Code and Codex on
+  GitHub's macOS, Windows and Linux machines, drives Shambles against the
+  real Keychain and Credential Manager with made-up credentials, and asks the
+  vendors' own commands who is signed in after each switch. The README's
+  support table now says what that established and what it did not.
 
 ### Fixed
 
@@ -218,26 +253,6 @@ Notable changes per release. Dates are the tag date.
   it costs: signing that address back in needs a new verification email.
 - The terminal UI's eject confirmation says what eject does before asking.
   It used to show only the after-the-fact summary, as if it had happened.
-- **`shambles doctor`.** Checks whether switching can work on this machine
-  and says why not, without changing anything. It reports an environment
-  variable that makes the vendor ignore its stored login (`ANTHROPIC_API_KEY`
-  and friends, `CODEX_ACCESS_TOKEN`), a `claude` inside WSL that is really
-  the Windows install, Codex not keeping its login in `auth.json`, a
-  relocated config directory, a missing vendor program, and where each login
-  is kept. Exits 1 on a problem; `--json` for scripts.
-
-- **A native Windows on Arm binary**, `shambles-windows-arm64.exe`, and an
-  installer that picks it. On releases without one the installer falls back
-  to the x64 build, which Windows 11 on Arm runs under emulation.
-
-- **macOS and native Windows are now exercised on every pull request.** A
-  `real-machine` workflow installs the current Claude Code and Codex on
-  GitHub's macOS, Windows and Linux machines, drives Shambles against the
-  real Keychain and Credential Manager with made-up credentials, and asks the
-  vendors' own commands who is signed in after each switch. The README's
-  support table now says what that established and what it did not.
-
-### Fixed
 
 - **Switching Claude accounts on native Windows did nothing.** Shambles read
   and wrote the Credential Manager there, always, in a layout Claude Code
@@ -248,6 +263,11 @@ Notable changes per release. Dates are the tag date.
   incoming account's name into `.claude.json` and reported success: the old
   login under the new name. Shambles now uses the file, and Credential
   Manager only when Claude Code itself does, in Claude Code's own layout.
+
+  Those versions also left entries in Windows Credential Manager, named like
+  `Claude Code-credentials/claude-code-user#0` and `...#m`. Claude Code does
+  not read them, but they can hold a copy of an old login. `shambles doctor`
+  lists them and says how to remove them. Shambles does not delete them.
 
 - **A Mac signed in over SSH read as signed out.** When the Keychain refuses
   a write, Claude Code keeps the login in `~/.claude/.credentials.json`.
