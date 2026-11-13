@@ -233,6 +233,10 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          # A tag with a hyphen (v2.3.0-rc.1) is a test build: published as a
+          # pre-release, so it never becomes "latest" and the install
+          # scripts keep handing out the last full release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           body: |
             Install with one command. Linux, macOS, or WSL:
@@ -263,8 +267,9 @@ jobs:
             36 to 82 MB depending on the platform, named `shambles-window-…`
             below, and unpack it to
             `~/.local/share/shambles/window` (or
-            `%LOCALAPPDATA%\Shambles\window`). `shambles gui --new` opens
-            it. It is separate because it carries Qt, which would slow every
+            `%LOCALAPPDATA%\Shambles\window`). `shambles gui` opens it, and
+            `shambles gui --classic` opens the older Tk window. It is
+            separate because it carries Qt, which would slow every
             other command if it were inside the binary. Set
             `SHAMBLES_NO_WINDOW=1` before running the script to skip it.
 
