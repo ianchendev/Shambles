@@ -159,6 +159,13 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **The terminal UI no longer loses the account list after a resize.**
+  Making the window narrower could leave the header as tall as the wide
+  banner it had just replaced, around the one-line header, with the account
+  list pushed off the screen until the window was resized again. The header now takes
+  its size from the window it is drawn in. In ASCII mode the details pane no
+  longer draws a block-glyph scrollbar when it overflows.
+
 - The record of which account is active, the copies of `~/.claude.json` kept
   before each switch, and the session history merged by the old-layout
   conversion are now written the way logins are: whole, owner-only from the
