@@ -69,7 +69,14 @@ Notable changes per release. Dates are the tag date.
   your previous account if the sign-in is cancelled or fails. The profile is
   kept so you can retry without naming it again.
 
-- **A new window, in preview: `shambles gui --new`.** Rebuilt in Qt on the
+- **`shambles gui` opens the new window.** It is the default wherever it is
+  installed: from the release installers, or with the `gui` extra from pip.
+  Where it is not, `shambles gui` opens the classic Tk window and says so in
+  one line. `shambles gui --classic` asks for the Tk window outright, and
+  `shambles gui --new` asks for the new one and explains what is missing
+  instead of falling back. The Tk window will be removed in a later release.
+
+- **A new window: `shambles gui --new`.** Rebuilt in Qt on the
   same service the terminal UI uses. One resizable column: each provider's
   live account on top with its usage, everyone else as rows beneath. What is
   different from the classic window:
@@ -90,8 +97,6 @@ Notable changes per release. Dates are the tag date.
     held back until you save it. The classic window let the click through
     and relied on the core to refuse.
 
-  Plain `shambles gui` still opens the classic window.
-
 - **The window has an icon and a place in your applications menu.** The
   title bar and taskbar show a Shambles icon instead of a blank one.
   `install.sh` adds a launcher entry on Linux
@@ -106,7 +111,7 @@ Notable changes per release. Dates are the tag date.
   the `shambles` binary instead of inside it: every other command stays as
   fast as it was. `install.sh` unpacks it to `~/.local/share/shambles/window`
   and `install.ps1` to `%LOCALAPPDATA%\Shambles\window`, and
-  `shambles gui --new` opens it from there. There is a build for every
+  `shambles gui` opens it from there. There is a build for every
   platform the binary ships for, Windows on Arm included.
 
   It is checked against the release's `SHA256SUMS` like the binary, and

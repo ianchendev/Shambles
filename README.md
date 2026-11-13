@@ -336,6 +336,7 @@ usage and changes nothing.
 | `shambles` | The terminal dashboard, on a real terminal |
 | `shambles tui` | The terminal dashboard, always |
 | `shambles gui` | The desktop window |
+| `shambles gui --classic` | The previous Tk window |
 | `shambles list` | Every account and its state, as text |
 | `shambles list --json` | The same thing, for scripts |
 | `shambles switch <provider> <account>` | Switch without opening anything |
@@ -377,75 +378,92 @@ the dashboard draw from, so you can tell a display bug from a logic bug.
 
 ### The window
 
-`shambles gui` opens a fixed 860 px window. Its height grows with your
-accounts up to 80% of your screen. No menu bar, no toolbar, no right-click
-menu. Everything sits on screen.
+`shambles gui` opens the window. It is one resizable column: each provider's
+live account on top with its usage on show, and every other account as a row
+beneath.
 
 ```text
-┌──────────────────────────────────────────────────────────────────┐
-│ CLAUDE CODE                                    [ Save … ]        │  ← group heading:
-│ Work                                                             │       provider, live profile,
-│ work@example.com                                                 │       and what it found
-│                                                                  │
-│ ┃ Work                                                           │  ← the live account: blue
-│ ┃ work@example.com                                               │       spine and tint, and
-│ ┃ session ▓▓▓▓▓▓░░░░░░░░░░░░░░░░░  22% ⓘ                         │       no buttons at all
-│ ┃ week    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░  58% ⓘ                         │
-│                                                                  │
-│ │ Other                       [ Switch ]   ✕                     │  ← every other card
-│ │ other@example.com                                              │
-│                                                                  │
-│ │ Personal                    [ Sign in ]  ✕                     │  ← a lapsed one signs
-│ │ personal@example.com   needs login                             │       in instead
-│                                                                  │
-│ CODEX                                                            │
-│ Personal                                                         │
-│ alex@example.com                                                 │
-│                                                                  │
-│ ┃ Personal                                                       │
-│                                                                  │
-├──────────────────────────────────────────────────────────────────┤
-│ ⟳                            [ Eject ]   [ + Add Account ]       │  ← footer, always there
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│ Shambles                              [ ⟳ ]  [ ··· ]  [ + Add account ] │
+│                                                                    │
+│ Claude Code  Terminal, VS Code          3 accounts · 1 needs sign-in │
+│ ┌────────────────────────────────────────────────────────────────┐ │
+│ │ (W) Work  ● Live                                      ⌄   ···  │ │  ← the live account:
+│ │     work@example.com · Max 5x                                  │ │       no Switch, no Remove
+│ │ Session ▓▓▓░░░░░░░░ 22%        Week ▓▓▓▓▓▓░░░░░ 58%            │ │
+│ │ Resets today, 15:10            Resets Tue 17 Nov               │ │
+│ └────────────────────────────────────────────────────────────────┘ │
+│ ┌────────────────────────────────────────────────────────────────┐ │
+│ │ (C) Client  Expires soon     81% · 92%  [1] [ Switch ]  ⌄  ··· │ │  ← press 1 to switch
+│ │ (P) Personal  Needs sign-in             [ Sign in ]     ⌄  ··· │ │  ← a lapsed one signs
+│ └────────────────────────────────────────────────────────────────┘ │       in instead
+│                                                                    │
+│ Codex  Terminal, VS Code, ChatGPT                         1 account │
+│ ┌────────────────────────────────────────────────────────────────┐ │
+│ │ (P) Personal  ● Live                                  ⌄   ···  │ │
+│ └────────────────────────────────────────────────────────────────┘ │
+│ Reads local files only, never the network.                         │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-The live card has **no buttons at all** while its login is healthy, and never
-a ✕, so you cannot delete the login you are using by misclicking.
+The live account has **no Switch and no Remove**, so you cannot delete the
+login you are using by misclicking. Remove lives under each other account's
+`···` menu, asks first, and Cancel is the default answer.
 
-A card whose login has lapsed shows **Sign in** where Switch would be, the
-live card included. It runs the vendor's own browser sign-in with the
-address filled in (Claude), saves the new login under the same profile and
-leaves it live, so there is no need to remove the account and add it back.
-Cancel, and you are put back on the account you were using.
+An account whose login has lapsed shows **Sign in** where Switch would be,
+the live one included. It runs the vendor's own browser sign-in with the
+address filled in (Claude), saves the new login under the same account and
+leaves it live. Cancel, and you are put back on the account you were using.
+If your browser signs in as a different account, nothing is saved over the
+one you asked for, and the window says which address the browser used.
 
-Each card shows a state chip only when something needs you:
+If you are signed in as one saved account while another is marked as the
+one in use, the window says so at the top of that provider with one button,
+**Switch to** that account. It files the login there, keeping the one it
+replaces, and the other Switch buttons wait until you have pressed it.
 
-| Chip | Meaning |
+Nothing opens a separate dialog. Adding, signing in, renaming, removing and
+ejecting happen in a sheet inside the window, and what an action did is said
+in words at the bottom.
+
+Each account shows a state only when something needs you:
+
+| Shown | Meaning |
 |---|---|
 | *(nothing)* | Healthy, or an expiry it cannot read |
-| `soon` (amber) | Fewer than four days left (Claude) or three (Codex). For Claude, using the account does not push the date back: sign in again before it |
-| `needs login` (red) | The window closed, or this profile has no credential yet. Press **Sign in** |
-| `signed out` (red) | The login was cleared. The profile survives, the token is empty |
+| `Expires soon` (amber) | Fewer than four days left (Claude) or three (Codex). For Codex, using the account renews it. For Claude it does not: the date is fixed at sign-in, so the window offers **Sign in** beside Switch until you do |
+| `Needs sign-in` (red) | The window closed, or this account has no login yet. Press **Sign in** |
+| `Signed out` (red) | The login was cleared. The account survives, the token is empty |
+
+Click a row, or its `⌄`, to open it: the exact date its saved login is good
+until, and its last recorded usage with the time each figure resets.
 
 Usage bars come from what the vendor already wrote to your disk, never from a
-request. They turn red at 80%, and anything older than an hour goes dim and
-gets labelled `as of 20m ago`.
+request. They turn red at 80%, and a figure older than an hour on an account
+you are not using goes grey and is labelled `as of 5h ago`.
 
-Every control, the add-account walkthrough, and the two migrations the window
-runs on its own are in [docs/how-it-works.md](docs/how-it-works.md).
+| Key | Action |
+|---|---|
+| `1` to `9` | Switch to the account showing that number |
+| `/` | Filter accounts, once there are seven or more |
+| `Ctrl+N` | Add an account |
+| `Ctrl+R` or `F5` | Refresh. Re-reads local files only |
+| `Tab`, `Space`, `Enter` | Move between controls and press them |
+| `Esc` | Close the sheet, or clear the filter |
 
-**A redesigned window is in preview.** `shambles gui --new` opens it. It does
-everything above in one resizable window with no separate dialogs, adds light
-and dark themes, and can be driven from the keyboard (`1` to `9` switch,
-`/` filters, `Ctrl+N` adds).
+Light and dark are under the `···` menu. The window follows the system where
+it can tell and remembers your choice where it cannot, which includes WSL.
+`SHAMBLES_SCALE` (1.0 to 4.0) sets its size and `SHAMBLES_MOTION=0` turns
+animation off.
 
-It is built on Qt, a 36 to 82 MB download depending on the platform, so it
-ships as its own archive beside the `shambles` binary instead of inside it.
-The install scripts fetch it for you into `~/.local/share/shambles/window`
-(or `%LOCALAPPDATA%\Shambles\window`), check it against the release's
-`SHA256SUMS` like the binary, and leave the window you had if the download
-fails. Set `SHAMBLES_NO_WINDOW=1` first to skip it. It carries the system
-libraries Qt needs, so there is nothing to `apt install`.
+**Where the window comes from.** It is built on Qt, a 36 to 82 MB download
+depending on the platform, so it ships as its own archive beside the
+`shambles` binary instead of inside it. The install scripts fetch it for you
+into `~/.local/share/shambles/window` (or `%LOCALAPPDATA%\Shambles\window`),
+check it against the release's `SHA256SUMS` like the binary, and leave the
+window you had if the download fails. Set `SHAMBLES_NO_WINDOW=1` first to
+skip it. It carries the system libraries Qt needs, so there is nothing to
+`apt install`.
 
 The scripts also put Shambles in your applications menu: a launcher entry on
 Linux and a Start menu shortcut on Windows. `SHAMBLES_NO_DESKTOP=1` skips
@@ -456,7 +474,6 @@ From pip or pipx it is an optional extra instead:
 
 ```bash
 pip install 'shambles[gui]'      # or: pipx inject shambles PySide6-Essentials
-shambles gui --new
 ```
 
 Installed that way on a bare Linux or WSL machine, Qt needs three system
@@ -478,6 +495,11 @@ library, that library is inside the window archive. Nothing in Shambles
 calls it: the window loads only files that ship with it, and the rule that
 no Python module in the package imports a network module is still enforced
 by `tests/test_login.py`.
+
+**The classic window.** `shambles gui --classic` opens the previous Tk
+window. It is also what `shambles gui` opens when the new window is not
+installed, with a line saying so. It will be removed in a later release.
+[docs/how-it-works.md](docs/how-it-works.md) still describes it.
 
 ### The terminal dashboard
 

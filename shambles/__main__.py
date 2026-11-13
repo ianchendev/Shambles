@@ -19,7 +19,7 @@ shambles — switch between Claude Code and Codex accounts
   shambles                     open the terminal interface, on a terminal
   shambles tui                 open the terminal interface explicitly
   shambles gui                 open the window instead
-  shambles gui --new           open the new window (preview)
+  shambles gui --classic       open the classic Tk window
   shambles list                list every account and its state
   shambles list --json         the same thing, machine-readable
   shambles switch claude Work  switch without opening an interface
@@ -71,6 +71,11 @@ part of a normal desktop but absent from a bare Linux or WSL install:
 The released window bundle carries those libraries itself. Until this
 works, `shambles gui` opens the classic window and `shambles` the terminal
 dashboard.
+"""
+
+CLASSIC_FALLBACK = """\
+Opening the classic window: the new one is not installed here.
+  shambles gui --new    says what it needs.
 """
 
 TEXTUAL_MISSING = """\
