@@ -1866,3 +1866,112 @@ def test_an_unmarked_live_login_is_named_rather_than_guessed_at(
     text = "\n".join(_label_texts(app))
     assert "Signed in as x@example.com, which is not saved" in text
     assert "Not sure which account is live" not in text
+
+
+# -- a Claude login near its fixed deadline ---------------------------------
+#
+# Reproduced on a synthetic home: two days from the date, the card showed a
+# "soon" chip whose reason was only in a tooltip, and offered Switch, which
+# does nothing for it. Only a new sign-in moves Claude's date.
+
+def _parked_closing(paths, provider="claude"):
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, provider, "Soon", email="s@example.test",
+                 refresh_expires_ms=healthy_ms(2))
+    make_claude_json(paths, email="w@example.test")
+    make_live_claude_login(paths, access_token="tok-Work")
+
+
+def _record_tooltips(monkeypatch):
+    tips = []
+    original = gui.Tooltip.__init__
+
+    def recording(self, widget, text, theme=None):
+        tips.append((widget, text))
+        original(self, widget, text, theme)
+
+    monkeypatch.setattr(gui.Tooltip, "__init__", recording)
+    return tips
+
+
+def test_a_closing_claude_card_offers_sign_in_beside_switch(paths, make_app,
+                                                            monkeypatch):
+    _vendor_installed(monkeypatch)
+    _parked_closing(paths)
+    tips = _record_tooltips(monkeypatch)
+
+    card = _card(make_app(paths), "Soon")
+    texts = _button_texts(card)
+
+    assert "Sign in" in texts
+    # It still works, so switching to it is still a thing to offer.
+    assert "Switch" in texts
+    sign_in = next(b for b in _buttons(card) if b.cget("text") == "Sign in")
+    tip = next(text for widget, text in tips if widget is sign_in)
+    assert "30 days" in tip and "however much you use it" in tip
+
+
+def test_a_closing_active_claude_card_offers_sign_in(paths, make_app,
+                                                     monkeypatch):
+    _vendor_installed(monkeypatch)
+    make_profile(paths, "claude", "Soon", email="s@example.test",
+                 refresh_expires_ms=healthy_ms(2), active=True)
+    make_claude_json(paths, email="s@example.test")
+    paths.claude_dir.mkdir(parents=True, exist_ok=True)
+    (paths.claude_dir / ".credentials.json").write_bytes(
+        paths.credentials("claude", "Soon").read_bytes())
+
+    assert _button_texts(_card(make_app(paths), "Soon")) == ["Sign in"]
+
+
+def test_a_closing_codex_card_keeps_switch_only(paths, make_app, monkeypatch):
+    """Codex's date moves when the account is used, so Switch is the fix."""
+    _vendor_installed(monkeypatch)
+    _parked_closing(paths, provider="codex")
+
+    texts = _button_texts(_card(make_app(paths), "Soon"))
+
+    assert "Switch" in texts and "Sign in" not in texts
+
+
+def test_without_the_vendor_cli_a_closing_card_keeps_switch(paths, make_app,
+                                                            monkeypatch):
+    _vendor_installed(monkeypatch, installed=False)
+    _parked_closing(paths)
+
+    texts = _button_texts(_card(make_app(paths), "Soon"))
+
+    assert "Switch" in texts and "Sign in" not in texts
+
+
+def test_an_early_sign_in_that_comes_to_nothing_says_the_login_still_works(
+        paths, make_app, monkeypatch):
+    _vendor_installed(monkeypatch)
+    _parked_closing(paths)
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showwarning",
+                        lambda title, text, **kw: shown.append(text))
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda title, text, **kw: shown.append(text))
+
+    class Cancelled:
+        succeeded = False
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(gui, "LoginDialog", Cancelled)
+    app = make_app(paths)
+    soon = next(p for p in profiles.discover(
+        paths, gui_claude(), "Work", switcher.now_ms(), platform="linux")
+        if p.name == "Soon")
+    app.on_relogin(gui_claude(), soon)
+
+    assert len(shown) == 1
+    assert "still works" in shown[0]
+    assert "needs a login" not in shown[0]
+    assert state.read_active(paths, "claude") == "Work"
+
+
+def gui_claude():
+    return providers.load("claude", env={})

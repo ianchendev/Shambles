@@ -76,6 +76,8 @@
     "optional": true,
     "optional_note": "absent from credentials written by the VS Code extension bundle; a missing value means UNKNOWN, never CLOSED",
     "renewed_by_use": false,
+    "sign_in_lasts_days": 30,
+    "sign_in_lasts_days_note": "for copy only: the server's deadline is about 30 days after sign-in, and the client assumes 30 when the server sends none. Shambles reads the real date from the credential and never computes one from this.",
     "renewed_by_use_note": "the server keeps one deadline from sign-in and sends the seconds left on each refresh; across an 8-hour refresh it moved by -1.375 s (measured 2026-11-13). Using the account does not push it back; only a new sign-in does."
   },
   "config_file": {

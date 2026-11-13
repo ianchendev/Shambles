@@ -17,6 +17,19 @@ from . import snapshot as snapshot_mod
 from .snapshot import Snapshot
 
 
+#: What a frontend says while a switch waits for the vendor's refresh lock.
+#: The wait is :data:`shambles.switcher.REFRESH_LOCK_WAIT_S` at most.
+WAITING_FOR_REFRESH = (
+    "Waiting for Claude Code to finish renewing its login, so the new token "
+    "is the one saved. This usually takes a few seconds; Shambles gives up "
+    "after {seconds:.0f} s. Nothing has changed yet."
+)
+
+
+def waiting_for_refresh() -> str:
+    return WAITING_FOR_REFRESH.format(seconds=switcher.REFRESH_LOCK_WAIT_S)
+
+
 ERROR_CODES = {
     login.LoginUnavailableError: (
         "login_unavailable", "Install the vendor CLI and retry."),
@@ -142,7 +155,10 @@ class ShamblesService:
         return ActionPlan("switch", provider_id, account, False,
                           f"Switch to {account}?")
 
-    def switch(self, provider_id, account):
+    def switch(self, provider_id, account, *, on_wait=None):
+        """Switch accounts. ``on_wait`` is called once if the switch has to
+        wait for the vendor to finish renewing a login; see
+        :data:`WAITING_FOR_REFRESH` for what to tell the user."""
         try:
             provider = self._provider(provider_id)
             # A stale marker would make switch() refuse, and would file the
@@ -150,7 +166,7 @@ class ShamblesService:
             switcher.adopt_live_owner(self.paths, provider,
                                       platform=self.platform)
             switcher.switch(self.paths, provider, account,
-                            platform=self.platform)
+                            platform=self.platform, on_wait=on_wait)
             return self._result(True, "switch", f"Switched to {account}.",
                                 warnings=self._switch_warnings(provider))
         except ShamblesError as exc:
@@ -484,6 +500,8 @@ class ShamblesService:
 
         if outcome.restored:
             where = f"You are back on '{outcome.previous}'. Nothing was lost."
+        elif outcome.still_works:
+            where = f"'{name}' still works as it did. Nothing was lost."
         elif action == "add":
             where = f"'{name}' was created but has no login yet."
         else:

@@ -21,12 +21,12 @@ from textual.widgets import Static
 from ... import __version__, settings, update_check
 from ...errors import ShamblesError
 from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
-                       ShamblesService)
+                       ShamblesService, waiting_for_refresh)
 from ..snapshot import Snapshot
 from .brand import header_text
 from .dashboard import Dashboard, MINIMUM_HEIGHT
 from .overlays import ConfirmAction, ResultScreen, overlay_panel_classes
-from .widgets import AccountList, notices_text
+from .widgets import AccountList, fix_target, notices_text
 from .workflows import AccountMenu, AddAccountScreen, LoginProgress, NameInputScreen
 
 #: A state and the key that changes it. The footer already lists "a add",
@@ -42,6 +42,10 @@ class SwitchFinished(Message):
         super().__init__()
         self.provider = provider
         self.result = result
+
+
+class SwitchWaiting(Message):
+    """The switch is waiting for Claude Code to finish renewing a login."""
 
 
 class MutationFinished(Message):
@@ -257,6 +261,8 @@ class HelpScreen(ModalScreen[None]):
                 "a            Add an account and sign in to it\n"
                 "m            Account actions (save, add, rename, remove)\n"
                 "l            Sign in to selected account again\n"
+                "s            Save a signed-in login nobody has saved\n"
+                "f            Do what the notice at the top says\n"
                 "x            Eject Shambles\n"
                 "r            Refresh local state\n"
                 "u            Hide the update notice\n"
@@ -267,7 +273,9 @@ class HelpScreen(ModalScreen[None]):
                 "No telemetry. Update checks are off by default.\n"
                 "Affected applications appear in account details.\n"
                 "Existing sessions keep their loaded login; restart them\n"
-                "after switching accounts.",
+                "after switching accounts.\n\n"
+                "Claude ends a login about 30 days after you sign in,\n"
+                "however much you use it. Sign in again (l) before then.",
                 markup=False,
             )
 
@@ -297,6 +305,7 @@ class ShamblesTUI(App[str | None]):
         Binding("a", "add_account", "Add"),
         Binding("s", "save_login", "Save", show=False),
         Binding("l", "login_selected", "Login"),
+        Binding("f", "fix_notice", "Fix", show=False),
         Binding("x", "eject", "Eject"),
         Binding("u", "hide_update_notice", "Hide notice", show=False),
         Binding("escape", "settle_onboarding", "Skip", show=False),
@@ -335,7 +344,8 @@ class ShamblesTUI(App[str | None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         gated = {"switch_selected", "refresh_snapshot", "save_login",
-                "open_menu", "add_account", "login_selected", "eject"}
+                "open_menu", "add_account", "login_selected", "eject",
+                "fix_notice"}
         # Refresh only rereads/restashes already-active credentials; it does
         # not begin a new credential mutation, so (like before) it alone is
         # exempt from the undersized-terminal guard.
@@ -563,15 +573,39 @@ class ShamblesTUI(App[str | None]):
                     self._start_login(group.provider, account.name)
                     return
                 if account.name == self.selected_account and not account.active:
-                    plan = self.service.plan_switch(group.provider, account.name)
-                    if plan.requires_confirmation:
-                        self.push_screen(
-                            ConfirmAction(plan),
-                            lambda confirmed: self._begin_switch(plan, confirmed),
-                        )
-                    else:
-                        self._begin_switch(plan, True)
+                    self._request_switch(group.provider, account.name)
                     return
+
+    def _request_switch(self, provider: str, account: str) -> None:
+        plan = self.service.plan_switch(provider, account)
+        if plan.requires_confirmation:
+            self.push_screen(
+                ConfirmAction(plan),
+                lambda confirmed: self._begin_switch(plan, confirmed),
+            )
+        else:
+            self._begin_switch(plan, True)
+
+    def action_fix_notice(self) -> None:
+        """Act on the notice whose line says "Press f": one key from anywhere.
+
+        Reproduced: a stale marker's only way forward was to find the named
+        account in the list and press Enter on it, and a login near its
+        deadline said nothing at all.
+        """
+        if not self.check_action("fix_notice", ()):
+            return
+        target = fix_target(self.snapshot)
+        if target is None:
+            return
+        code, provider, account = target
+        # Follow the cursor to what is being acted on, so the result lands
+        # on the row the user will look at next.
+        self.selected_provider, self.selected_account = provider, account
+        if code == "sign_in_soon":
+            self._start_login(provider, account)
+        else:
+            self._request_switch(provider, account)
 
     def _begin_switch(self, plan: ActionPlan, confirmed: bool) -> None:
         if (not confirmed or self.mutation_running
@@ -586,7 +620,9 @@ class ShamblesTUI(App[str | None]):
     @work(thread=True, exclusive=True, group="mutation")
     def perform_switch(self, provider: str, account: str) -> None:
         try:
-            result = self.service.switch(provider, account)
+            result = self.service.switch(
+                provider, account,
+                on_wait=lambda: self.post_message(SwitchWaiting()))
         except Exception:
             # Unexpected store/OS failures must not expose an exception dump
             # or close the interface before the user can read the result.
@@ -596,7 +632,20 @@ class ShamblesTUI(App[str | None]):
             ))
         self.post_message(SwitchFinished(provider, result))
 
+    def on_switch_waiting(self, _: "SwitchWaiting") -> None:
+        # On the dashboard, under the notices, rather than a toast in a
+        # corner: it is the only thing happening, and the result screen
+        # replaces it either way.
+        self._show_status(waiting_for_refresh())
+
+    def _show_status(self, text: str) -> None:
+        try:
+            self.query_one(Dashboard).show_status(text)
+        except NoMatches:
+            pass
+
     async def on_switch_finished(self, event: SwitchFinished) -> None:
+        self._show_status("")
         self._capture_selection()
         if event.result.snapshot is not None:
             await self.render_snapshot(event.result.snapshot)

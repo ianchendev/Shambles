@@ -885,3 +885,70 @@ def test_switching_to_the_account_that_is_already_live_is_not_refused(
     assert state.read_active(paths, provider.id) == "Home"
     assert live.read_bytes() == home
     assert paths.credentials(provider.id, "Work").read_bytes() == work
+
+
+# -- an early sign-in that comes to nothing -------------------------------
+#
+# Sign in is now offered before a Claude login's deadline, while it still
+# works. Whether the frontends may say "still needs a sign-in" afterwards
+# depends on whether the account's login works, so settle_login says.
+
+def closing_claude(paths, *, active):
+    claude_ = providers.load("claude", env={})
+    make_profile(paths, "claude", "Work", email="w@example.test",
+                 active=active, refresh_expires_ms=healthy_ms(2))
+    make_profile(paths, "claude", "Home", email="h@example.test",
+                 active=not active)
+    live_owner = "Work" if active else "Home"
+    make_claude_json(paths, email=f"{live_owner[0].lower()}@example.test")
+    paths.claude_dir.mkdir(parents=True, exist_ok=True)
+    (paths.claude_dir / ".credentials.json").write_bytes(
+        paths.credentials("claude", live_owner).read_bytes())
+    return claude_
+
+
+@pytest.mark.parametrize("active", [True, False])
+@pytest.mark.parametrize("succeeded", [True, False])
+def test_an_early_sign_in_that_comes_to_nothing_still_works(paths, active,
+                                                            succeeded):
+    claude_ = closing_claude(paths, active=active)
+    saved = paths.credentials("claude", "Work").read_bytes()
+    previous = switcher.begin_relogin(paths, claude_, "Work", platform="linux",
+                                      sleep=lambda _: None)
+
+    outcome = switcher.settle_login(paths, claude_, "Work", previous,
+                                    adding=False, succeeded=succeeded,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.UNCHANGED
+    assert outcome.still_works is True
+    assert outcome.restored is (not active)
+    assert paths.credentials("claude", "Work").read_bytes() == saved
+
+
+def test_a_lapsed_login_that_comes_to_nothing_does_not_still_work(paths,
+                                                                  provider):
+    parked_lapsed(paths, provider)
+    previous = switcher.begin_relogin(paths, provider, "Old", platform="linux",
+                                      sleep=lambda _: None)
+
+    outcome = switcher.settle_login(paths, provider, "Old", previous,
+                                    adding=False, succeeded=False,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.still_works is False
+
+
+def test_an_active_login_the_vendor_emptied_does_not_still_work(paths):
+    """If the vendor cleared the live slot and then failed, the account is
+    signed out in Claude Code, whatever its saved copy says."""
+    claude_ = closing_claude(paths, active=True)
+    previous = switcher.begin_relogin(paths, claude_, "Work", platform="linux",
+                                      sleep=lambda _: None)
+    (paths.claude_dir / ".credentials.json").write_text("")
+
+    outcome = switcher.settle_login(paths, claude_, "Work", previous,
+                                    adding=False, succeeded=False,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.still_works is False

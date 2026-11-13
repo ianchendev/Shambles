@@ -26,6 +26,7 @@ from .. import settings
 from ..paths import Paths
 from . import snapshot as snapshot_mod
 from .launch import LaunchRequest, replace_process
+from . import service as service_mod
 from .service import ShamblesService
 
 EXIT_OK = 0
@@ -74,6 +75,9 @@ CLI_REMEDIES = {
     "unsaved_login": "Run 'shambles' and press s to save it.",
     "signed_in_elsewhere": "Run 'shambles switch {provider} {account}' to "
                            "settle it.",
+    # The CLI does not sign in (it lists and switches); the terminal UI does.
+    "sign_in_soon": "Run 'shambles', select '{account}' and press l to sign "
+                    "in again.",
 }
 
 
@@ -254,6 +258,10 @@ def cmd_list(args) -> int:
                 bits.append(account["plan"])
             if account["needs_login"]:
                 bits.append("needs login")
+            elif account["status_label"] == "soon":
+                # Said for both vendors: Codex's is kept by using it, and a
+                # Claude one also has a notice above saying what to do.
+                bits.append("expires soon")
             for window in account["usage"]:
                 percent = window["used_percent"]
                 bits.append(f"{window['label']} "
@@ -269,9 +277,15 @@ def cmd_list(args) -> int:
     return EXIT_OK
 
 
+def _say_waiting() -> None:
+    # stderr, so --json output on stdout stays one parseable line.
+    print(service_mod.waiting_for_refresh(), file=sys.stderr, flush=True)
+
+
 def cmd_switch(args) -> int:
     try:
-        result = _ready_service(args).switch(args.provider, args.account)
+        result = _ready_service(args).switch(
+            args.provider, args.account, on_wait=_say_waiting)
     except KeyError:
         known = ", ".join(registry.ids())
         return _fail(args, "unknown_provider",
