@@ -145,6 +145,11 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- The record of which account is active, the copies of `~/.claude.json` kept
+  before each switch, and the session history merged by the old-layout
+  conversion are now written the way logins are: whole, owner-only from the
+  first byte, and never seen half written. Two windows writing the active
+  record at once could leave it empty, which reads as no account marked.
 - **Two Shambles windows saving the same login at once could corrupt it.**
   Every write shared one temp file name, so when the window and the terminal
   UI re-saved a login at the same moment, one could fail or install a file

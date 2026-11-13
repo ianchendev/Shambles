@@ -304,7 +304,7 @@ def test_an_interrupted_legacy_migration_can_be_finished(paths, monkeypatch):
 
 
 @pytest.mark.parametrize("owner, attribute, error", [
-    (shutil, "copy2", OSError("disk full")),                # merging history
+    (migrate, "_merge_tree", OSError("disk full")),         # merging history
     (FileStore, "write", StoreUnavailableError("disk full")),  # a login
     (configjson, "write_sidecar", OSError("disk full")),    # an identity
     (state, "write_active", OSError("disk full")),          # who is signed in
