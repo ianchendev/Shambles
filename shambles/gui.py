@@ -622,7 +622,10 @@ class LoginDialog(tk.Toplevel):
         # clipboard_append alone can be lost when the window that owns the
         # selection goes away; a pending update keeps it available to paste.
         self.update_idletasks()
-        self.after(1500, lambda: self.copy_button.config(text="Copy link"))
+        # Through motion: the dialog can close within the 1.5 s, and a bare
+        # after() would outlive it (see motion.later).
+        motion.later(self.copy_button, 1500,
+                     lambda: self.copy_button.config(text="Copy link"))
 
     def _append(self, line):
         try:
@@ -1321,7 +1324,7 @@ class ShamblesApp(tk.Tk):
             return grown
 
         grown.place(relwidth=0, relheight=1.0, x=0, y=0)
-        grown.after(index * BAR_STAGGER_MS, lambda: motion.animate(
+        motion.later(grown, index * BAR_STAGGER_MS, lambda: motion.animate(
             grown, BAR_FILL_MS,
             lambda p: grown.place_configure(relwidth=target * p)))
         return grown

@@ -1,5 +1,3 @@
-import os
-import sys
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -780,71 +778,6 @@ def test_a_dialog_no_test_expected_answers_no_instead_of_waiting(
     no_real_dialogs.opened.clear()       # seen here, so not a teardown failure
 
 
-def _remove_button(app):
-    found = [w for w in _every_widget(app) if isinstance(w, ttk.Button)
-             and str(w.cget("style")) == "Danger.TButton"]
-    assert len(found) == 1, found
-    return found[0]
-
-
-@pytest.mark.skipif(
-    not (sys.platform == "win32" and os.environ.get("GITHUB_ACTIONS")),
-    reason="drives the real Windows pointer; only on a CI runner's desktop")
-def test_a_real_click_on_the_runner_desktop_never_reaches_a_test_window(
-        paths, make_app, no_real_dialogs):
-    """What hung the Windows jobs: real input on the runner's desktop landed
-    on a test window -- the remove button, in the one caught with a
-    traceback -- and opened a modal dialog. Windows the tests build take no
-    input from the OS at all; events a test generates still reach them.
-
-    The second click is the control: on an ordinary window the same click
-    does reach the button, so the first one could have."""
-    import ctypes
-    from ctypes import wintypes
-
-    user32 = ctypes.windll.user32
-    LEFTDOWN, LEFTUP, MOVE, ABSOLUTE = 0x0002, 0x0004, 0x0001, 0x8000
-
-    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
-    make_profile(paths, "claude", "Other", email="o@example.test")
-    app = make_app(paths)
-    app.geometry("+120+120")
-    app.attributes("-topmost", True)
-    app.update()
-    remove = _remove_button(app)
-
-    def click_remove():
-        x = remove.winfo_rootx() + remove.winfo_width() // 2
-        y = remove.winfo_rooty() + remove.winfo_height() // 2
-        assert user32.SetCursorPos(x, y)
-        user32.mouse_event(LEFTDOWN, 0, 0, 0, 0)
-        user32.mouse_event(LEFTUP, 0, 0, 0, 0)
-        # Input is routed in order: once a later move has landed, the click
-        # has gone wherever Windows sent it, and update() drains our share.
-        user32.mouse_event(MOVE | ABSOLUTE, 0, 0, 0, 0)
-        point = wintypes.POINT()
-        assert _pump(app, lambda: user32.GetCursorPos(ctypes.byref(point))
-                     and (point.x, point.y) == (0, 0)), "the move never landed"
-        app.update()
-
-    click_remove()
-    assert no_real_dialogs.opened == [], "a real click reached a test window"
-    assert make_app.foreign == [], make_app.foreign
-
-    app.attributes("-disabled", False)
-    click_remove()
-    assert _pump(app, lambda: no_real_dialogs.opened), (
-        "the control click never reached the button, so the first proves "
-        "nothing")
-    assert [kind for kind, *_ in no_real_dialogs.opened] == ["askyesno"]
-    # ... and make_app saw it come in, as it would any input from outside.
-    assert any("button 1" in seen for seen in make_app.foreign), (
-        make_app.foreign)
-    no_real_dialogs.opened.clear()
-    make_app.foreign.clear()
-    assert paths.credentials("claude", "Other").exists()
-
-
 def test_refresh_only_reads(paths, make_app):
     """Safe to press at any time: no switch, no credential written, nothing a
     running session would notice."""
@@ -1192,6 +1125,59 @@ def test_an_ordinary_refresh_pulses_nothing(paths, make_app, monkeypatch):
     app.update()
 
     assert not pulsed
+
+
+def _orphaned_timers(app):
+    """Pending ``after`` scripts whose command Tk has already deleted.
+
+    tkinter names a callback's Tcl command after the address of a Python
+    object plus the function's name -- ``4372781376<lambda>``. Destroying a
+    widget deletes its commands but not its timers, so a timer left behind
+    either fails with "invalid command name", or, once a new callback lands
+    at the same address with the same name, runs that one instead.
+    """
+    orphans = []
+    for job in app.tk.splitlist(app.tk.call("after", "info")):
+        try:
+            script = app.tk.splitlist(app.tk.call("after", "info", job))[0]
+        except tk.TclError:
+            continue                      # fired while we looked
+        command = app.tk.splitlist(script)[0]
+        if not app.tk.call("info", "commands", command):
+            orphans.append(script)
+    return orphans
+
+
+def test_a_refresh_while_the_cards_fade_in_leaves_no_timer_behind(paths,
+                                                                  make_app):
+    """Caught on CI as buttons nobody pressed: a refresh straight after
+    another one ran the new list's Switch on one runner and Remove on the
+    next. Each card starts its fade after a stagger, and that timer outlived
+    the card the refresh destroyed; the new card's button command was
+    allocated where the timer's callback had been, took its name, and the
+    timer ran it. In the window that is a switch the user never asked for,
+    if they act while the list is still arriving."""
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    for name in ("Two", "Three", "Four"):
+        make_profile(paths, "claude", name, email=f"{name}@example.test")
+    app = make_app(paths)
+    app.update()
+
+    app.refresh()                    # the first list is still fading in
+
+    assert _orphaned_timers(app) == []
+
+
+def test_a_bar_destroyed_before_it_starts_growing_leaves_no_timer(paths,
+                                                                  make_app):
+    app = make_app(paths)
+    app.update()
+    track = tk.Frame(app)
+    app._grow_bar(track, "#336699", 0.5, index=3)
+
+    track.destroy()
+
+    assert _orphaned_timers(app) == []
 
 
 def test_a_failed_switch_does_not_leave_a_pulse_armed(paths, make_app,

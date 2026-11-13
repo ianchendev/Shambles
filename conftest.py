@@ -144,8 +144,10 @@ def no_real_dialogs(monkeypatch):
     They are modal, and on a CI runner nobody answers one: three Windows jobs
     sat in ``tests/test_gui_import.py`` until the six-hour job limit killed
     them, and the one ``faulthandler_timeout`` caught was parked in
-    ``messagebox.askyesno`` behind a remove button no test had pressed. A
-    retry cannot rescue a hang.
+    ``messagebox.askyesno`` behind a remove button no test had pressed (a
+    timer that outlived its card ran the button; see ``motion.later``). A
+    retry cannot rescue a hang, and the next bug that opens a dialog should
+    fail one test, not stop the run.
 
     So every dialog answers the safe way at once, and the test that opened
     one fails, naming it. Raising instead would not do: Tk prints an error
@@ -221,14 +223,6 @@ def make_app():
         except tk.TclError as exc:
             pytest.skip(f"no usable display: {exc}")
         created.append(app)
-        if sys.platform == "win32":
-            # A Windows runner shows these on a real desktop, and real input
-            # landed on one: a click no test made pressed a remove button
-            # and the job hung on the dialog it opened. A disabled window
-            # takes no mouse or keyboard input from the OS; what a test sends
-            # with event_generate goes through Tk's own queue and still
-            # arrives.
-            app.attributes("-disabled", True)
         # No test presses a mouse button or a key: they call commands
         # directly and generate only <Enter> and <Leave>. A press or a key
         # here came from outside the process, and whatever the test then
@@ -239,7 +233,6 @@ def make_app():
                      add="+")
         return app
 
-    _make.foreign = foreign
     yield _make
 
     for app in created:

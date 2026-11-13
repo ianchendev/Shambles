@@ -201,6 +201,35 @@ def animate(widget, duration_ms: int, step, *, ease=ease_out_cubic, done=None):
     return running
 
 
+def later(widget, delay_ms: int, callback):
+    """``widget.after(delay_ms, callback)``, cancelled if the widget goes first.
+
+    A bare ``after`` outlives its widget. Destroying the widget deletes the
+    Tcl command tkinter made for the callback, but not the timer, and that
+    command is named after the address of a Python object plus the
+    function's name: ``4372781376<lambda>``. Once ``refresh()`` has rebuilt
+    the list, a new button's ``command=lambda`` can sit at that address and
+    take that name, and the timer then runs the button -- a switch nobody
+    pressed. Otherwise it fails with "invalid command name".
+    """
+    pending = Animation(widget)
+
+    def fire():
+        pending._job = None
+        pending.finished = True
+        pending.release()
+        if not pending._cancelled:
+            callback()
+
+    try:
+        pending._job = widget.after(delay_ms, fire)
+    except tk.TclError:
+        pending.finished = True
+        return pending
+    pending.watch_widget()
+    return pending
+
+
 def _schedule(widget, callback, running):
     """``after``, treating a dead widget as the end of the tween."""
     try:

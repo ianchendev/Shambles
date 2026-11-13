@@ -329,7 +329,10 @@ class Card(tk.Canvas):
         if delay_ms <= 0:
             self._wash_to(self._settled(), APPEAR_MS)
             return
-        self.after(delay_ms, lambda: self._wash_to(self._settled(), APPEAR_MS))
+        # Through motion: refresh() can destroy this card before the delay
+        # is up, and a bare after() would outlive it (see motion.later).
+        motion.later(self, delay_ms,
+                     lambda: self._wash_to(self._settled(), APPEAR_MS))
 
     # -- the switch confirmation -------------------------------------------
 
