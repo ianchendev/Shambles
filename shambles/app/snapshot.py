@@ -279,9 +279,8 @@ def _sign_in_notices(provider, accounts) -> list:
     again = (f"That starts a new {days} days." if days
              else "That sets a new date.")
     notices = []
-    for account in accounts:
-        if not account.sign_in_due:
-            continue
+    due = [a for a in accounts if a.sign_in_due]
+    for account in sorted(due, key=lambda a: a.expires_at_ms or 0):
         when = (f"on {account.expires_label}" if account.expires_label
                 else "soon")
         notices.append(Notice(

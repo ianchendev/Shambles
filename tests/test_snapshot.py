@@ -722,3 +722,15 @@ def test_list_says_which_logins_end_soon_and_how_to_keep_them(paths, capsys):
     assert "expires soon" not in lines["Fine"]
     assert "however much you use it" in out
     assert "Run 'shambles', select 'Work' and press l to sign in again." in out
+
+
+def test_the_soonest_deadline_comes_first(paths):
+    """f in the terminal UI acts on the first notice, so the first is the one
+    that runs out first, not the first in alphabetical order."""
+    closing_home(paths)
+    make_profile(paths, "claude", "Alpha", email="a@example.test",
+                 refresh_expires_ms=healthy_ms(3))
+    notices = [n.account for n in group_of(paths, "claude",
+                                           now_ms=REAL_NOW).notices
+               if n.code == "sign_in_soon"]
+    assert notices == ["Work", "Alpha"]
