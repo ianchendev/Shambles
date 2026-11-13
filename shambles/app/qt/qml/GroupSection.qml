@@ -44,6 +44,13 @@ Column {
         sourceComponent: Component { SaveCard { save: root.group.save || ({}) } }
     }
 
+    Loader {
+        width: parent.width
+        active: !!root.group.settle
+        visible: active
+        sourceComponent: Component { SettleCard { settle: root.group.settle || ({}) } }
+    }
+
     Repeater {
         model: root.group.notices || []
         NoticeBox {

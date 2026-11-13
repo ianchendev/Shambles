@@ -199,7 +199,7 @@ def test_the_contract_exposes_every_field_a_shell_renders(paths):
     assert set(group["accounts"][0]) == {
         "name", "email", "display_name", "plan", "active", "state",
         "needs_login", "login_hint", "usage", "expires_at_ms",
-        "status_label", "publishes_usage"}
+        "status_label", "publishes_usage", "renewed_by_use"}
     assert set(group["accounts"][0]["usage"][0]) == {
         "label", "used_percent", "resets_at_ms", "resets_label",
         "age_label", "stale", "severity"}
@@ -625,3 +625,18 @@ def test_an_account_says_whether_its_provider_publishes_usage_at_all(paths):
     work = group_of(paths, "claude").accounts[0]
 
     assert work.usage == [] and work.publishes_usage is True
+
+
+def test_an_account_says_whether_using_it_moves_its_expiry_date(paths):
+    """Codex replaces its token when used; Claude's date is fixed at sign-in.
+    A frontend must not tell a Claude user that using the account keeps it."""
+    make_profile(paths, "claude", "Work", email="w@example.test")
+    make_profile(paths, "codex", "Home", email="h@example.test")
+
+    claude_account = group_of(paths, "claude").accounts[0]
+    codex_account = group_of(paths, "codex").accounts[0]
+
+    assert claude_account.renewed_by_use is False
+    assert codex_account.renewed_by_use is True
+    wire = snap.to_dict(build(paths))["groups"]
+    assert wire[0]["accounts"][0]["renewed_by_use"] is False

@@ -74,6 +74,11 @@ class Account:
     #: recorded yet", which is worth a line of explanation, from "never will
     #: be", which is not.
     publishes_usage: bool = False
+    #: Whether using the account moves its expiry date back by itself.
+    #: True for Codex, which replaces its token on use; False for Claude,
+    #: whose date is fixed at sign-in. Decides whether a frontend may say
+    #: "using the account renews it".
+    renewed_by_use: bool = False
 
 
 @dataclass(frozen=True)
@@ -169,6 +174,7 @@ def _group(paths, provider, *, platform: str, now_ms: int) -> Group:
             expires_at_ms=profile.liveness.expires_at_ms,
             status_label=profiles_mod.expiry_label(profile),
             publishes_usage=profile.publishes_usage,
+            renewed_by_use=profiles_mod.renewed_by_use(profile),
         ))
     return Group(provider.id, provider.display_name, surfaces, accounts,
                  state=current.kind, live_email=current.live_email,
@@ -325,6 +331,7 @@ def to_dict(snapshot: Snapshot) -> dict:
                         "expires_at_ms": a.expires_at_ms,
                         "status_label": a.status_label,
                         "publishes_usage": a.publishes_usage,
+                        "renewed_by_use": a.renewed_by_use,
                         "usage": [
                             {
                                 "label": w.label,

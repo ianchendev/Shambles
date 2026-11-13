@@ -33,6 +33,18 @@ def standard():
     ])
 
 
+def saved_elsewhere():
+    """Signed in as Home, which is saved, while Work is still marked."""
+    notice = Notice("signed_in_elsewhere",
+                    "Signed in as home@example.test, which is saved as "
+                    "'Home', but 'Work' is marked active.",
+                    "Switch to 'Home' to settle it. Nothing is lost either "
+                    "way.", account="Home")
+    return Snapshot(1, [group(account("Work", active=True), account("Home"),
+                              account("Third"), notices=[notice],
+                              state="drifted", live_email="home@example.test")])
+
+
 def unsaved():
     notice = Notice("unsaved_login",
                     "Signed in as new@example.test, which is not saved yet.",

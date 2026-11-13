@@ -27,6 +27,7 @@ USAGE_LABELS = {"session": "Session", "week": "Week"}
 
 #: Notices the window draws as something other than a plain banner.
 UNSAVED = "unsaved_login"
+ELSEWHERE = "signed_in_elsewhere"
 MISSING = "missing_profile"
 UNREADABLE = "store_unreadable"
 OVERRIDE = "config_override"
@@ -78,6 +79,8 @@ def view(snapshot, *, filter_text: str = "") -> dict:
 
 def _group(group, needle: str) -> dict:
     codes = {n.code for n in group.notices}
+    settle_to = next((n.account for n in group.notices
+                      if n.code == ELSEWHERE and n.account), None)
     if UNREADABLE in codes:
         hold = ("The current login cannot be read, so nothing can be "
                 "switched until that is fixed.")
@@ -88,16 +91,38 @@ def _group(group, needle: str) -> dict:
         # not make the user click to find out.
         hold = ("Save the signed-in login above first. Switching now would "
                 "replace it with no copy kept.")
+    elif settle_to:
+        # The live login is saved as settle_to, by its address. Switching
+        # anywhere else would file it under the marked account's name, which
+        # the core refuses; switching to settle_to is the answer. Its own
+        # row stays switchable.
+        hold = (f"Switch to {settle_to} above first. Until then this machine "
+                "is signed in to an account that is marked as another.")
     else:
         hold = ""
-    accounts = [_account(group, a, hold=hold) for a in group.accounts]
+    accounts = [_account(group, a,
+                         hold="" if a.name == settle_to else hold)
+                for a in group.accounts]
     shown = [a for a in accounts if _matches(a, needle)]
     live = next((a for a in shown if a["live"]), None)
     attention = sum(1 for a in group.accounts if a.needs_login)
 
     save = None
+    settle = None
     notices = []
     for notice in group.notices:
+        if notice.code == ELSEWHERE and notice.account:
+            # Drawn as a card with the one button that settles it, where the
+            # save card would be: this is that state's next step, and the
+            # Tk window no longer offers Save here at all.
+            settle = {
+                "provider": group.provider,
+                "account": notice.account,
+                "title": notice.message,
+                "body": notice.remedy,
+                "label": f"Switch to {notice.account}",
+            }
+            continue
         if notice.code == UNSAVED:
             save = {
                 "provider": group.provider,
@@ -153,6 +178,7 @@ def _group(group, needle: str) -> dict:
         "canSignIn": group.can_sign_in,
         "cli": group.cli,
         "save": save,
+        "settle": settle,
         "notices": notices,
         "live": live,
         "others": [a for a in shown if not a["live"]],
@@ -276,6 +302,12 @@ def local_time(ms) -> str:
         return ""
 
 
+#: For a login whose deadline is fixed at sign-in (Claude's, about thirty
+#: days). The same words as the Tk window, so the two cannot disagree.
+FIXED_DEADLINE = ("Using the account does not move this date. Sign in again "
+                  "before then to keep it.")
+
+
 def login_line(account) -> str:
     """One sentence on the saved login: its state, its date, what to do.
 
@@ -292,10 +324,15 @@ def login_line(account) -> str:
         return (f"Expired {when}. Sign in again to renew it." if when
                 else "Expired. Sign in again to renew it.")
     if state == "closing":
-        return (f"Expires {when}. Switch to it before then to keep it."
-                if when else "Expires soon. Switch to it to keep it.")
+        if account.renewed_by_use:
+            return (f"Expires {when}. Switch to it before then to keep it."
+                    if when else "Expires soon. Switch to it to keep it.")
+        return (f"Expires {when}. {FIXED_DEADLINE}" if when
+                else f"Expires soon. {FIXED_DEADLINE}")
     if when:
-        return f"Healthy. Good until {when}. Using the account renews it."
+        if account.renewed_by_use:
+            return f"Healthy. Good until {when}. Using the account renews it."
+        return f"Healthy. Good until {when}. {FIXED_DEADLINE}"
     return "Healthy."
 
 
