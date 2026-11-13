@@ -120,3 +120,6 @@ def test_the_window_package_ships_its_qml_and_fonts():
     assert len(list((package / "fonts").glob("*.ttf"))) == 3
     assert (package / "fonts" / "OFL.txt").is_file(), \
         "the typeface's licence must ship with it"
+    assert "icons/*" in declared
+    assert (package / "icons" / "shambles.png").is_file()
+    assert (root / "packaging" / "shambles.ico").is_file()

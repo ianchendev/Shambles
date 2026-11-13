@@ -241,6 +241,10 @@ def window_dir(home) -> Path:
     return Path(home) / ".local" / "share" / "shambles" / "window"
 
 
+def desktop_entry(home) -> Path:
+    return Path(home) / ".local" / "share" / "applications" / "shambles.desktop"
+
+
 @bash_only
 def test_install_sh_installs_and_verifies_the_window(release, tmp_path):
     release(GOOD_BINARY)
@@ -289,6 +293,7 @@ def test_a_window_that_fails_its_checksum_is_not_installed(release, tmp_path):
     assert (window_dir(home) / "shambles-window").read_text() == "previous"
     assert sorted(p.name for p in window_dir(home).parent.iterdir()) == \
         ["window"], "a temporary folder was left behind"
+    assert not desktop_entry(home).exists()
 
 
 @bash_only
@@ -319,6 +324,73 @@ def test_a_release_with_no_window_still_installs(release, tmp_path):
     assert installed(home).is_file()
     assert "classic one" in done.stdout
     assert not window_dir(home).exists()
+    assert not desktop_entry(home).exists()
+
+
+@bash_only
+def test_the_window_and_its_launcher_can_be_skipped(release, tmp_path):
+    release(GOOD_BINARY)
+    publish_window(release, window_archive(tmp_path))
+    home = tmp_path / "home"
+    home.mkdir()
+
+    install(release, home, SHAMBLES_NO_DESKTOP="1")
+    assert window_dir(home).is_dir() and not desktop_entry(home).exists()
+
+    other = tmp_path / "other"
+    other.mkdir()
+    install(release, other, SHAMBLES_NO_WINDOW="1")
+    assert not window_dir(other).exists()
+
+
+#: What install.sh keys its launcher on: ``uname -s``, the same value read
+#: the same way. sys.platform would agree today, but the script is the
+#: thing under test.
+UNAME = os.uname().sysname if hasattr(os, "uname") else ""
+
+
+@bash_only
+@pytest.mark.skipif(UNAME != "Linux", reason="a .desktop entry is Linux's")
+def test_install_sh_adds_a_launcher_entry_for_the_window_on_linux(
+        release, tmp_path):
+    release(GOOD_BINARY)
+    publish_window(release, window_archive(tmp_path))
+    home = tmp_path / "hôme with spaces"
+    home.mkdir()
+
+    done = install(release, home)
+
+    assert done.returncode == 0, done.stderr
+    assert "Added Shambles to your applications menu." in done.stdout
+    entry = dict(line.split("=", 1) for line in
+                 desktop_entry(home).read_text().splitlines() if "=" in line)
+    assert entry["Type"] == "Application" and entry["Name"] == "Shambles"
+    assert entry["Terminal"] == "false"
+    # Quoted, so a home directory with a space in it still launches.
+    assert entry["Exec"] == f'"{window_dir(home)}/shambles-window"'
+    assert Path(entry["Exec"].strip('"')).is_file()
+    assert Path(entry["Icon"]).is_file()
+
+
+@bash_only
+@pytest.mark.skipif(UNAME != "Darwin", reason="what macOS gets instead")
+def test_install_sh_on_macos_writes_no_launcher_and_says_how_to_open(
+        release, tmp_path):
+    """Nothing on macOS reads a .desktop file, and the window is a plain
+    folder rather than an .app Launchpad could list. So no file is left in
+    the home that would do nothing, and the installer says how to open it."""
+    release(GOOD_BINARY)
+    publish_window(release, window_archive(tmp_path))
+    home = tmp_path / "hôme with spaces"
+    home.mkdir()
+
+    done = install(release, home)
+
+    assert done.returncode == 0, done.stderr
+    assert (window_dir(home) / "shambles-window").is_file()
+    assert not (home / ".local" / "share" / "applications").exists()
+    assert "not in Launchpad yet; open it with 'shambles gui'" in done.stdout
+    assert "applications menu" not in done.stdout
 
 
 def test_every_binary_has_its_window_named_by_its_installer():
@@ -331,15 +403,29 @@ def test_every_binary_has_its_window_named_by_its_installer():
         assert asset in script, f"{asset} is published but no installer fetches it"
 
 
-@bash_only
-def test_the_window_can_be_skipped(release, tmp_path):
-    release(GOOD_BINARY)
-    publish_window(release, window_archive(tmp_path))
-    home = tmp_path / "home"
-    home.mkdir()
+def test_install_ps1_adds_a_per_user_start_menu_shortcut():
+    """Read here; run for real by tests/real/test_installers.py."""
+    text = (SCRIPTS / "install.ps1").read_text(encoding="utf-8")
+    start = text.index("# A Start menu shortcut")
+    block = text[start:start + 1500]
+    assert "GetFolderPath('Programs')" in block, "must be the per-user menu"
+    assert "shambles-window.exe" in block and "Shambles.lnk" in block
+    assert "SHAMBLES_NO_DESKTOP" in block
 
-    done = install(release, home, SHAMBLES_NO_WINDOW="1")
 
-    assert done.returncode == 0, done.stderr
-    assert installed(home).is_file()
-    assert not window_dir(home).exists()
+
+def test_install_ps1_can_write_a_shortcut_to_a_path_the_code_page_cannot_hold():
+    """WScript.Shell is ANSI and refuses such a path ("Value does not fall
+    within the expected range"), which real Windows runners showed. The
+    fallback is IShellLinkW, in a child PowerShell so the caller's session
+    keeps no loaded type, with the paths passed through its environment."""
+    text = (SCRIPTS / "install.ps1").read_text(encoding="utf-8")
+    start = text.index("function Save-Shortcut")
+    block = text[start:text.index("$Asset = $null", start)]
+    assert "WScript.Shell" in block
+    assert "IShellLinkW" in block and "IPersistFile" in block
+    assert "-EncodedCommand" in block
+    assert "EnvironmentVariables['SHAMBLES_LNK']" in block
+    assert "$env:SHAMBLES_LNK" in block
+    assert "$env:SHAMBLES_LNK =" not in text, \
+        "set in the caller's session, where it would be left behind"

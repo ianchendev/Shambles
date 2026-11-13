@@ -65,7 +65,7 @@ packages = ["shambles", "shambles.app", "shambles.app.tui", "shambles.app.qt", "
 "shambles.app.tui" = ["*.tcss"]
 # The window's QML and typeface are read from disk at runtime, like the TUI's
 # stylesheet, so they need declaring or an installed copy opens nothing.
-"shambles.app.qt" = ["qml/*.qml", "fonts/*.ttf", "fonts/OFL.txt"]
+"shambles.app.qt" = ["qml/*.qml", "fonts/*.ttf", "fonts/OFL.txt", "icons/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

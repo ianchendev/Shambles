@@ -79,12 +79,21 @@ Notable changes per release. Dates are the tag date.
     held back until you save it. The classic window let the click through
     and relied on the core to refuse.
 
+- **The window has an icon and a place in your applications menu.** The
+  title bar and taskbar show a Shambles icon instead of a blank one.
+  `install.sh` adds a launcher entry on Linux
+  (`~/.local/share/applications/shambles.desktop`) and `install.ps1` adds a
+  Start menu shortcut on Windows, both pointing at the installed window.
+  On macOS, where the window is not yet an app Launchpad can list, it says
+  to open it with `shambles gui` instead. Set `SHAMBLES_NO_DESKTOP=1` to
+  skip either.
+
 - **The installers fetch the new window as its own download.** It carries
   Qt (a 36 to 82 MB download, depending on the platform), so it ships beside
   the `shambles` binary instead of inside it: every other command stays as
   fast as it was. `install.sh` unpacks it to `~/.local/share/shambles/window`
   and `install.ps1` to `%LOCALAPPDATA%\Shambles\window`, and
-  `shambles gui --new` opens it from there. There is a build for every
+  `shambles gui` opens it from there. There is a build for every
   platform the binary ships for, Windows on Arm included.
 
   It is checked against the release's `SHA256SUMS` like the binary, and

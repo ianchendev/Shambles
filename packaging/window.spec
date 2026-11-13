@@ -20,6 +20,7 @@ datas = [
     (str(ROOT / "shambles" / "app" / "tui" / "*.tcss"), "shambles/app/tui"),
     (str(QT / "qml" / "*.qml"), "shambles/app/qt/qml"),
     (str(QT / "fonts" / "*"), "shambles/app/qt/fonts"),
+    (str(QT / "icons" / "*"), "shambles/app/qt/icons"),
 ]
 
 binaries = []
@@ -100,6 +101,11 @@ exe = EXE(
     name="shambles-window",
     # No console window on Windows: this is what a shortcut points at.
     console=sys.platform != "win32",
+    # The executable's own icon, which is what Explorer and a Start menu
+    # shortcut show. Windows only: PyInstaller wants .icns on macOS, and a
+    # Linux executable has no icon of its own.
+    icon=str(ROOT / "packaging" / "shambles.ico")
+    if sys.platform == "win32" else None,
 )
 COLLECT(exe, analysis.binaries, analysis.datas, name="shambles-window")
 
@@ -114,3 +120,8 @@ licences = Path(DISTPATH) / "shambles-window" / "licenses"
 shutil.copytree(ROOT / "packaging" / "licenses", licences, dirs_exist_ok=True)
 shutil.copyfile(ROOT / "LICENSE", licences / "LICENSE-Shambles.txt")
 shutil.copyfile(QT / "fonts" / "OFL.txt", licences / "OFL-Inter.txt")
+
+# The icon again, at the top of the folder: a launcher entry has to name it
+# by a path that does not depend on how PyInstaller lays out its internals.
+shutil.copyfile(QT / "icons" / "shambles.png",
+                Path(DISTPATH) / "shambles-window" / "shambles.png")
