@@ -23,6 +23,20 @@ Notable changes per release. Dates are the tag date.
 
 ### Added
 
+- **Sign in again before a Claude login runs out, from any interface.**
+  Claude ends a login about 30 days after it was signed in, however much it
+  is used, and only a new sign-in moves that date. In its last days an
+  account now says so: `shambles list` marks it `expires soon` and names the
+  date, the terminal UI shows a notice at the top with the key that renews
+  it, and the window offers **Sign in** beside Switch. A sign-in that is
+  cancelled or does not finish leaves the account exactly as it was. Codex
+  accounts are marked `expires soon` too, but using one renews it, so they
+  get no notice.
+- **One key for what the notice says.** In the terminal UI, `f` does what
+  the notice at the top says: sign that account in again, or switch to the
+  saved account a login belongs to when the label names another. Both took
+  finding the account in the list first.
+
 - **A saved login is no longer replaced without a copy.** When Shambles
   saves the live login over a profile's saved one and the two are different
   logins, the old one is kept beside it as `credentials.json.previous`
