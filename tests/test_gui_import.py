@@ -1,3 +1,4 @@
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -1177,6 +1178,82 @@ def test_a_bar_destroyed_before_it_starts_growing_leaves_no_timer(paths,
 
     track.destroy()
 
+    assert _orphaned_timers(app) == []
+
+
+class _ThreadedLogin:
+    """Stands in for login.LoginProcess: calls back on a real worker thread,
+    as the real one does, with a trace on that thread recording every frame
+    it enters in tkinter's own module."""
+
+    def __init__(self, lines, code):
+        self.lines, self.code = lines, code
+        self.thread = None
+        self.touched_tk = []
+        self.cancelled = False
+
+    def __call__(self, _argv, env=None):        # the LoginProcess constructor
+        return self
+
+    def start(self, *, on_line, on_exit):
+        import threading
+
+        def tracer(frame, event, _arg):
+            if event == "call" and "tkinter" in frame.f_code.co_filename:
+                self.touched_tk.append(frame.f_code.co_name)
+            return None
+
+        def pump():
+            sys.settrace(tracer)
+            try:
+                for line in self.lines:
+                    on_line(line)
+                on_exit(self.code)
+            finally:
+                sys.settrace(None)
+
+        self.thread = threading.Thread(target=pump, daemon=True)
+        self.thread.start()
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def test_the_sign_in_dialog_never_touches_tk_from_the_login_thread(
+        paths, make_app, monkeypatch):
+    """The vendor's output is read on a worker thread. Tk belongs to the
+    thread that made it: a call from another one is marshalled at best and
+    corrupts the interpreter at worst. The dialog used to call after() from
+    the worker; now the worker only hands lines over, and the window picks
+    them up on its own thread."""
+    from shambles import login
+
+    fake = _ThreadedLogin(
+        ["Opening a browser...", "Open https://example.test/authorize?x=1"], 1)
+    monkeypatch.setattr(login, "LoginProcess", fake)
+    monkeypatch.setattr(login, "command", lambda *_a, **_k: ["vendor"])
+    monkeypatch.setattr(gui.LoginDialog, "wait_window", lambda self, *_a: None)
+    monkeypatch.setattr(gui.LoginDialog, "grab_set", lambda self: None)
+    app = make_app(paths)
+    app.update()
+
+    dialog = gui.LoginDialog(app, providers.load("claude"), "Work", app.theme)
+    # Pump while the worker runs: a Tk call from it would wait on this
+    # thread, so blocking in join() here would hang instead of failing.
+    assert _pump(app, lambda: fake.thread is not None
+                 and not fake.thread.is_alive()), "the login never finished"
+
+    assert fake.touched_tk == [], (
+        f"the login thread called into tkinter: {fake.touched_tk}")
+
+    # ... and every line still arrives, in order, on the window's thread.
+    assert _pump(app, lambda: "Close" == str(dialog.close.cget("text")))
+    shown = dialog.output.get("1.0", "end")
+    assert shown.index("Opening a browser") < shown.index("example.test")
+    assert dialog._url == "https://example.test/authorize?x=1"
+    assert not dialog.succeeded
+
+    dialog.destroy()
     assert _orphaned_timers(app) == []
 
 

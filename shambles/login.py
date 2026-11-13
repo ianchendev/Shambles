@@ -283,10 +283,11 @@ class LoginProcess:
     over SSH. A user staring at a spinner while that URL sits in an unread
     buffer would conclude the tool is broken.
 
-    ``on_line`` and ``on_exit`` are invoked **on a worker thread**. Tk callers
-    must marshal back with ``widget.after``; a blocking wait on the main
-    thread freezes the window and stops the signal pump that makes Ctrl+C
-    work.
+    ``on_line`` and ``on_exit`` are invoked **on a worker thread**. They must
+    not call Tk at all, ``widget.after`` included: hand the value to the Tk
+    thread (``LoginDialog`` puts it on a ``queue.Queue`` that the window
+    polls). A blocking wait on the main thread instead freezes the window and
+    stops the signal pump that makes Ctrl+C work.
     """
 
     def __init__(self, argv, *, env=None, popen=subprocess.Popen):
