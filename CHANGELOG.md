@@ -159,6 +159,11 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- The record of which account is active, the copies of `~/.claude.json` kept
+  before each switch, and the session history merged by the old-layout
+  conversion are now written the way logins are: whole, owner-only from the
+  first byte, and never seen half written. Two windows writing the active
+  record at once could leave it empty, which reads as no account marked.
 - An early Claude sign-in that comes to nothing no longer reports a renewal
   when Claude Code has refreshed the login in the meantime. The live copy had
   moved on from the saved one, so it looked new, although its deadline had

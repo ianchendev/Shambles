@@ -18,6 +18,7 @@ from pathlib import Path
 from .errors import ShamblesError
 from .providers import Identity
 from .providers import spec as specmod
+from .stores import file as filemod
 
 #: The marker names a profile, and the live identity matches it.
 MANAGED = "managed"
@@ -97,11 +98,18 @@ def read_active(paths, provider_id: str) -> str | None:
 
 
 def write_active(paths, provider_id: str, name: str | None) -> None:
+    """Record ``name`` as the active profile, or forget it with ``None``.
+
+    Replaced whole, through the same write as every login: rewritten in
+    place, the marker is empty between the truncate and the write, and a
+    window reading it then sees nobody marked.
+    """
     paths.ensure_provider(provider_id)
     if name is None:
         paths.active_marker(provider_id).unlink(missing_ok=True)
         return
-    paths.active_marker(provider_id).write_text(name + "\n", encoding="utf-8")
+    filemod.replace_file(paths.active_marker(provider_id),
+                         (name + "\n").encode("utf-8"), mode=0o600)
 
 
 def profile_names(paths, provider_id: str) -> list[str]:

@@ -171,21 +171,25 @@ def test_claude_json_that_is_not_text_does_not_crash_startup(paths):
 def test_disk_full_while_merging_prompt_history_loses_nothing(paths,
                                                                  monkeypatch):
     """open('wb') truncates before the first byte is written. ENOSPC there
-    leaves the base's own prompt history empty, and the base is the only
-    copy of those lines."""
+    left the base's own prompt history empty, and the base is the only copy
+    of those lines. The merge now writes a temp file and renames it, so a
+    full disk while writing leaves the old history where it was."""
     _legacy(paths, linked="Alpha", richest="Alpha")
     base = paths.legacy_profiles_dir / "Alpha" / "history.jsonl"
     base.write_bytes(b'{"display":"alpha one"}\n{"display":"alpha two"}\n')
     (paths.legacy_profiles_dir / "Beta" / "history.jsonl").write_bytes(
         b'{"display":"beta one"}\n')
 
-    def disk_full(self, data):
-        with open(self, "wb"):
-            pass                      # what the real call does first
-        raise OSError(errno.ENOSPC, "No space left on device")
+    from shambles.stores import file as filemod
+    real = filemod.replace_file
+
+    def disk_full_on_history(path, payload, **kwargs):
+        if Path(path).name == "history.jsonl":
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real(path, payload, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "write_bytes", disk_full)
+        patch.setattr(filemod, "replace_file", disk_full_on_history)
         with pytest.raises((migrate.MigrationError, OSError)):
             migrate.run(paths, now_ms=NOW)
 
@@ -194,24 +198,26 @@ def test_disk_full_while_merging_prompt_history_loses_nothing(paths,
 
 def test_disk_full_mid_copy_does_not_leave_a_truncated_session(
         paths, monkeypatch):
-    """shutil.copy2 leaves whatever it had written when it fails. The retry
-    sees a file 'already there' and never completes it."""
+    """A copy that fails partway must not leave a file at the real name: the
+    retry would see it 'already there' and never complete it."""
     _legacy(paths, linked="Alpha", richest="Alpha")
     session = (paths.legacy_profiles_dir / "Beta" / "projects" /
                "-some-project" / "Beta-0.jsonl")
     session.write_bytes(b'{"type":"user"}\n' * 100)
-    real = shutil.copy2
+    from shambles.stores import file as filemod
+    real_write = os.write
     calls = {"n": 0}
 
-    def copy(src, dst, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            Path(dst).write_bytes(Path(src).read_bytes()[:10])
+    def write(fd, data):
+        # The first write of the session's bytes runs out of space halfway.
+        if b'{"type":"user"}' in bytes(data) and calls["n"] == 0:
+            calls["n"] += 1
+            real_write(fd, bytes(data)[:10])
             raise OSError(errno.ENOSPC, "No space left on device")
-        return real(src, dst, **kwargs)
+        return real_write(fd, data)
 
     with monkeypatch.context() as patch:
-        patch.setattr(shutil, "copy2", copy)
+        patch.setattr(os, "write", write)
         with pytest.raises((migrate.MigrationError, OSError)):
             migrate.run(paths, now_ms=NOW)
 
@@ -311,7 +317,7 @@ def test_a_failed_conversion_is_not_followed_by_a_claim_of_success(
     then runs the v1.0 store migration over the pre-1.0 store."""
     shown = _dialogs(monkeypatch)
     _legacy(paths, linked="Alpha", richest="Alpha")
-    monkeypatch.setattr(shutil, "copy2",
+    monkeypatch.setattr(migrate, "_merge_tree",
                         _fails(OSError(errno.ENOSPC, "No space left on device")))
 
     app = make_app(paths)
