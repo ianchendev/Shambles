@@ -33,7 +33,8 @@ Three levels of confidence are kept apart on purpose, here and in
 What no runner can check: a sign-in with a real account. Nobody has reported
 one through Shambles on macOS or native Windows, or with Codex anywhere. A
 report of either, working or not, is the most useful thing a bug report can
-contain right now.
+contain right now. [docs/testing-with-real-accounts.md](docs/testing-with-real-accounts.md)
+lists the steps and what to send back.
 
 Run `shambles doctor` and paste its output. It prints where each login is
 kept and anything that would stop a switch taking effect, and no
@@ -61,10 +62,14 @@ python -m pytest` runs them; without it they skip themselves.
 - **Green CI on Linux, macOS and Windows.** Windows retries flaky
   terminal-UI tests up to five times; Linux and macOS do not retry at all.
 - **A green `real-machine` run for anything that touches where a login is
-  kept**: `shambles/stores/`, the `store` blocks in
-  `shambles/providers/*.json`, or the install scripts. Those tests skip on
-  your own machine by design, because they write to the real Keychain and
-  Credential Manager. They run on the pull request.
+  kept or how Shambles is installed**: `shambles/stores/`,
+  `shambles/providers/`, the install scripts, the build. The full list is
+  `.github/real-machine-paths.txt`, and the `real-machine` check enforces it:
+  on such a pull request it fails unless every machine passed. On any other
+  pull request the machines still run and a failure is shown without
+  blocking. Those tests skip on your own machine by design, because they
+  write to the real Keychain and Credential Manager. A machine job marked
+  cancelled with no steps was never given a runner by GitHub; re-run it.
 - **No new network calls.** `tests/test_login.py` scans every module for
   networking imports and fails the build on a new one. The single exemption
   is the opt-in update check, and widening it is a visible edit to a list.

@@ -103,6 +103,10 @@ class FakeCredman:
     def delete(self, target):
         self.entries.pop(target, None)
 
+    def targets(self, prefix):
+        """``CredEnumerateW`` with the filter ``prefix*``."""
+        return [name for name in self.entries if name.startswith(prefix)]
+
 
 #: ``security`` flags that take no value. Pairing naively without these shifts
 #: every later flag onto the wrong value.

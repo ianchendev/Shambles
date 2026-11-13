@@ -7,6 +7,22 @@ name: real-machine
 # Every job is a throwaway machine with made-up credentials. The vendor CLIs
 # are installed fresh each run, so this is also the early warning for a
 # vendor moving where it keeps its login.
+#
+# Required or advisory. The machines run on every pull request. Whether
+# their result counts depends on what the pull request changes: if it touches
+# a path in .github/real-machine-paths.txt (the stores, the provider specs,
+# the install scripts, the build), every machine must pass; otherwise a
+# failure shows on the pull request but does not stop it merging. A vendor
+# release can turn these red with no change of ours, and that should not
+# block a README fix.
+#
+# The check to require in branch protection is the last job, "real-machine".
+# It reports on every pull request, which a required check has to, and it
+# waits for the machines either way, so on a pull request that does not need
+# them it still passes only once they have finished. Do not require the
+# individual machine jobs, and do not add a `paths:` filter to the trigger;
+# either one leaves a required check that never reports on some pull
+# requests, and those can then never merge.
 
 on:
   push:
@@ -21,7 +37,73 @@ on:
 permissions:
   contents: read
 
+# A second push to the same pull request replaces the run for the first.
+# Anything else gets a group of its own and is never cancelled.
+concurrency:
+  group: real-machine-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    name: does this change need every machine to pass
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      required: ${{ steps.decide.outputs.required }}
+    steps:
+      # The rule as it stands on the branch being merged into, not as the
+      # pull request would like it to be. A pull request that edits the list
+      # or the script is judged by the versions it is trying to replace,
+      # which list themselves.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PULL: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "Not a pull request ($EVENT): every machine must pass."
+            echo "required=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Both names of a renamed file, so that moving something out of a
+          # listed directory counts as changing it.
+          if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL/files" --paginate \
+                 --jq '.[] | .filename, (.previous_filename // empty)' > changed.txt; then
+            echo "Could not list the changed files, so every machine must pass."
+            echo "required=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The API stops at 3000 files. A change that large counts as relevant.
+          if [ "$(wc -l < changed.txt)" -ge 3000 ]; then
+            echo "Too many changed files to list, so every machine must pass."
+            echo "required=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Exit 0: a listed path changed. Exit 1: none did. Anything else
+          # means the rule could not be applied (the base branch may predate
+          # it), and then every machine must pass.
+          code=0
+          python3 .github/scripts/real_machine_required.py \
+            .github/real-machine-paths.txt < changed.txt || code=$?
+          case "$code" in
+            0)
+              echo "The paths above are in .github/real-machine-paths.txt: every machine must pass."
+              echo "required=true" >> "$GITHUB_OUTPUT" ;;
+            1)
+              echo "Nothing in .github/real-machine-paths.txt changed: the machines are advisory."
+              echo "required=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "Could not apply the rule (exit $code), so every machine must pass."
+              echo "required=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
   machine:
     name: ${{ matrix.os }}
     strategy:
@@ -145,3 +227,42 @@ jobs:
       - name: Test
         working-directory: macos
         run: swift test
+
+  # The one check to require. See the note at the top of this file.
+  #
+  # `always()` is what makes it report when a job it waits for failed or was
+  # cancelled; without it this job would be skipped in exactly those cases,
+  # and branch protection counts a skipped check as a pass.
+  result:
+    name: real-machine
+    needs: [changes, machine, cannot-run-here, swift-app]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          REQUIRED: ${{ needs.changes.outputs.required }}
+          MACHINE: ${{ needs.machine.result }}
+          CANNOT_RUN_HERE: ${{ needs.cannot-run-here.result }}
+          SWIFT_APP: ${{ needs.swift-app.result }}
+        run: |
+          echo "machines: $MACHINE"
+          echo "install.sh where it cannot run: $CANNOT_RUN_HERE"
+          echo "swift app: $SWIFT_APP"
+          failed=0
+          for outcome in "$MACHINE" "$CANNOT_RUN_HERE" "$SWIFT_APP"; do
+            [ "$outcome" = "success" ] || failed=1
+          done
+          if [ "$failed" = "0" ]; then
+            echo "Every machine passed."
+            exit 0
+          fi
+          # A job marked cancelled with no steps was never given a runner by
+          # GitHub (macOS capacity), which is not a test failure.
+          hint="Re-run the failed jobs; one marked cancelled with no steps was never given a runner."
+          if [ "$CHANGES" = "success" ] && [ "$REQUIRED" = "false" ]; then
+            echo "::warning::A real-machine job did not pass. This change touches nothing in .github/real-machine-paths.txt, so it does not block merging. $hint"
+            exit 0
+          fi
+          echo "::error::A real-machine job did not pass, and this change touches a path in .github/real-machine-paths.txt (or that could not be decided). $hint"
+          exit 1

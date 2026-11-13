@@ -13,6 +13,7 @@ Run as a script it serves ``argv[1]`` on a free port and prints the port.
 
 import contextlib
 import http.server
+import socketserver
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, *args, **kwargs):
         pass
+
+
+class Server(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # The stock version also asks the resolver for this machine's full
+        # name, to fill in a field nothing here reads. On GitHub's macOS
+        # runners that lookup takes 35 seconds in every new process, which
+        # made each test that starts a server take that long.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 @contextlib.contextmanager
@@ -50,7 +61,7 @@ def main(root):
     def handler(*args, **kwargs):
         return Handler(*args, directory=root, **kwargs)
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = Server(("127.0.0.1", 0), handler)
     print(server.server_address[1], flush=True)
     server.serve_forever()
 
