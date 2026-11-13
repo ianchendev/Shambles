@@ -417,6 +417,11 @@ leaves it live. Cancel, and you are put back on the account you were using.
 If your browser signs in as a different account, nothing is saved over the
 one you asked for, and the window says which address the browser used.
 
+If you are signed in as one saved account while another is marked as the
+one in use, the window says so at the top of that provider with one button,
+**Switch to** that account. It files the login there, keeping the one it
+replaces, and the other Switch buttons wait until you have pressed it.
+
 Nothing opens a separate dialog. Adding, signing in, renaming, removing and
 ejecting happen in a sheet inside the window, and what an action did is said
 in words at the bottom.
