@@ -313,6 +313,10 @@ class CodexProvider:
 
     # -- what else has to move --------------------------------------------
 
+    def companion_path(self, *, home):
+        """None. ``auth.json`` is self-contained."""
+        return None
+
     def companion_read(self, *, home) -> dict:
         """Nothing. ``auth.json`` is self-contained."""
         return {}

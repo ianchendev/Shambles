@@ -61,11 +61,29 @@ def config_dir_override(provider, *, home, env=None) -> str | None:
         return None
     default = specmod.expand(block.get("default", ""), home=home)
     try:
-        if Path(raw).expanduser().resolve() == Path(default).resolve():
-            return None
+        same_dir = Path(raw).expanduser().resolve() == Path(default).resolve()
     except OSError:
         return raw
+    if same_dir and not _moves_config_file(provider, name, home=home, env=env):
+        return None
     return raw
+
+
+def _moves_config_file(provider, name, *, home, env) -> bool:
+    """Whether setting ``name`` moves the provider's config file.
+
+    It can even when it names the default directory: for Claude Code,
+    CLAUDE_CONFIG_DIR=~/.claude keeps the login where it was but moves the
+    global config from ~/.claude.json to ~/.claude/.claude.json, which the
+    VS Code extension, with no inherited environment, never reads.
+    """
+    if not hasattr(provider, "config_file"):
+        return False
+    kind = type(provider)
+    with_it = kind(spec=provider.spec, env=dict(env))
+    without = kind(spec=provider.spec,
+                   env={k: v for k, v in env.items() if k != name})
+    return with_it.config_file(home=home) != without.config_file(home=home)
 
 
 def read_active(paths, provider_id: str) -> str | None:

@@ -126,6 +126,9 @@ class Provider(Protocol):
         either they differ, or there is nothing to tell them apart by.
         """
 
+    def companion_path(self, *, home):
+        """The file :meth:`companion_write` splices, or ``None``."""
+
     def companion_read(self, *, home) -> dict:
         """Account-scoped state living outside the credential store.
 

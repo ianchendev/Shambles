@@ -936,6 +936,7 @@ class ShamblesApp(tk.Tk):
         # something to show rather than being the one guaranteed to be blank.
         # A no-op unless the vendor blob is present and provably this account's.
         usage.capture_live(self.paths, provider.id, current.profile,
+                           provider=provider,
                            now_ms=switcher.now_ms())
 
         found = profiles.discover(self.paths, provider, current.profile,
