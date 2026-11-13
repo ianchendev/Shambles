@@ -141,6 +141,10 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- An early Claude sign-in that comes to nothing no longer reports a renewal
+  when Claude Code has refreshed the login in the meantime. The live copy had
+  moved on from the saved one, so it looked new, although its deadline had
+  not moved.
 - **`CLAUDE_CONFIG_DIR` is followed for the account details too, not only
   the login.** With the variable set, Claude Code keeps its config, including
   which account is signed in, in that directory. Shambles still read and
