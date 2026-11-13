@@ -1,6 +1,7 @@
 """The dashboard renders one immutable snapshot at every terminal size."""
 
 import ast
+import time
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -126,24 +127,56 @@ def screen_text(app) -> str:
     )
 
 
-async def screen_showing(pilot, app, text: str, *, settles: int = 10) -> str:
-    """The screen once ``text`` is on it, or after ``settles`` pumps.
+async def screen_showing(pilot, app, text: str, *, within: float = 5.0) -> str:
+    """The screen once ``text`` is on it, or once ``within`` seconds pass.
 
-    ``pilot.pause()`` drains the queue once, which is enough on Linux and not
-    always on Windows: leaving the too-short state re-shows the body, and the
-    layout that follows can need another frame. Waiting on the condition
-    rather than on a fixed number of pumps keeps the assertion about what the
-    user ends up seeing instead of about how many frames a platform takes to
-    get there. Returns either way, so the caller's assertion still reports the
-    real screen on failure.
+    Waits on the clock, not on a count of pumps. ``pilot.pause()`` with no
+    delay drains the message queue and lets no time pass, so a frame Textual
+    finishes on a timer never arrives inside ten of them on a busy runner:
+    CI caught the list missing after a resize on Windows and macOS while
+    every local run, starved of CPU or not, had it after the first pump.
+    Returns either way, so the caller's assertion reports the real screen.
     """
+    deadline = time.monotonic() + within
     screen = screen_text(app)
-    for _ in range(settles):
-        if text in screen:
-            break
-        await pilot.pause()
+    while text not in screen and time.monotonic() < deadline:
+        await pilot.pause(0.02)
         screen = screen_text(app)
     return screen
+
+
+def layout_report(app, screen: str) -> str:
+    """The whole screen and where each widget is, for a failed assertion.
+
+    pytest shortens a long string to its first and last lines, which is all
+    CI ever showed of this failure; this keeps the middle.
+    """
+    regions = "\n".join(
+        f"  #{w.id}: display={w.display} region={tuple(w.region)}"
+        for w in app.screen.walk_children() if w.id)
+    return f"\n--- screen ---\n{screen}\n--- widgets ---\n{regions}"
+
+
+class _LateText(App[None]):
+    """Shows its text only after real time passes, as a slow runner does.
+
+    A layout Textual finishes on a timer is invisible to any number of
+    zero-length pumps that complete before the timer fires; on a busy CI
+    runner that is the usual case.
+    """
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import Static
+        yield Static("", id="late")
+
+    def on_mount(self) -> None:
+        self.set_timer(0.3, lambda: self.query_one("#late").update("Taylor"))
+
+
+async def test_screen_showing_waits_for_time_not_for_a_count_of_pumps():
+    app = _LateText()
+    async with app.run_test(size=(40, 5)) as pilot:
+        assert "Taylor" in await screen_showing(pilot, app, "Taylor")
 
 
 async def test_wide_dashboard_has_list_and_detail_panes(snapshot):
@@ -534,14 +567,16 @@ async def test_resizing_preserves_selection_and_recovers_from_too_short(snapshot
             assert app.query_one(AccountList).highlighted == 2
             assert app.selected_messages == [("codex", "Personal")]
             if size == (80, 8):
-                # An absence needs no settling; one pump is the right wait.
-                screen = screen_text(app)
-                assert "Terminal is too small" in screen
-                assert "Taylor" not in screen
+                screen = await screen_showing(pilot, app,
+                                              "Terminal is too small")
+                assert "Terminal is too small" in screen, layout_report(
+                    app, screen)
+                assert "Taylor" not in screen, layout_report(app, screen)
             else:
                 screen = await screen_showing(pilot, app, "Taylor")
-                assert "Taylor" in screen
-                assert "Terminal is too small" not in screen
+                assert "Taylor" in screen, layout_report(app, screen)
+                assert "Terminal is too small" not in screen, layout_report(
+                    app, screen)
 
 
 async def test_selecting_an_account_updates_both_detail_views(snapshot):
