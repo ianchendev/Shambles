@@ -230,12 +230,17 @@ def _write_credential(paths, provider, name, blob: bytes, *, sleep) -> None:
 
 
 def switch(paths, provider, target_name: str, *, platform=sys.platform,
-           now_ms_fn=now_ms, sleep=time.sleep):
+           now_ms_fn=now_ms, sleep=time.sleep, on_wait=None):
     """Make ``target_name`` the logged-in account for one provider.
 
     Stashes the outgoing login, restores the incoming one, and writes the
     matching identity into the provider's companion file if it has one.
     Nothing outside the credential moves.
+
+    ``on_wait`` is called once, with no arguments, if the switch has to wait
+    for the vendor to finish a refresh (see :func:`_hold_refresh_locks`), so
+    a frontend can say why nothing has happened yet. It runs on the caller's
+    thread, and anything it raises is ignored.
     """
     if provider.id == "claude":
         _refuse_legacy_layout(paths)
@@ -265,7 +270,7 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     # read until the incoming one is in place. A refresh already in flight
     # lands first, so the token stashed is the one it was given rather than
     # the one it just spent. See _hold_refresh_locks.
-    held = _hold_refresh_locks(provider, paths)
+    held = _hold_refresh_locks(provider, paths, on_wait=on_wait)
 
     # Everything touching the filesystem lives inside one guard, so no path
     # out of here raises a bare OSError. The GUI renders ShamblesError only;
@@ -374,7 +379,7 @@ class _HeldLock:
                 pass
 
 
-def _hold_refresh_locks(provider, paths) -> list:
+def _hold_refresh_locks(provider, paths, *, on_wait=None) -> list:
     """Take the lock the vendor refreshes under, waiting for it if held.
 
     Claude Code posts its refresh token, the server spends it at once, and
@@ -394,6 +399,7 @@ def _hold_refresh_locks(provider, paths) -> list:
     stale_s = block.get("stale_ms", 60_000) / 1000
     held = []
     deadline = time.monotonic() + REFRESH_LOCK_WAIT_S
+    told = on_wait is None
     try:
         for lock in provider.refresh_locks(home=paths.home):
             while True:
@@ -408,6 +414,12 @@ def _hold_refresh_locks(provider, paths) -> list:
                     break                 # its directory is gone: no client
                 if time.monotonic() >= deadline:
                     raise SwitchFailedError(REFRESH_IN_PROGRESS)
+                if not told:
+                    told = True
+                    try:
+                        on_wait()
+                    except Exception:
+                        pass          # a message, never a reason to stop
                 time.sleep(0.05)
     except BaseException:
         _release(held)
@@ -647,6 +659,15 @@ def judge_relogin(paths, provider, name: str, *, platform=sys.platform,
     if (blob is None or not provider.has_login(blob)
             or provider.liveness(blob, now_ms=now_ms_fn()).needs_login):
         return UNCHANGED
+    # The profile's own saved bytes, still there: nothing new arrived. A
+    # lapsed login is caught above; this is the one that still works, signed
+    # in again early, where a clean exit with no write would otherwise read
+    # as a renewal whose date has not moved.
+    try:
+        if paths.credentials(provider.id, name).read_bytes() == blob:
+            return UNCHANGED
+    except OSError:
+        pass
     if not belongs_to(paths, provider, name, platform=platform, blob=blob):
         return OTHER_ACCOUNT
     return RENEWED
@@ -728,6 +749,10 @@ class LoginOutcome:
     owner: str | None = None
     live_email: str | None = None
     expected_email: str | None = None
+    #: For :data:`UNCHANGED`: whether ``profile``'s login still works where
+    #: it is used, which it does after an early sign-in that came to nothing.
+    #: Lets a frontend say so rather than calling it lapsed.
+    still_works: bool = False
 
 
 def settle_login(paths, provider, name: str, previous: str | None, *,
@@ -787,7 +812,32 @@ def settle_login(paths, provider, name: str, previous: str | None, *,
                            now_ms_fn=now_ms_fn, sleep=sleep)
     except ShamblesError:
         restored = False
-    return LoginOutcome(UNCHANGED, name, previous, restored=restored)
+    return LoginOutcome(UNCHANGED, name, previous, restored=restored,
+                        still_works=_still_works(paths, provider, name,
+                                                 platform=platform,
+                                                 now_ms_fn=now_ms_fn))
+
+
+def _still_works(paths, provider, name, *, platform, now_ms_fn) -> bool:
+    """Whether ``name``'s login works where it is used.
+
+    The live slot when ``name`` is the marked profile, and only if that is
+    provably ``name``'s login: a vendor that emptied it and then failed has
+    signed the user out, whatever the saved copy holds. Otherwise the saved
+    copy, which a switch would install.
+    """
+    try:
+        if state.read_active(paths, provider.id) == name:
+            blob = _store(paths, provider, platform).read()
+            if not blob or name not in state.proven_owners(paths, provider,
+                                                           blob):
+                return False
+        else:
+            blob = paths.credentials(provider.id, name).read_bytes()
+    except (ShamblesError, OSError):
+        return False
+    return (bool(blob) and provider.has_login(blob)
+            and not provider.liveness(blob, now_ms=now_ms_fn()).needs_login)
 
 
 def rename_profile(paths, provider, old_name: str, new_name: str, *,

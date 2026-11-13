@@ -119,6 +119,41 @@ def renewed_by_use(profile: Profile) -> bool:
     return bool(block.get("renewed_by_use"))
 
 
+def sign_in_due(profile: Profile) -> bool:
+    """Whether a login that still works should be signed in again now.
+
+    Only where use does not move the date: a Claude login near the deadline
+    fixed when it was signed in. Nothing but a new sign-in keeps it, so the
+    frontends offer one before the date rather than after it. A Codex login
+    in the same state is kept by using it, and a lapsed one is
+    :func:`needs_login`'s.
+    """
+    return profile.liveness.state == CLOSING and not renewed_by_use(profile)
+
+
+def sign_in_lasts_days(provider_id: str) -> int | None:
+    """Roughly how long a sign-in lasts, where the vendor fixes it."""
+    from .providers import spec as specmod
+    try:
+        block = specmod.load(provider_id).get("liveness") or {}
+    except (OSError, ValueError):
+        return None
+    days = block.get("sign_in_lasts_days")
+    return days if isinstance(days, int) and days > 0 else None
+
+
+def sign_in_reason(provider_id: str, display_name: str) -> str:
+    """Why a login that still works should be signed in again, in one line.
+
+    Shared by every frontend's nudge, so none of them can say that using the
+    account keeps it.
+    """
+    days = sign_in_lasts_days(provider_id)
+    span = (f"about {days} days after you sign in" if days
+            else "on a fixed date after you sign in")
+    return f"{display_name} ends a login {span}, however much you use it."
+
+
 def list_profile_names(paths, provider_id: str) -> list[str]:
     """Profile directories, case-insensitively sorted for display."""
     return sorted(state.profile_names(paths, provider_id), key=str.casefold)

@@ -360,3 +360,74 @@ def test_a_timeout_on_the_second_lock_releases_the_first(work_live,
 
     assert not (paths.claude_dir / ".oauth_refresh.lock").exists()
     assert (paths.home / ".claude.lock").is_dir(), "removed a lock not ours"
+
+
+# -- saying so while it waits -------------------------------------------------
+#
+# Reproduced in the terminal UI on a synthetic home with the lock held: Enter
+# on another account, then fifteen seconds in which nothing on screen changed
+# and the list still moved as if no switch had started, then a refusal. The
+# switch now says, once, that it is waiting and on what.
+
+def test_a_switch_that_has_to_wait_says_so_once(work_live):
+    paths = work_live
+    timer = refresh_in_flight(paths, lands_after_s=0.3)
+    waits = []
+
+    switcher.switch(paths, claude(), "Other", platform="linux",
+                    sleep=lambda _: None, on_wait=lambda: waits.append(1))
+    timer.join()
+
+    assert waits == [1]
+    assert state.read_active(paths, "claude") == "Other"
+
+
+def test_a_switch_that_does_not_wait_says_nothing(work_live):
+    waits = []
+    switcher.switch(work_live, claude(), "Other", platform="linux",
+                    sleep=lambda _: None, on_wait=lambda: waits.append(1))
+    assert waits == []
+
+
+def test_a_broken_wait_callback_does_not_break_the_switch(work_live):
+    timer = refresh_in_flight(work_live, lands_after_s=0.2)
+
+    def broken():
+        raise RuntimeError("the screen went away")
+
+    switcher.switch(work_live, claude(), "Other", platform="linux",
+                    sleep=lambda _: None, on_wait=broken)
+    timer.join()
+    assert state.read_active(work_live, "claude") == "Other"
+
+
+def test_the_service_passes_the_wait_on(work_live):
+    from shambles.app.service import ShamblesService
+
+    service = ShamblesService(paths=work_live,
+                              providers=providers.all_providers(env={}),
+                              platform="linux", clock_ms=lambda: NOW)
+    timer = refresh_in_flight(work_live, lands_after_s=0.3)
+    waits = []
+
+    result = service.switch("claude", "Other",
+                            on_wait=lambda: waits.append(1))
+    timer.join()
+
+    assert result.ok, result
+    assert waits == [1]
+
+
+def test_the_cli_says_it_is_waiting_rather_than_sitting_silent(work_live,
+                                                                capsys):
+    from shambles.app import cli
+
+    timer = refresh_in_flight(work_live, lands_after_s=0.3)
+    code = cli.main(["--home", str(work_live.home), "switch", "claude",
+                     "Other"])
+    timer.join()
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert "Waiting for Claude Code" in captured.err
+    assert "Waiting" not in captured.out      # stdout stays parseable
