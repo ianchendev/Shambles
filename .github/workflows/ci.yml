@@ -20,6 +20,10 @@ jobs:
           - os: macos-15
             python: "3.12"
     runs-on: ${{ matrix.os }}
+    # A hang used to run to GitHub's six-hour limit (three did, in
+    # tests/test_gui_import.py, before #52). The slowest of these takes about
+    # 11 minutes, so 30 is room to spare and still ends a hang within the hour.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 

@@ -1,6 +1,7 @@
 """A compact window for switching between accounts, grouped by provider."""
 
 import datetime
+import queue
 import signal
 import sys
 import tkinter as tk
@@ -149,6 +150,9 @@ TOOLTIP_MARGIN = 8
 
 #: How often to hand control back to Python so pending signals get dispatched.
 SIGNAL_POLL_MS = 150
+#: How often the sign-in dialog picks up what the vendor has printed. Short
+#: enough that the link appears as the vendor prints it.
+LOGIN_POLL_MS = 50
 
 #: Usage bars grow from empty. Long enough to read as growth, short enough
 #: that the figure is settled before you have finished reading the card.
@@ -498,6 +502,9 @@ class LoginDialog(tk.Toplevel):
     #: as well as an instance one, so a dialog built without ``__init__``
     #: still reads as "no address" rather than raising.
     _email = None
+    #: Set once the vendor has exited (or could not start): nothing more
+    #: will arrive, so the dialog stops checking for it.
+    _finished = False
 
     def __init__(self, parent, provider, profile_name, theme, *, email=None,
                  env=None, failure_text=None):
@@ -512,6 +519,9 @@ class LoginDialog(tk.Toplevel):
         self._email = email
         self._env = env
         self._failure_text = failure_text or ADD_FAILED
+        #: What the login thread hands over: ("line", text) or ("exit", code).
+        #: That thread touches nothing else; see _start.
+        self._inbox = queue.Queue()
 
         body = tk.Frame(self, bg=theme["window"], padx=GAP_L, pady=GAP_L)
         body.pack(fill="both", expand=True)
@@ -554,22 +564,44 @@ class LoginDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.grab_set()
-        self.after(0, lambda: self._start(provider))
+        motion.later(self, 0, lambda: self._start(provider))
+        motion.later(self, LOGIN_POLL_MS, self._collect)
         self.wait_window(self)
 
     def _start(self, provider):
         try:
             self._process = login.LoginProcess(
                 login.command(provider, email=self._email), env=self._env)
-            # Both callbacks fire on a worker thread; `after` marshals them
-            # back. Touching Tk from that thread would corrupt the interpreter
-            # lock and hang the window.
+            # Both callbacks fire on the login thread, and Tk belongs to this
+            # one: a call from there -- even after() -- is marshalled at best
+            # and corrupts the interpreter at worst. So that thread only puts
+            # what it read on a queue, and the window collects it here.
             self._process.start(
-                on_line=lambda line: self.after(0, self._append, line),
-                on_exit=lambda code: self.after(0, self._finish, code))
+                on_line=lambda line: self._inbox.put(("line", line)),
+                on_exit=lambda code: self._inbox.put(("exit", code)))
         except ShamblesError as exc:
             self._append(str(exc))
             self._finish(1)
+
+    def _collect(self):
+        """Show what the login thread has handed over, then check again.
+
+        Polled through motion.later, so it stops when the dialog is
+        destroyed, and stops by itself once the login has finished.
+        """
+        if self._finished:
+            return
+        while True:
+            try:
+                kind, value = self._inbox.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "line":
+                self._append(value)
+            else:
+                self._finish(value)
+                return
+        motion.later(self, LOGIN_POLL_MS, self._collect)
 
     def _offer_url(self, url):
         """Enable the link controls once the vendor has printed an address."""
@@ -642,6 +674,7 @@ class LoginDialog(tk.Toplevel):
                 self._offer_url(found)
 
     def _finish(self, code):
+        self._finished = True
         self.succeeded = (code == 0)
         if self.succeeded:
             self.destroy()

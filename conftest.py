@@ -188,6 +188,27 @@ def paths(home):
     return Paths.for_home(home)
 
 
+def away_from_the_real_pointer(window, margin=40):
+    """Move a test window so the real cursor is not over it.
+
+    Tests stand in for the pointer with a generated ``<Enter>``. The real
+    cursor on a CI runner sits wherever that machine left it, and over the
+    window its crossings reach the widgets too: a card got a real
+    ``<Leave>`` and rightly washed back to resting, failing its hover test
+    on one Windows run. Beside the cursor, only the test's events arrive.
+    """
+    window.update_idletasks()
+    px, py = window.winfo_pointerxy()
+    if px < 0:                      # no pointer on this screen at all
+        return
+    width = window.winfo_width()
+    x = px + margin
+    if x + width > window.winfo_screenwidth():
+        x = max(0, px - margin - width)
+    window.geometry(f"+{x}+{max(0, py - 20)}")
+    window.update()
+
+
 @pytest.fixture
 def make_app():
     """Build a ShamblesApp, skipping when there is no usable display.
@@ -223,6 +244,7 @@ def make_app():
         except tk.TclError as exc:
             pytest.skip(f"no usable display: {exc}")
         created.append(app)
+        away_from_the_real_pointer(app)
         # No test presses a mouse button or a key: they call commands
         # directly and generate only <Enter> and <Leave>. A press or a key
         # here came from outside the process, and whatever the test then
