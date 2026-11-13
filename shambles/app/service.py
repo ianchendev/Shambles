@@ -21,8 +21,8 @@ from .snapshot import Snapshot
 #: The wait is :data:`shambles.switcher.REFRESH_LOCK_WAIT_S` at most.
 WAITING_FOR_REFRESH = (
     "Waiting for Claude Code to finish renewing its login, so the new token "
-    "is the one saved. This takes a few seconds at most ({seconds:.0f} s "
-    "before Shambles gives up). Nothing has changed yet."
+    "is the one saved. This usually takes a few seconds; Shambles gives up "
+    "after {seconds:.0f} s. Nothing has changed yet."
 )
 
 
