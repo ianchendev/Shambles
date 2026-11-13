@@ -165,10 +165,22 @@ Item {
             }
 
             Btn {
+                // A login that still works but only a new sign-in keeps past
+                // its date: Sign in beside Switch, before the date.
+                visible: !!root.account.signInExtra
+                kind: "plain"
+                text: "Sign in"
+                enabled: !!root.account.signInEnabled && !ui.busy
+                hint: "Sign in to " + root.account.name + " again"
+                implicitHeight: 36
+                onClicked: ui.signIn(root.account.provider, root.account.name)
+            }
+
+            Btn {
                 visible: (root.account.action || "") !== ""
                 kind: root.account.action === "signin" ? "primary" : "soft"
                 text: root.account.actionLabel || ""
-                enabled: !!root.account.actionEnabled
+                enabled: !!root.account.actionEnabled && !ui.busy
                 hint: root.account.action === "signin"
                       ? "Sign in to " + root.account.name
                       : "Switch to " + root.account.name

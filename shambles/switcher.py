@@ -659,15 +659,28 @@ def judge_relogin(paths, provider, name: str, *, platform=sys.platform,
     if (blob is None or not provider.has_login(blob)
             or provider.liveness(blob, now_ms=now_ms_fn()).needs_login):
         return UNCHANGED
-    # The profile's own saved bytes, still there: nothing new arrived. A
+    # The profile's own saved login, still there: nothing new arrived. A
     # lapsed login is caught above; this is the one that still works, signed
     # in again early, where a clean exit with no write would otherwise read
     # as a renewal whose date has not moved.
+    #
+    # Not only the same bytes. The live copy refreshes every few hours and
+    # its token rotates, so it has usually moved on from the saved one by
+    # the time somebody signs in early. Where a refresh does not move the
+    # date (Claude: the sign-in deadline is fixed), the same lineage means
+    # the same sign-in, and a real new one sets a new deadline. Where it
+    # does (Codex), lineage is the account, which a real new sign-in keeps,
+    # so only the bytes can say nothing arrived.
     try:
-        if paths.credentials(provider.id, name).read_bytes() == blob:
-            return UNCHANGED
+        saved = paths.credentials(provider.id, name).read_bytes()
     except OSError:
-        pass
+        saved = None
+    if saved == blob:
+        return UNCHANGED
+    renewed_by_use = (provider.spec.get("liveness") or {}).get(
+        "renewed_by_use", False)
+    if saved and not renewed_by_use and provider.same_login(saved, blob):
+        return UNCHANGED
     if not belongs_to(paths, provider, name, platform=platform, blob=blob):
         return OTHER_ACCOUNT
     return RENEWED

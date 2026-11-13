@@ -69,7 +69,14 @@ Notable changes per release. Dates are the tag date.
   your previous account if the sign-in is cancelled or fails. The profile is
   kept so you can retry without naming it again.
 
-- **A new window, in preview: `shambles gui --new`.** Rebuilt in Qt on the
+- **`shambles gui` opens the new window.** It is the default wherever it is
+  installed: from the release installers, or with the `gui` extra from pip.
+  Where it is not, `shambles gui` opens the classic Tk window and says so in
+  one line. `shambles gui --classic` asks for the Tk window outright, and
+  `shambles gui --new` asks for the new one and explains what is missing
+  instead of falling back. The Tk window will be removed in a later release.
+
+- **A new window: `shambles gui --new`.** Rebuilt in Qt on the
   same service the terminal UI uses. One resizable column: each provider's
   live account on top with its usage, everyone else as rows beneath. What is
   different from the classic window:
@@ -90,14 +97,21 @@ Notable changes per release. Dates are the tag date.
     held back until you save it. The classic window let the click through
     and relied on the core to refuse.
 
-  Plain `shambles gui` still opens the classic window.
+- **The window has an icon and a place in your applications menu.** The
+  title bar and taskbar show a Shambles icon instead of a blank one.
+  `install.sh` adds a launcher entry on Linux
+  (`~/.local/share/applications/shambles.desktop`) and `install.ps1` adds a
+  Start menu shortcut on Windows, both pointing at the installed window.
+  On macOS, where the window is not yet an app Launchpad can list, it says
+  to open it with `shambles gui` instead. Set `SHAMBLES_NO_DESKTOP=1` to
+  skip either.
 
 - **The installers fetch the new window as its own download.** It carries
   Qt (a 36 to 82 MB download, depending on the platform), so it ships beside
   the `shambles` binary instead of inside it: every other command stays as
   fast as it was. `install.sh` unpacks it to `~/.local/share/shambles/window`
   and `install.ps1` to `%LOCALAPPDATA%\Shambles\window`, and
-  `shambles gui --new` opens it from there. There is a build for every
+  `shambles gui` opens it from there. There is a build for every
   platform the binary ships for, Windows on Arm included.
 
   It is checked against the release's `SHA256SUMS` like the binary, and
@@ -150,6 +164,34 @@ Notable changes per release. Dates are the tag date.
   conversion are now written the way logins are: whole, owner-only from the
   first byte, and never seen half written. Two windows writing the active
   record at once could leave it empty, which reads as no account marked.
+- An early Claude sign-in that comes to nothing no longer reports a renewal
+  when Claude Code has refreshed the login in the meantime. The live copy had
+  moved on from the saved one, so it looked new, although its deadline had
+  not moved.
+- **The new window no longer says using a Claude account renews its login.**
+  Claude's login lasts a fixed time from sign-in, about thirty days, and no
+  amount of use moves it. An opened row now says "Using the account does
+  not move this date. Sign in again before then to keep it." for Claude, and
+  keeps "Using the account renews it." for Codex, where it is true. The
+  snapshot carries `renewed_by_use` per account so no frontend has to know
+  which provider is which.
+- **Switching no longer freezes the new window.** A switch can wait up to
+  15 seconds for Claude Code to finish renewing its login. The new window
+  now says so at the bottom while it waits, instead of drawing nothing and
+  ignoring clicks, and holds every other action until the switch is done.
+  Closing it mid-switch closes it once the switch has finished, never in
+  the middle of one.
+- **The new window offers a sign-in before a Claude login's fixed date.**
+  An account near its deadline shows Sign in beside Switch, the account in
+  use shows Sign in, and the notice that says the date is coming has a
+  "Sign in to X" button.
+- **Signed in as a saved account that is not the one marked, the new window
+  offers to switch to it, not to save it again.** It shows a card naming the
+  account, with one button, "Switch to Home", that files the live login
+  there and keeps the one it replaces. Every other Switch waits until then,
+  with the reason, because Shambles would refuse it anyway. Saving would
+  only have made a second account for the same login. This matches the
+  classic window.
 - **Two Shambles windows saving the same login at once could corrupt it.**
   Every write shared one temp file name, so when the window and the terminal
   UI re-saved a login at the same moment, one could fail or install a file

@@ -44,6 +44,17 @@ ApplicationWindow {
             win.pulseId = ""
             win.pulseId = id
         }
+        function onQuitRequested() {
+            Qt.quit()
+        }
+    }
+
+    // Never close under a switch: stopped between replacing the live login
+    // and moving the marker, it is the one thing that could lose a login.
+    // The bridge closes the window itself once the switch has finished.
+    onClosing: (close) => {
+        if (!ui.closeRequested())
+            close.accepted = false
     }
 
     Shortcut { sequences: ["Ctrl+R", "F5"]; onActivated: ui.refresh() }
@@ -110,6 +121,7 @@ ApplicationWindow {
                 Btn {
                     glyph: "refresh"
                     hint: "Refresh. Re-reads local files only."
+                    enabled: !ui.busy
                     implicitHeight: 40
                     onClicked: ui.refresh()
                 }
@@ -141,6 +153,7 @@ ApplicationWindow {
                     kind: "primary"
                     glyph: "plus"
                     text: "Add account"
+                    enabled: !ui.busy
                     implicitHeight: 40
                     onClicked: ui.openAdd("")
                 }
@@ -266,5 +279,6 @@ ApplicationWindow {
     }
 
     Toast {}
+    BusyBar {}
     Sheet {}
 }

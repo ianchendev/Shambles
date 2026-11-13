@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QFontDatabase, QGuiApplication
+from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow  # noqa: F401  (types the root window)
 
@@ -20,6 +20,7 @@ from .bridge import Bridge
 HERE = Path(__file__).resolve().parent
 QML = HERE / "qml" / "Main.qml"
 FONTS = HERE / "fonts"
+ICON = HERE / "icons" / "shambles.png"
 FONT_FAMILY = "Inter"
 
 #: ``SHAMBLES_SCALE`` is the Tk window's knob; the same values mean the same
@@ -153,6 +154,9 @@ def build(service, *, motion=True, app=None):
     against a fake service and never enter an event loop.
     """
     app = app or QGuiApplication.instance()
+    # The title bar and the taskbar. Without one the window shows the
+    # toolkit's blank default, which reads as an unfinished program.
+    app.setWindowIcon(QIcon(str(ICON)))
     load_fonts()
     font = app.font()
     font.setFamily(FONT_FAMILY)

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Shambles">
+  <!-- The banner's own vocabulary: its navy ground, its gold frame, and the
+       terracotta swap arrows from its corner tag, drawn as paths so the icon
+       depends on no font. -->
+  <rect width="256" height="256" rx="56" fill="#0b1020"/>
+  <rect x="15" y="15" width="226" height="226" rx="43" fill="none" stroke="#d9a441" stroke-width="8"/>
+  <g fill="none" stroke="#e07a5f" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M70 96H182"/>
+    <path d="M152 66l30 30-30 30"/>
+    <path d="M186 160H74"/>
+    <path d="M104 130l-30 30 30 30"/>
+  </g>
+</svg>
