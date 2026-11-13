@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from helpers import (DAY_MS, NOW, healthy_ms, make_claude_json,
+from helpers import (DAY_MS, NOW, credentials, healthy_ms, make_claude_json,
                      make_live_claude_login, make_live_codex_login,
                      make_profile)
 from shambles import providers, state, switcher
@@ -952,3 +952,84 @@ def test_an_active_login_the_vendor_emptied_does_not_still_work(paths):
                                     platform="linux", sleep=lambda _: None)
 
     assert outcome.still_works is False
+
+
+# -- an early sign-in, judged by the sign-in rather than by the bytes ---------
+#
+# Claude Code refreshes the live login every few hours and rotates its token
+# when it does, so by the time somebody signs the live account in again early,
+# the live copy has usually moved on from the saved one. Its bytes differ, but
+# its sign-in deadline does not: it is the same sign-in, refreshed. A vendor
+# exit 0 that wrote nothing then has to read as nothing arriving, not as a
+# renewal whose date has not moved.
+
+def _refreshed_copy_of(paths, provider_id, name):
+    import copy
+    saved = json.loads(paths.credentials(provider_id, name).read_text())
+    refreshed = copy.deepcopy(saved)
+    refreshed["claudeAiOauth"]["accessToken"] = f"a-{name}-refreshed"
+    refreshed["claudeAiOauth"]["refreshToken"] = f"r-{name}-refreshed"
+    refreshed["claudeAiOauth"]["refreshTokenExpiresAt"] -= 1375
+    return refreshed
+
+
+def test_an_early_sign_in_to_a_refreshed_login_that_comes_to_nothing(paths):
+    claude_ = closing_claude(paths, active=True)
+    from helpers import write_json
+    write_json(paths.claude_dir / ".credentials.json",
+               _refreshed_copy_of(paths, "claude", "Work"))
+    live = (paths.claude_dir / ".credentials.json").read_bytes()
+    previous = switcher.begin_relogin(paths, claude_, "Work", platform="linux",
+                                      sleep=lambda _: None)
+
+    outcome = switcher.settle_login(paths, claude_, "Work", previous,
+                                    adding=False, succeeded=True,
+                                    platform="linux", sleep=lambda _: None)
+
+    assert outcome.kind == switcher.UNCHANGED, (
+        "a refresh of the same sign-in read as a renewal")
+    assert outcome.still_works is True
+    assert (paths.claude_dir / ".credentials.json").read_bytes() == live
+
+
+def test_a_real_sign_in_again_still_renews(paths):
+    """A new sign-in sets a new deadline, about 30 days from now."""
+    claude_ = closing_claude(paths, active=True)
+    from helpers import write_json
+    saved = paths.credentials("claude", "Work").read_bytes()
+    switcher.begin_relogin(paths, claude_, "Work", platform="linux",
+                           sleep=lambda _: None)
+    fresh = credentials(healthy_ms(30), access_token="tok-signed-in-again")
+    write_json(paths.claude_dir / ".credentials.json", fresh)
+
+    assert switcher.judge_relogin(paths, claude_, "Work",
+                                  platform="linux") == switcher.RENEWED
+
+    switcher.settle_login(paths, claude_, "Work", "Work", adding=False,
+                          succeeded=True, platform="linux",
+                          sleep=lambda _: None)
+    assert paths.credentials("claude", "Work").read_bytes() == \
+        (paths.claude_dir / ".credentials.json").read_bytes()
+    assert (paths.profile_dir("claude", "Work")
+            / "credentials.json.previous").read_bytes() == saved
+
+
+def test_a_codex_sign_in_again_to_the_same_account_still_renews(paths):
+    """Codex's lineage is the account and the address in the token, which a
+    real new sign-in to the same account keeps. So lineage cannot say
+    nothing arrived here; only the bytes can."""
+    codex_ = providers.load("codex", env={})
+    make_profile(paths, "codex", "Work", email="w@example.test", active=True,
+                 refresh_expires_ms=healthy_ms(1))
+    (paths.home / ".codex").mkdir(parents=True, exist_ok=True)
+    (paths.home / ".codex" / "auth.json").write_bytes(
+        paths.credentials("codex", "Work").read_bytes())
+    switcher.begin_relogin(paths, codex_, "Work", platform="linux",
+                           sleep=lambda _: None)
+    make_live_codex_login(paths, email="w@example.test", exp_ms=healthy_ms(10))
+    fresh = json.loads((paths.home / ".codex" / "auth.json").read_text())
+    fresh["tokens"]["refresh_token"] = "r-signed-in-again"
+    (paths.home / ".codex" / "auth.json").write_text(json.dumps(fresh))
+
+    assert switcher.judge_relogin(paths, codex_, "Work",
+                                  platform="linux") == switcher.RENEWED
