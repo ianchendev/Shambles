@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import stat
 
 import pytest
@@ -121,14 +120,19 @@ def _alpha_and_beta(paths):
 
 
 def _dies_on_call(number, error):
-    real = shutil.copy2
+    """A profile copy that fails on its ``number``th file.
+
+    Every file of a profile is copied through ``migrate._copy_private``, so
+    that is where a full disk or a crash is made to land.
+    """
+    real = migrate._copy_private
     calls = {"n": 0}
 
-    def copy(src, dst, **kwargs):
+    def copy(src, dst):
         calls["n"] += 1
         if calls["n"] == number:
             raise error
-        return real(src, dst, **kwargs)
+        return real(src, dst)
     return copy
 
 
@@ -145,7 +149,7 @@ def test_an_interrupted_store_migration_is_resumed(paths, monkeypatch):
     logins = _alpha_and_beta(paths)
 
     with monkeypatch.context() as patch:
-        patch.setattr(shutil, "copy2", _dies_on_call(2, OSError("disk full")))
+        patch.setattr(migrate, "_copy_private", _dies_on_call(2, OSError("disk full")))
         with pytest.raises(migrate.MigrationError) as caught:
             migrate.migrate_store(paths)
 
@@ -174,7 +178,7 @@ def test_a_copy_that_died_leaves_nothing_the_next_one_trusts(paths,
     logins = _alpha_and_beta(paths)
 
     with monkeypatch.context() as patch:
-        patch.setattr(shutil, "copy2", _dies_on_call(3, Killed()))
+        patch.setattr(migrate, "_copy_private", _dies_on_call(3, Killed()))
         with pytest.raises(Killed):
             migrate.migrate_store(paths)
 
@@ -201,17 +205,17 @@ def test_two_windows_migrating_at_once_cannot_leave_an_account_out(
     into place, and the store would appear, finished, with accounts
     missing."""
     logins = _alpha_and_beta(paths)
-    real = shutil.copy2
+    real = migrate._copy_private
     calls = {"n": 0}
 
-    def copy(src, dst, **kwargs):
+    def copy(src, dst):
         calls["n"] += 1
         if calls["n"] == 3:
             # The other window, start to finish, while this one is mid-copy.
             migrate.migrate_store(paths)
-        return real(src, dst, **kwargs)
+        return real(src, dst)
 
-    monkeypatch.setattr(shutil, "copy2", copy)
+    monkeypatch.setattr(migrate, "_copy_private", copy)
     # The slower window finds the store already in place and says so. It
     # does not promise a retry, because none is needed.
     with pytest.raises(migrate.MigrationError) as caught:
@@ -231,7 +235,7 @@ def test_a_failed_copy_into_an_existing_store_is_a_message_too(paths,
     something the window can show."""
     _alpha_and_beta(paths)
     paths.ensure_provider("claude")
-    monkeypatch.setattr(shutil, "copy2", _dies_on_call(1, OSError("disk full")))
+    monkeypatch.setattr(migrate, "_copy_private", _dies_on_call(1, OSError("disk full")))
 
     with pytest.raises(migrate.MigrationError) as caught:
         migrate.migrate_store(paths)

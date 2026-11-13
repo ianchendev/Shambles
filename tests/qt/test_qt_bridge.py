@@ -13,8 +13,8 @@ import pytest
 pytest.importorskip("PySide6.QtCore", exc_type=ImportError,
                     reason="PySide6 is not installed or cannot load")
 
-from qt_fakes import (Clipboard, FakeService, account, failure, group,  # noqa: E402
-                   unsaved)
+from qt_fakes import (Clipboard, FakeService, account, due, failure,  # noqa: E402
+                      group, saved_elsewhere, unsaved)
 from qt_support import pump, qt_app  # noqa: E402,F401
 from shambles.app.qt import bridge as bridge_mod  # noqa: E402
 from shambles.app.service import ActionResult  # noqa: E402
@@ -23,9 +23,13 @@ from shambles.app.snapshot import Snapshot  # noqa: E402
 
 @pytest.fixture
 def make(qt_app):
+    """A bridge on a fake service. Background work runs inline, so a flow
+    reads top to bottom; the tests about the worker thread pass
+    ``runner=None`` to get the real one."""
     def _make(service=None, **kw):
         service = service or FakeService()
         clipboard = Clipboard()
+        kw.setdefault("runner", lambda work: work())
         made = bridge_mod.Bridge(service, clipboard=clipboard, **kw)
         made.start()
         return made, service, clipboard
@@ -448,3 +452,213 @@ def test_a_refresh_that_raises_does_not_take_the_window_down(make):
 
     assert ui.toast["tone"] == "bad"
     assert ui.view["count"] == 3, "the last good view was thrown away"
+
+
+
+# -- settling a login that is saved under another name ----------------------------
+
+
+def test_settling_switches_to_the_account_the_notice_names(make):
+    ui, service, _ = make(FakeService(saved_elsewhere()))
+    seen = []
+    ui.confirmed.connect(seen.append)
+
+    ui.settle("claude")
+
+    assert service.named("switch") == [("switch", "claude", "Home")]
+    assert seen == ["claude/Home"]
+
+
+def test_settling_does_nothing_where_there_is_nothing_to_settle(make):
+    ui, service, _ = make()
+
+    ui.settle("claude")
+    ui.settle("nobody")
+
+    assert service.named("switch") == []
+
+
+def test_while_unsettled_only_the_named_account_can_be_switched_to(make):
+    ui, service, _ = make(FakeService(saved_elsewhere()))
+
+    ui.switchTo("claude", "Third")
+    ui.pressKey("1")
+
+    assert all(call[2] == "Home" for call in service.named("switch")), \
+        "switched somewhere the core would refuse, or worse"
+
+
+def test_settling_on_the_real_service_files_the_login_and_loses_nothing(
+        qt_app, paths):
+    """Signed in again in the browser as Home, which is saved, while Work is
+    still marked. Nothing proves the login is Home's, so the window offers no
+    Save and holds every other Switch; its one button switches to Home,
+    which files the fresh login there and keeps Home's old one beside it."""
+    import json
+
+    from helpers import (credentials, healthy_ms, make_claude_json,
+                         make_profile, write_json)
+    from shambles import providers, state
+    from shambles.app.service import ShamblesService
+
+    def login(access, refresh, days):
+        # Different deadlines on purpose: a login whose deadline matches a
+        # profile's to the second continues that profile's login, which is
+        # proof, and proof settles itself on refresh. This test is about the
+        # case nothing proves.
+        blob = credentials(refresh_expires_ms=healthy_ms(days),
+                           access_token=access)
+        blob["claudeAiOauth"]["refreshToken"] = refresh
+        return blob
+
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Home", email="h@example.test")
+    make_profile(paths, "claude", "Third", email="t@example.test")
+    write_json(paths.credentials("claude", "Home"), login("a-old", "r-old", 12))
+    old_home = paths.credentials("claude", "Home").read_bytes()
+    work = paths.credentials("claude", "Work").read_bytes()
+    make_claude_json(paths, email="h@example.test")
+    write_json(paths.claude_dir / ".credentials.json", login("a-new", "r-new", 29))
+    fresh = (paths.claude_dir / ".credentials.json").read_bytes()
+
+    service = ShamblesService(paths=paths,
+                              providers=[providers.load("claude", env={})],
+                              platform="linux")
+    ui = bridge_mod.Bridge(service, clipboard=Clipboard(),
+                           runner=lambda work: work())
+    ui.start()
+    shown = ui.view["groups"][0]
+
+    assert shown["save"] is None, "offered to save a login that is Home's"
+    assert shown["settle"]["account"] == "Home"
+    others = {a["name"]: a for a in shown["others"]}
+    assert others["Third"]["actionEnabled"] is False
+
+    ui.switchTo("claude", "Third")
+    assert (paths.claude_dir / ".credentials.json").read_bytes() == fresh
+
+    ui.settle("claude")
+
+    assert state.read_active(paths, "claude") == "Home"
+    assert paths.credentials("claude", "Home").read_bytes() == fresh
+    assert (paths.profile_dir("claude", "Home")
+            / "credentials.json.previous").read_bytes() == old_home
+    assert paths.credentials("claude", "Work").read_bytes() == work
+    assert ui.view["groups"][0]["settle"] is None
+    assert ui.view["groups"][0]["live"]["name"] == "Home"
+    assert json.loads(fresh) == json.loads(
+        (paths.claude_dir / ".credentials.json").read_bytes())
+
+
+
+# -- R10: a switch runs off the window's thread ------------------------------------
+
+
+def test_a_switch_does_not_hold_the_window_while_it_waits(make, pump):
+    """A switch can wait up to 15 s on Claude Code's refresh lock. The Tk
+    window freezes for that long; this one must keep drawing."""
+    import threading
+
+    service = FakeService()
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+    seen = []
+    ui.confirmed.connect(seen.append)
+
+    ui.switchTo("claude", "Personal")
+
+    assert ui.busy is True, "the click did not return before the switch did"
+    assert pump(lambda: "renewing its login" in ui.busyText), \
+        "never said why nothing has happened yet"
+    assert seen == []
+
+    service.hold.set()
+    assert pump(lambda: not ui.busy, timeout=5)
+    assert seen == ["claude/Personal"]
+    assert ui.busyText == ""
+    assert "Switched to Personal" in ui.toast["text"]
+
+
+def test_nothing_else_moves_while_a_switch_is_running(make, pump):
+    import threading
+
+    service = FakeService()
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+
+    ui.switchTo("claude", "Personal")
+    ui.switchTo("claude", "Personal")
+    ui.pressKey("1")
+    ui.signIn("claude", "Old")
+    ui.askRemove("claude", "Personal")
+    ui.openAdd("")
+
+    assert ui.sheet == {}
+    assert service.named("start_login") == []
+    service.hold.set()
+    assert pump(lambda: not ui.busy, timeout=5)
+    assert len(service.named("switch")) == 1
+
+
+def test_closing_mid_switch_waits_for_it_to_finish(make, pump):
+    """An interrupted switch is the one thing that could lose a login. The
+    window waits for it rather than exiting under it."""
+    import threading
+
+    service = FakeService()
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+    ui.switchTo("claude", "Personal")
+    assert ui.busy
+
+    threading.Timer(0.3, service.hold.set).start()
+    ui.shutdown()
+
+    assert service.named("switch") == [("switch", "claude", "Personal")]
+
+
+def test_a_close_request_mid_switch_is_held_until_it_finishes(make, pump):
+    import threading
+
+    service = FakeService()
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+    quit_asked = []
+    ui.quitRequested.connect(lambda: quit_asked.append(True))
+
+    assert ui.closeRequested() is True, "an idle window must close at once"
+    ui.switchTo("claude", "Personal")
+    assert ui.closeRequested() is False
+    assert "closes when" in ui.busyText
+
+    service.hold.set()
+    assert pump(lambda: quit_asked == [True], timeout=5)
+
+
+def test_settling_also_runs_off_the_windows_thread(make, pump):
+    import threading
+
+    service = FakeService(saved_elsewhere())
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+
+    ui.settle("claude")
+    assert ui.busy
+    service.hold.set()
+    assert pump(lambda: not ui.busy, timeout=5)
+    assert service.named("switch") == [("switch", "claude", "Home")]
+
+
+# -- R11: a sign-in that is due, before the date -------------------------------------
+
+
+def test_a_due_sign_in_can_be_started_from_its_notice_and_its_row(make):
+    ui, service, _ = make(FakeService(due()))
+
+    ui.signIn("claude", "Work")
+    assert service.named("start_login") == [("start_login", "claude", "Work")]
+    ui.cancelLogin()
+    service.settle(failure("login", "login_cancelled", "Sign-in cancelled."))
+
+    ui.signIn("claude", "Spare")
+    assert service.named("start_login")[-1] == ("start_login", "claude", "Spare")

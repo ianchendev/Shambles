@@ -17,12 +17,14 @@ HOUR = 3_600_000
 
 def account(name, *, active=False, state="live", needs_login=False,
             status_label=None, email=None, plan="max_5x", usage=(),
-            expires_at_ms=None, publishes_usage=False):
+            expires_at_ms=None, publishes_usage=False, renewed_by_use=False,
+            sign_in_due=False):
     return Account(name=name, email=email or f"{name.lower()}@example.test",
                    plan=plan, active=active, state=state,
                    needs_login=needs_login, status_label=status_label,
                    usage=list(usage), expires_at_ms=expires_at_ms,
-                   publishes_usage=publishes_usage)
+                   publishes_usage=publishes_usage,
+                   renewed_by_use=renewed_by_use, sign_in_due=sign_in_due)
 
 
 def group(*accounts, provider="claude", title="Claude Code", notices=(),
@@ -271,13 +273,37 @@ def test_the_login_line_gives_the_date_and_what_to_do():
     when = 1_785_000_000_000
     date = presenter.local_time(when)
 
-    assert presenter.login_line(account("A", expires_at_ms=when)) == \
-        f"Healthy. Good until {date}. Using the account renews it."
     assert presenter.login_line(account("A", state="closed",
                                         expires_at_ms=when)) == \
         f"Expired {date}. Sign in again to renew it."
     assert presenter.login_line(account("A", state="absent")) == \
         "No login saved yet. Sign in to fill it."
+
+
+def test_only_an_account_renewed_by_use_is_told_that_using_it_keeps_it():
+    """Claude's deadline is fixed at sign-in, about thirty days out, and no
+    amount of use moves it. Codex replaces its token when used. Telling a
+    Claude user otherwise is how a login lapses that they thought was safe."""
+    when = 1_785_000_000_000
+    date = presenter.local_time(when)
+    claude_like = dict(expires_at_ms=when, renewed_by_use=False)
+    codex_like = dict(expires_at_ms=when, renewed_by_use=True)
+
+    assert presenter.login_line(account("A", **codex_like)) == \
+        f"Healthy. Good until {date}. Using the account renews it."
+    assert presenter.login_line(account("A", **claude_like)) == \
+        (f"Healthy. Good until {date}. Using the account does not move this "
+         "date. Sign in again before then to keep it.")
+    assert presenter.login_line(account("A", state="closing",
+                                        **codex_like)) == \
+        f"Expires {date}. Switch to it before then to keep it."
+    assert presenter.login_line(account("A", state="closing",
+                                        **claude_like)) == \
+        (f"Expires {date}. Using the account does not move this date. Sign "
+         "in again before then to keep it.")
+    for state in ("live", "closing"):
+        line = presenter.login_line(account("A", state=state, **claude_like))
+        assert "renews" not in line and "Switch to it" not in line
 
 
 def test_a_date_out_of_range_does_not_stop_the_window():
@@ -416,3 +442,122 @@ def test_eject_says_what_the_service_plan_says_and_only_once():
     assert "Personal stays on disk." in sheet["message"]
     assert presenter.eject_sheet(SimpleNamespace(warnings=()))["message"] == \
         presenter.EJECT_FALLBACK
+
+
+
+# -- a saved account signed in under the wrong marker ------------------------------
+
+
+def elsewhere(owner="Home"):
+    return Notice("signed_in_elsewhere",
+                  f"Signed in as h@example.test, which is saved as '{owner}', "
+                  "but 'Work' is marked active.",
+                  f"Switch to '{owner}' to settle it. Nothing is lost either "
+                  "way.", account=owner)
+
+
+def drifted(*accounts, owner="Home"):
+    return only(view(group(*accounts, notices=[elsewhere(owner)],
+                           state="drifted", live_email="h@example.test")))
+
+
+def test_a_login_saved_elsewhere_is_settled_by_switching_not_by_saving():
+    """The address names a saved account. Saving would make a second account
+    for one login; switching to the one named is how the user confirms it."""
+    shown = drifted(account("Work", active=True), account("Home"),
+                    account("Third"))
+
+    assert shown["save"] is None
+    settle = shown["settle"]
+    assert settle["account"] == "Home"
+    assert settle["label"] == "Switch to Home"
+    assert "saved as 'Home'" in settle["title"]
+    assert "Nothing is lost" in settle["body"]
+    assert shown["notices"] == [], "drawn as the settle card, not a banner"
+
+
+def test_every_other_switch_waits_until_it_is_settled():
+    """The core refuses to switch anywhere but the named account from here,
+    because the live login would be filed under the wrong name. The window
+    says so before the click instead of after it."""
+    shown = drifted(account("Work", active=True), account("Home"),
+                    account("Third"))
+    others = {a["name"]: a for a in shown["others"]}
+
+    assert shown["live"] is None
+    assert others["Home"]["actionEnabled"] is True
+    for name in ("Work", "Third"):
+        assert others[name]["actionEnabled"] is False
+        assert "Switch to Home" in others[name]["actionReason"]
+
+
+def test_settling_works_even_when_the_named_accounts_own_login_has_lapsed():
+    """Its saved login may be dead while the live one is fresh; switching to
+    it files the fresh one there. The card's button does that, whatever the
+    row's own button says."""
+    lapsed_home = account("Home", state="closed", needs_login=True,
+                          status_label="needs login")
+
+    shown = drifted(account("Work", active=True), lapsed_home)
+
+    assert shown["settle"]["account"] == "Home"
+
+
+
+# -- R11: a sign-in that is due before the date ---------------------------------------
+
+
+def due_account(name, **kw):
+    return account(name, state="closing", status_label="soon",
+                   sign_in_due=True, **kw)
+
+
+def test_the_live_account_due_a_sign_in_offers_one():
+    """It still works, and only a new sign-in keeps it past the date."""
+    live = only(view(group(due_account("Work", active=True))))["live"]
+
+    assert (live["action"], live["actionLabel"]) == ("signin", "Sign in")
+    assert live["actionEnabled"] is True
+    assert live["signIn"] is True
+
+
+def test_a_parked_account_due_a_sign_in_offers_it_beside_switch():
+    """As the Tk window does: it still works, so Switch stays, and Sign in
+    is offered next to it before the date rather than after."""
+    other = only(view(group(account("Work", active=True),
+                            due_account("Spare"))))["others"][0]
+
+    assert other["action"] == "switch" and other["actionEnabled"] is True
+    assert other["signIn"] is True and other["signInExtra"] is True
+
+
+def test_a_lapsed_account_still_signs_in_and_never_switches():
+    lapsed = account("Old", state="closed", needs_login=True,
+                     status_label="needs login")
+    other = only(view(group(account("Work", active=True), lapsed)))["others"][0]
+
+    assert other["action"] == "signin"
+    assert other["signIn"] is True and other["signInExtra"] is False
+
+
+def test_a_due_sign_in_without_the_cli_is_not_offered_as_working():
+    other = only(view(group(account("Work", active=True), due_account("Spare"),
+                            can_sign_in=False)))["others"][0]
+
+    assert other["action"] == "switch" and other["actionEnabled"] is True
+    assert other["signIn"] is False
+
+
+def test_the_sign_in_soon_notice_has_a_sign_in_button():
+    notice = Notice("sign_in_soon",
+                    "'Work' stops working on Tue 17 Nov. Claude ends every "
+                    "login a fixed time after it was signed in.",
+                    "Sign in to 'Work' again before then.", account="Work")
+
+    shown = only(view(group(due_account("Work", active=True),
+                            notices=[notice])))["notices"][0]
+
+    assert shown["action"] == "signin"
+    assert shown["actionLabel"] == "Sign in to Work"
+    assert shown["account"] == "Work"
+    assert shown["tone"] == "warn"

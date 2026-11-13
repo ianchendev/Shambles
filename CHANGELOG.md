@@ -154,6 +154,44 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **The new window no longer says using a Claude account renews its login.**
+  Claude's login lasts a fixed time from sign-in, about thirty days, and no
+  amount of use moves it. An opened row now says "Using the account does
+  not move this date. Sign in again before then to keep it." for Claude, and
+  keeps "Using the account renews it." for Codex, where it is true. The
+  snapshot carries `renewed_by_use` per account so no frontend has to know
+  which provider is which.
+- **Switching no longer freezes the new window.** A switch can wait up to
+  15 seconds for Claude Code to finish renewing its login. The new window
+  now says so at the bottom while it waits, instead of drawing nothing and
+  ignoring clicks, and holds every other action until the switch is done.
+  Closing it mid-switch closes it once the switch has finished, never in
+  the middle of one.
+- **The new window offers a sign-in before a Claude login's fixed date.**
+  An account near its deadline shows Sign in beside Switch, the account in
+  use shows Sign in, and the notice that says the date is coming has a
+  "Sign in to X" button.
+- **Signed in as a saved account that is not the one marked, the new window
+  offers to switch to it, not to save it again.** It shows a card naming the
+  account, with one button, "Switch to Home", that files the live login
+  there and keeps the one it replaces. Every other Switch waits until then,
+  with the reason, because Shambles would refuse it anyway. Saving would
+  only have made a second account for the same login. This matches the
+  classic window.
+- **Two Shambles windows saving the same login at once could corrupt it.**
+  Every write shared one temp file name, so when the window and the terminal
+  UI re-saved a login at the same moment, one could fail or install a file
+  that mixed both writes. Measured with two processes writing one file: 449
+  of 1200 writes failed and 1618 of 18,259 reads saw a file that was neither
+  write. Each write now has a temp file of its own, private from its first
+  byte, written in full and flushed to disk before it is renamed into place;
+  the same measurement shows no failures and no bad reads. A temp file left
+  by a failed or interrupted write is removed, and one left by a killed
+  process is removed by the next write once it is five minutes old. The
+  migration from the old `~/.claude-profiles` store now copies each saved
+  login the same way: a copy cut short by a full disk was left at its final
+  name, and every later run skipped it as already there.
+
 - **`CLAUDE_CONFIG_DIR` is followed for the account details too, not only
   the login.** With the variable set, Claude Code keeps its config, including
   which account is signed in, in that directory. Shambles still read and

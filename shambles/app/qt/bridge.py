@@ -16,10 +16,15 @@ the GUI thread; no state is touched off that thread.
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+import threading
+
 from ... import __version__
+from ..service import ActionError, ActionResult, waiting_for_refresh
 from . import presenter, theme
 
 SWITCHED = "Switched to {name}. Start a new session to pick it up."
+SETTLED = ("{name} is the account in use, and its login is saved. Start a "
+           "new session if one was running as another account.")
 SIGNED_IN = "{name} is signed in and live. Start a new session to pick it up."
 NO_BROWSER = ("No browser could be launched from here, which is usual under "
               "WSL and over SSH. The link is on your clipboard.")
@@ -35,12 +40,27 @@ class Bridge(QObject):
     #: An account just became live: ``provider/name``. The card pulses.
     confirmed = Signal(str)
 
+    busyChanged = Signal()
+    #: The window asked to close mid-switch and the switch has now finished.
+    quitRequested = Signal()
+
     _lineArrived = Signal(str)
     _loginSettled = Signal(object)
+    _switchWaited = Signal()
+    _switchFinished = Signal(object)
 
     def __init__(self, service, *, clipboard=None, system_dark=None,
-                 motion=True, parent=None):
+                 motion=True, runner=None, parent=None):
         super().__init__(parent)
+        #: How a switch is run off the window's thread. A test passes one
+        #: that runs it inline; the window uses a thread of its own.
+        self._runner = runner or self._in_thread
+        self._worker = None
+        #: The switch in flight, if any, and whether the window is waiting
+        #: for it to finish before closing.
+        self._switching = None
+        self._quit_pending = False
+        self._busy_text = ""
         self._service = service
         self._clipboard = clipboard
         #: Callable returning True/False/None for the OS colour scheme.
@@ -59,6 +79,8 @@ class Bridge(QObject):
         self._eject_plan = None
         self._lineArrived.connect(self._on_line)
         self._loginSettled.connect(self._on_settled)
+        self._switchWaited.connect(self._on_switch_waited)
+        self._switchFinished.connect(self._on_switch_finished)
 
     # -- what the QML reads -----------------------------------------------
 
@@ -89,6 +111,15 @@ class Bridge(QObject):
     @Property(str, notify=themeChanged)
     def themeChoice(self):
         return self._service.window_theme()
+
+    @Property(bool, notify=busyChanged)
+    def busy(self):
+        """A switch is running. Everything that changes an account waits."""
+        return self._switching is not None
+
+    @Property(str, notify=busyChanged)
+    def busyText(self):
+        return self._busy_text
 
     @Property(bool, constant=True)
     def motion(self):
@@ -171,6 +202,8 @@ class Bridge(QObject):
 
     @Slot()
     def refresh(self):
+        if self._switching is not None:
+            return
         try:
             result = self._service.refresh()
         except Exception:
@@ -206,11 +239,97 @@ class Bridge(QObject):
     def switchTo(self, provider, name):
         account = self._account(provider, name)
         if (not account or account["action"] != "switch"
-                or not account["actionEnabled"] or self._handle):
+                or not account["actionEnabled"] or self._occupied()):
             return
-        result = self._service.switch(provider, name)
-        if self._report(result, SWITCHED.format(name=name)):
-            self.confirmed.emit(f"{provider}/{name}")
+        self._run_switch(provider, name, SWITCHED.format(name=name))
+
+    def _occupied(self):
+        """A sign-in or a switch is running, and nothing else may start."""
+        return self._handle is not None or self._switching is not None
+
+    def _set_busy(self, text):
+        self._busy_text = text
+        self.busyChanged.emit()
+
+    def _run_switch(self, provider, name, success):
+        """Switch on a thread of its own and report back on this one.
+
+        A switch can wait up to 15 s for Claude Code to finish renewing its
+        login. Run here, on the window's thread, that is 15 s of a window
+        that draws nothing and answers no clicks -- which is what the Tk
+        window does. The worker only ever emits signals; Qt queues them onto
+        this thread, where all state lives.
+        """
+        self._switching = {"provider": provider, "name": name,
+                           "success": success}
+        self._set_busy(f"Switching to {name}\u2026")
+
+        def work():
+            try:
+                result = self._service.switch(
+                    provider, name, on_wait=self._switchWaited.emit)
+            except Exception:
+                result = ActionResult(False, "switch", error=ActionError(
+                    "switch_failed", "The switch could not be completed.",
+                    "Refresh to see where things stand, then retry."))
+            self._switchFinished.emit(result)
+
+        self._runner(work)
+
+    def _in_thread(self, work):
+        # Not a daemon. An interpreter exiting under a switch would stop it
+        # between replacing the live login and moving the marker; shutdown()
+        # waits for it instead.
+        self._worker = threading.Thread(target=work, name="shambles-switch")
+        self._worker.start()
+
+    @Slot()
+    def _on_switch_waited(self):
+        if self._switching is None:
+            return
+        text = waiting_for_refresh()
+        if self._quit_pending:
+            text += " Shambles closes when it is done."
+        self._set_busy(text)
+
+    @Slot(object)
+    def _on_switch_finished(self, result):
+        switching, self._switching = self._switching, None
+        self._set_busy("")
+        if switching is not None and self._report(result,
+                                                  switching["success"]):
+            self.confirmed.emit(
+                f"{switching['provider']}/{switching['name']}")
+        if self._quit_pending:
+            self.quitRequested.emit()
+
+    @Slot(result=bool)
+    def closeRequested(self):
+        """Whether the window may close now. Not while a switch is running:
+        it closes itself once the switch has finished."""
+        if self._switching is None:
+            return True
+        self._quit_pending = True
+        self._set_busy(self._busy_text.rstrip()
+                       + " Shambles closes when it is done.")
+        return False
+
+    @Slot(str)
+    def settle(self, provider):
+        """Switch to the saved account the live login's address names.
+
+        Only to the account the snapshot names, and only through the
+        service's ordinary switch, which files the live login there and
+        keeps the one it replaces. Not gated on that account's own row: its
+        saved login may have lapsed while the live one is fresh, and this is
+        exactly what puts the fresh one in its place.
+        """
+        group = presenter.find_group(self._view, provider)
+        settle = group["settle"] if group else None
+        if not settle or self._occupied():
+            return
+        name = settle["account"]
+        self._run_switch(provider, name, SETTLED.format(name=name))
 
     @Slot(str)
     def pressKey(self, key):
@@ -223,22 +342,24 @@ class Bridge(QObject):
     @Slot(str, str)
     def signIn(self, provider, name):
         account = self._account(provider, name)
-        if (not account or account["action"] != "signin"
-                or not account["actionEnabled"] or self._handle):
+        # Wherever the presenter offers it: the row's own action for a lapsed
+        # login, or a second button beside Switch for one that is due.
+        if (not account or not account["signIn"]
+                or not account["signInEnabled"] or self._occupied()):
             return
         self._begin(provider, name, adding=False, email=account["email"],
                     title=account["providerTitle"])
 
     @Slot(str)
     def openAdd(self, provider):
-        if self._handle:
+        if self._occupied():
             return
         self._set_sheet(presenter.add_sheet(self._view, provider=provider))
 
     @Slot(str, str)
     def submitAdd(self, provider, name):
         group = presenter.find_group(self._view, provider)
-        if not group or not group["canSignIn"] or self._handle:
+        if not group or not group["canSignIn"] or self._occupied():
             return
         if not name.strip():
             self._set_sheet(presenter.add_sheet(
@@ -319,7 +440,7 @@ class Bridge(QObject):
         # An add that got as far as the vendor left its profile in place, so
         # a retry is a sign-in to it either way.
         account = self._account(sheet["provider"], sheet["name"])
-        if account and account["action"] == "signin":
+        if account and account["signIn"]:
             self.signIn(sheet["provider"], sheet["name"])
 
     @Slot()
@@ -351,6 +472,8 @@ class Bridge(QObject):
 
     @Slot(str, str)
     def saveCurrent(self, provider, name):
+        if self._occupied():
+            return
         result = self._service.save_current(provider, name.strip())
         self._save_errors.pop(provider, None)
         if not result.ok and result.error:
@@ -363,6 +486,8 @@ class Bridge(QObject):
 
     @Slot(str, str)
     def askRename(self, provider, name):
+        if self._occupied():
+            return
         account = self._account(provider, name)
         if account:
             self._set_sheet(presenter.rename_sheet(account))
@@ -388,6 +513,8 @@ class Bridge(QObject):
 
     @Slot(str, str)
     def askRemove(self, provider, name):
+        if self._occupied():
+            return
         account = self._account(provider, name)
         # The live account is never removable: not offered, and not honoured
         # if something asks anyway.
@@ -396,6 +523,8 @@ class Bridge(QObject):
 
     @Slot()
     def askEject(self):
+        if self._occupied():
+            return
         try:
             self._eject_plan = self._service.plan_eject()
         except Exception:
@@ -405,6 +534,8 @@ class Bridge(QObject):
 
     @Slot(str)
     def forgetMarker(self, provider):
+        if self._occupied():
+            return
         self._report(self._service.forget_marker(provider),
                      "Forgot the missing profile.")
 
@@ -441,11 +572,16 @@ class Bridge(QObject):
         self._set_sheet({})
 
     def shutdown(self):
-        """Stop a vendor login the window would otherwise orphan."""
+        """Stop a vendor login the window would otherwise orphan, and let a
+        switch that is under way finish rather than exit under it."""
         handle, self._handle = self._handle, None
         if handle is not None:
             handle.cancel()
             handle.wait(5)
+        worker = self._worker
+        if worker is not None and worker.is_alive():
+            # Bounded by the refresh lock's own limit plus the switch itself.
+            worker.join(60)
 
 
 def _error_text(result) -> str:

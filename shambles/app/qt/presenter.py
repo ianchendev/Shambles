@@ -27,11 +27,13 @@ USAGE_LABELS = {"session": "Session", "week": "Week"}
 
 #: Notices the window draws as something other than a plain banner.
 UNSAVED = "unsaved_login"
+ELSEWHERE = "signed_in_elsewhere"
+SIGN_IN_SOON = "sign_in_soon"
 MISSING = "missing_profile"
 UNREADABLE = "store_unreadable"
 OVERRIDE = "config_override"
 
-NOTICE_TONES = {UNREADABLE: "bad", MISSING: "warn",
+NOTICE_TONES = {UNREADABLE: "bad", MISSING: "warn", "sign_in_soon": "warn",
                 "signed_in_elsewhere": "warn", OVERRIDE: "info"}
 
 #: Past this many accounts the header grows a filter box. Below it a filter
@@ -78,6 +80,8 @@ def view(snapshot, *, filter_text: str = "") -> dict:
 
 def _group(group, needle: str) -> dict:
     codes = {n.code for n in group.notices}
+    settle_to = next((n.account for n in group.notices
+                      if n.code == ELSEWHERE and n.account), None)
     if UNREADABLE in codes:
         hold = ("The current login cannot be read, so nothing can be "
                 "switched until that is fixed.")
@@ -88,16 +92,38 @@ def _group(group, needle: str) -> dict:
         # not make the user click to find out.
         hold = ("Save the signed-in login above first. Switching now would "
                 "replace it with no copy kept.")
+    elif settle_to:
+        # The live login is saved as settle_to, by its address. Switching
+        # anywhere else would file it under the marked account's name, which
+        # the core refuses; switching to settle_to is the answer. Its own
+        # row stays switchable.
+        hold = (f"Switch to {settle_to} above first. Until then this machine "
+                "is signed in to an account that is marked as another.")
     else:
         hold = ""
-    accounts = [_account(group, a, hold=hold) for a in group.accounts]
+    accounts = [_account(group, a,
+                         hold="" if a.name == settle_to else hold)
+                for a in group.accounts]
     shown = [a for a in accounts if _matches(a, needle)]
     live = next((a for a in shown if a["live"]), None)
     attention = sum(1 for a in group.accounts if a.needs_login)
 
     save = None
+    settle = None
     notices = []
     for notice in group.notices:
+        if notice.code == ELSEWHERE and notice.account:
+            # Drawn as a card with the one button that settles it, where the
+            # save card would be: this is that state's next step, and the
+            # Tk window no longer offers Save here at all.
+            settle = {
+                "provider": group.provider,
+                "account": notice.account,
+                "title": notice.message,
+                "body": notice.remedy,
+                "label": f"Switch to {notice.account}",
+            }
+            continue
         if notice.code == UNSAVED:
             save = {
                 "provider": group.provider,
@@ -108,17 +134,26 @@ def _group(group, needle: str) -> dict:
                                           [a.name for a in group.accounts]),
             }
             continue
+        if notice.code == MISSING:
+            # A marker for a deleted profile can simply be dropped. Offered
+            # beside the notice, never instead of saving a live login.
+            action, action_label = "forget", "Forget that profile"
+        elif notice.code == SIGN_IN_SOON and notice.account \
+                and group.can_sign_in:
+            # The notice's whole point is that signing in again is what
+            # keeps the account, so it carries the button that does it.
+            action, action_label = "signin", f"Sign in to {notice.account}"
+        else:
+            action, action_label = "", ""
         notices.append({
             "code": notice.code,
             "tone": NOTICE_TONES.get(notice.code, "info"),
             "message": notice.message,
             "remedy": notice.remedy,
             "provider": group.provider,
-            # A marker for a deleted profile can simply be dropped. Offered
-            # beside the notice, never instead of saving a live login.
-            "action": "forget" if notice.code == MISSING else "",
-            "actionLabel": "Forget that profile"
-                           if notice.code == MISSING else "",
+            "account": notice.account or "",
+            "action": action,
+            "actionLabel": action_label,
             "collapsed": notice.code == OVERRIDE,
         })
 
@@ -129,7 +164,8 @@ def _group(group, needle: str) -> dict:
                        "be added or signed in here.",
             "remedy": "Switching between accounts you already saved still "
                       f"works. Install {group.cli}, then refresh.",
-            "action": "", "actionLabel": "", "collapsed": False,
+            "account": "", "action": "", "actionLabel": "",
+            "collapsed": False,
         })
 
     empty = None
@@ -153,6 +189,7 @@ def _group(group, needle: str) -> dict:
         "canSignIn": group.can_sign_in,
         "cli": group.cli,
         "save": save,
+        "settle": settle,
         "notices": notices,
         "live": live,
         "others": [a for a in shown if not a["live"]],
@@ -193,8 +230,15 @@ def _account(group, account, *, hold: str) -> dict:
     # it Live would put a stranger's session under its name.
     live = account.active and group.state == "managed"
 
+    # A sign-in is offered for a login that has lapsed, and for one that
+    # still works but that only a new sign-in keeps past its fixed date
+    # (sign_in_due: a Claude login near its deadline). The first can only be
+    # signed in; the second can still be switched to, so Sign in sits beside
+    # Switch there, as it does in the Tk window.
+    due = account.sign_in_due and not account.needs_login
+    sign_in = (account.needs_login or due) and group.can_sign_in
     action, label, enabled, reason = "", "", False, ""
-    if account.needs_login:
+    if account.needs_login or (due and live):
         # Never Switch on a lapsed login: that installs a dead token and
         # leaves the vendor prompting for the sign-in this button runs.
         action, label = "signin", "Sign in"
@@ -207,6 +251,7 @@ def _account(group, account, *, hold: str) -> dict:
         enabled = not hold
     if hold and action:
         reason = hold
+    sign_in_extra = sign_in and action == "switch"
 
     email = account.email or ""
     return {
@@ -226,6 +271,11 @@ def _account(group, account, *, hold: str) -> dict:
         "actionLabel": label,
         "actionEnabled": enabled,
         "actionReason": reason,
+        # Whether Sign in is offered at all, and whether as a second button
+        # beside Switch rather than as the row's own action.
+        "signIn": sign_in,
+        "signInExtra": sign_in_extra,
+        "signInEnabled": sign_in and not hold,
         "key": "",
         "usage": usage,
         "usageSummary": " · ".join(
@@ -276,6 +326,12 @@ def local_time(ms) -> str:
         return ""
 
 
+#: For a login whose deadline is fixed at sign-in (Claude's, about thirty
+#: days). The same words as the Tk window, so the two cannot disagree.
+FIXED_DEADLINE = ("Using the account does not move this date. Sign in again "
+                  "before then to keep it.")
+
+
 def login_line(account) -> str:
     """One sentence on the saved login: its state, its date, what to do.
 
@@ -292,10 +348,15 @@ def login_line(account) -> str:
         return (f"Expired {when}. Sign in again to renew it." if when
                 else "Expired. Sign in again to renew it.")
     if state == "closing":
-        return (f"Expires {when}. Switch to it before then to keep it."
-                if when else "Expires soon. Switch to it to keep it.")
+        if account.renewed_by_use:
+            return (f"Expires {when}. Switch to it before then to keep it."
+                    if when else "Expires soon. Switch to it to keep it.")
+        return (f"Expires {when}. {FIXED_DEADLINE}" if when
+                else f"Expires soon. {FIXED_DEADLINE}")
     if when:
-        return f"Healthy. Good until {when}. Using the account renews it."
+        if account.renewed_by_use:
+            return f"Healthy. Good until {when}. Using the account renews it."
+        return f"Healthy. Good until {when}. {FIXED_DEADLINE}"
     return "Healthy."
 
 
