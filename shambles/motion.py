@@ -130,7 +130,7 @@ class Animation:
         death, self._death = self._death, None
         if death is not None:
             try:
-                self._widget.unbind("<Destroy>", death)
+                _unbind_one(self._widget, "<Destroy>", death)
             except tk.TclError:
                 pass
 
@@ -144,6 +144,23 @@ class Animation:
             except tk.TclError:
                 pass  # the widget, or the interpreter, is already gone
         self.release()
+
+
+def _unbind_one(widget, sequence: str, funcid: str) -> None:
+    """Remove one binding and leave the widget's others in place.
+
+    ``widget.unbind(sequence, funcid)`` does that from Python 3.12 on. Before
+    that it cleared every binding for the sequence, so the first tween on a
+    card to finish took the other tweens' ``<Destroy>`` watch with it, and
+    their timers outlived the card (see :func:`later`). This is what the
+    newer tkinter does, for every supported Python.
+    """
+    script = widget.tk.call("bind", widget._w, sequence)
+    marker = f"[{funcid} "
+    keep = "\n".join(line for line in str(script).split("\n")
+                     if marker not in line)
+    widget.tk.call("bind", widget._w, sequence, keep if keep.strip() else "")
+    widget.deletecommand(funcid)
 
 
 def animate(widget, duration_ms: int, step, *, ease=ease_out_cubic, done=None):
