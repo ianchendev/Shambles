@@ -42,10 +42,15 @@ It runs `claude auth login` or `codex login` — the vendor opens the browser an
 runs its own OAuth callback. Shambles adds no OAuth code and no network
 imports; `tests/test_login.py` asserts the latter by walking the package AST.
 
-**§0.2 Rotation.** Codex replaces its refresh token on every use, so a stashed
-snapshot goes stale while its profile is active. `switcher.restash_active`
-corrects that on each window refresh. It is a *display* fix: switching away was
-already safe, because `switch` stashes the outgoing login first.
+**§0.2 Rotation.** Both vendors replace the refresh token on every refresh, so
+a stashed snapshot goes stale while its profile is active. Claude was believed
+not to until a real refresh on 2026-11-13 replaced it; Claude Code 2.1.300
+stores whatever refresh token the server returns. `switcher.restash_active`
+corrects the stash on each refresh of any interface, **on proof only**: the
+live login must continue the marked profile's own (§1.7), never merely carry
+its address. Switching away was already safe, because `switch` stashes the
+outgoing login first; the re-stash keeps the stash a token that works and
+keeps the proof alive.
 
 **§0.3 Migrations.** Two independent hops, both additive, both leaving the
 source on disk: the pre-1.0 symlink layout → a shared `~/.claude`, and
@@ -74,22 +79,32 @@ on the refresh token in `.credentials.json`:
 claudeAiOauth.accessToken             ~8 hour lifetime, refreshed silently
 claudeAiOauth.refreshToken            the credential that avoids the email
 claudeAiOauth.expiresAt               epoch ms
-claudeAiOauth.refreshTokenExpiresAt   epoch ms — rolling; width varies, read it
+claudeAiOauth.refreshTokenExpiresAt   epoch ms — fixed at sign-in; read it
 claudeAiOauth.scopes / subscriptionType / rateLimitTier
 ```
 
 Preserving that file per account makes every subsequent switch instant. An
-account returns to the email flow only after the refresh window lapses, since
-each use re-mints it.
+account returns to the email flow when its refresh deadline passes.
 
-**The window width is not a constant and must not be hardcoded.** Measurements
-recorded in [token-storage.md](docs/token-storage.md) differ by an order of
-magnitude — ~28 days across three blobs on Linux/Team, ~4 days on a single
-macOS/Max 5x sample. Which variable moves it is unresolved.
-`profiles.refresh_expiry_ms()` reads `refreshTokenExpiresAt` out of the blob
-rather than deriving it, so the countdown is correct under either regime. The
-**rolling** property is confirmed by both samples and is what matters: an
-account in regular use never approaches its deadline.
+**The deadline does not roll.** Earlier versions of this document said it did,
+from two samples whose two timestamps shared a millisecond; that only shows
+both were computed at the same refresh. Measured on a Linux machine on 2026-11-13, comparing a profile's stash with
+the live file across one ordinary refresh, by hash and timestamp only:
+`refreshToken` changed, and `refreshTokenExpiresAt` moved by -1.375 s. In each
+file `expiresAt` and `refreshTokenExpiresAt` end in the same millisecond, so
+both are recomputed at every refresh as "now plus the seconds the server says
+are left" -- that is the wobble -- but the server's deadline itself stays
+where sign-in put it, about 30 days later. Claude Code 2.1.300 stores whatever
+`refresh_token` and `refresh_token_expires_in` the refresh returns, keeps the
+old values only when none come back, and warns in its own interface when
+three days or fewer remain.
+
+So an account in daily use still reaches its deadline, and the only way past
+it is a new sign-in. The countdown is read from the blob, never derived, and
+Claude's `warn_days` is 3 so that "soon" appears a day before Claude Code's own
+banner (§4.1). The refresh token also **rotates**: a stash taken before a
+refresh holds a spent token, which is why the active profile is re-stashed
+after use (§0.2).
 
 **Shambles never rotates, refreshes, decodes or transmits a token.** It moves
 bytes on a local filesystem. All token lifecycle management remains Claude
@@ -203,7 +218,6 @@ A profile is roughly **500 bytes**. Under the previous design it was 208 MB.
 | `configjson.py` | 145 | Parse, splice and back up `~/.claude.json` |
 | `profiles.py` | 172 | Discovery, token state, expiry arithmetic, name validation |
 | `migrate.py` | 219 | One-way conversion from the pre-1.0 layout |
-| `retry.py` | 36 | Transient-lock retry |
 | `errors.py` | 46 | Typed exceptions carrying user-facing text |
 | `gui.py` | 430 | Tkinter window |
 | `theme.py` | 131 | Palette, fonts, DPI scaling |
@@ -232,22 +246,32 @@ discrepancy is strictly better than displaying a confidently wrong account name.
 A profile that has never been logged into carries no stored identity, so it has
 no expectation to violate and is not treated as drift.
 
-**The credential is asked before the address.** `~/.claude.json` is rewritten
-from memory by any Claude Code session still running, so the address in it can
-lag a switch or contradict it. A stashed credential identical to the live one,
-byte for byte, is proof no other process can forge, and `state.inspect()`,
-`state.owner_of_live()` and `switcher.belongs_to()` all consult it first:
+**Proof is asked before the address.** `~/.claude.json` is rewritten from memory
+by any Claude Code session still running, so the address in it can lag a
+switch, contradict it, or read as nobody while a write is half done. Two
+things no other process can produce prove whose a live login is:
 
-- the marked profile holds the live bytes: `MANAGED`, whatever the address says;
-- another saved profile holds them: `DRIFTED`, even when the addresses agree.
-  That is what a switch interrupted between replacing the credential and
-  moving the marker looks like, and running the switch again finishes it;
-- nobody holds them: fall back to comparing addresses, as above.
+- **bytes**: a stashed credential identical to the live one;
+- **lineage**: the live login continues a stashed one, refreshed. Claude's
+  sign-in deadline is fixed at sign-in and recomputed at every refresh to
+  within a second or so, so two credentials whose deadlines agree within 10 s
+  are one login; Codex's account and the address inside its token do the
+  same. A credential with no token continues nothing.
 
-This proof lasts only while the bytes are unchanged. Once the vendor refreshes
-the live token nothing matches, and the address is all there is again. An
-interrupted switch that is not retried before then is not recoverable this
-way, and neither is a marker moved on the strength of a stale address.
+`state.inspect()`, `state.owner_of_live()` and `switcher.belongs_to()` consult
+proof first: the marked profile proven is `MANAGED` whatever the address says;
+another profile proven is `DRIFTED` even when the addresses agree (a switch
+interrupted between replacing the credential and moving the marker, which
+running the switch again finishes); with no proof they fall back to comparing
+addresses.
+
+**Only proof is acted on without a click.** The marker is moved by itself
+(`switcher.adopt_live_owner`, on every refresh of every interface) and the
+active stash is refreshed (`restash_active`) only on proof. The address is a
+suggestion: `state.owner_by_address` names the saved account it points at, the
+interfaces say so, and switching to that account is the user's answer -- the
+live login is filed there and the one it replaces kept beside it. Acting on
+the address alone once filed one account's token over another's.
 
 **A live login always has somewhere to go.** Every operation that replaces the
 live credential (`switch`, `add_empty_account`, `begin_relogin`, and the
@@ -269,6 +293,18 @@ read can land between the truncate and the write.
 `CLAUDE_CONFIG_DIR` relocates Claude Code's entire config tree — config,
 credentials and `projects/` alike. A shell exporting it reads a tree Shambles
 never touches, so switches silently have no effect there.
+
+When the variable is set for Shambles itself, Shambles follows it the way
+Claude Code does: the login at `$CLAUDE_CONFIG_DIR/.credentials.json`, and the
+global config (identity, the splice, the usage cache) at
+`$CLAUDE_CONFIG_DIR/.claude.json` instead of `~/.claude.json`.
+`ClaudeProvider.config_file` is the one place that decides, including two
+rules from the 2.1.300 client: a custom OAuth endpoint
+(`CLAUDE_CODE_CUSTOM_OAUTH_URL`) names the file `.claude-custom-oauth.json`,
+and a non-empty legacy `.config.json` inside the config directory wins. Before
+this, with the variable set, Shambles read and spliced `~/.claude.json`,
+showed whoever last used the default location, and refused switches as
+"signed in as someone else".
 
 `state.config_dir_override()` resolves the variable and compares it against the
 managed directory, returning `None` when unset, empty, or pointing at
@@ -449,41 +485,16 @@ processes writing to overlapping paths:
 Contention is therefore expected, not exceptional, and must be survivable rather
 than prevented.
 
-### 2.2 `retry.py`
+### 2.2 No retry
 
-```python
-RETRIES = 3
-DELAY = 0.5                 # seconds
-WINDOWS_SYMLINK_DENIED = 1314
-
-def with_retry(action, what, *, retries=RETRIES, delay=DELAY, sleep=time.sleep):
-    last = None
-    for attempt in range(retries):
-        try:
-            return action()
-        except OSError as exc:
-            if getattr(exc, "winerror", None) == WINDOWS_SYMLINK_DENIED:
-                raise SymlinkPermissionError(WINDOWS_SYMLINK_HELP) from exc
-            last = exc
-            if attempt < retries - 1:
-                sleep(delay)
-    raise SwitchFailedError(
-        f"Could not {what} after {retries} attempts:\n{last}\n\n"
-        "Close any running Claude Code sessions and try again."
-    ) from last
-```
-
-Design notes:
-
-- **`OSError` is the catch, not `PermissionError`.** Windows surfaces sharing
-  violations under several errnos; the base class covers them.
-- **`ERROR_PRIVILEGE_NOT_HELD` (1314) fails immediately.** No amount of waiting
-  grants an account the right to create symlinks. Reached only via the legacy
-  migration path.
-- **Exhaustion raises `SwitchFailedError`**, a `ShamblesError` subclass. This is
-  load-bearing — see §2.4.
-- **`sleep` is injected** so the suite never actually waits.
-- Worst case latency: 3 attempts, 2 sleeps, ~1.0 s.
+There was a `retry.py` here that tried a failed write three times, half a
+second apart. It was removed in November 2026 (review decision D5). From 2.1.0
+on it retried nothing a store did, because stores raise `StoreUnavailableError`
+and the wrapper caught `OSError`. Making it work showed why it should not
+exist: a retried write waits out whatever held the file and then overwrites
+what that program wrote, from a copy taken before the wait. If the program was
+the vendor rotating its token, the rotated token is gone. A step that fails now
+fails the switch at once, before anything after it has moved, and says so.
 
 ### 2.3 `_copy_secret`
 
@@ -495,13 +506,11 @@ def _copy_secret(source: Path, dest: Path, *, sleep=time.sleep) -> None:
         shutil.copyfile(source, tmp)
         os.chmod(tmp, 0o600)
         os.replace(tmp, dest)
-    retry.with_retry(once, f"write {dest.name}", sleep=sleep)
+    once()
 ```
 
-The whole operation retries, not just the copy. If `os.replace` loses to a
-concurrent writer, the next attempt rebuilds the temp file from scratch — no
-stale intermediate is reused. The temp file lives in the destination directory
-so the rename never crosses a filesystem boundary.
+The temp file lives in the destination directory so the rename never crosses a
+filesystem boundary.
 
 ### 2.4 Single-guard invariant
 
@@ -509,7 +518,7 @@ Every filesystem operation in `switch()` is inside one `try`:
 
 ```python
 try:
-    retry.with_retry(lambda: configjson.backup(...), "back up ~/.claude.json", sleep=sleep)
+    configjson.backup(...)
     if current.profile and paths.profile_dir(current.profile).is_dir():
         stash_live_login(paths, current.profile, now_ms_fn=lambda: stamp, sleep=sleep)
     paths.claude_dir.mkdir(parents=True, exist_ok=True)
@@ -782,7 +791,37 @@ untouched since the switch 73 minutes earlier.
 This is a feature as much as a constraint: two accounts can run concurrently in
 different terminals.
 
+### 4.3a A refresh in flight during a switch
+
+Claude Code 2.1.300 refreshes under a lock: it creates
+`<config dir>/.oauth_refresh.lock` and `<config dir>.lock`, re-reads the stored
+login, posts the refresh token (which the server spends at once), and saves
+the result only if the stored refresh token is still the one it posted. A
+switch landing between the post and the save stashed the spent token and
+replaced the stored one, so the save was refused and the new token was lost.
+`switcher.switch` now takes the same locks before it reads the outgoing login
+and releases them once the incoming one is in place (`_hold_refresh_locks`):
+a refresh in flight lands first. Whose login is live, and where it goes, is
+decided again once the locks are held, because a refresh that landed during
+the wait changed the bytes that answer was about. A lock directory untouched
+for 60 s is cleared as the client would; anything else in the way is waited
+on, and still there after 15 s refuses the switch with nothing moved. The
+switch touches its locks as it works and removes them only if they still
+carry its last touch, so a lock the client has since taken over is left
+alone. With no config directory there is no client and no lock.
+
 ### 4.4 Known edge case — the 8-hour access token
+
+**No longer true of current clients.** Claude Code 2.1.300 takes a lock
+(`<config dir>/.oauth_refresh.lock`) before refreshing and re-reads the stored
+login first. If the stored access token is not the one it holds, it adopts
+the stored login and never posts its own refresh token, and it only saves a
+refresh result if the stored refresh token is still the one it posted. So a
+session left running across a switch does not write the old account back,
+and does not spend the old account's saved token: it becomes the new account
+at its next refresh. What remains is a refresh already in flight at the
+moment of a switch. The text below describes the older behaviour and is kept
+for clients that predate the lock.
 
 **Scenario.** A session outlives its ~8-hour access token *and* an account switch
 occurred in the interim. Claude Code performs a silent refresh and may write the
@@ -803,9 +842,8 @@ so no stable field survives to compare.
 documented in the README's *Adding an account* and *Switching* procedures. A
 session started within the last few hours is not at risk.
 
-**Recovery.** Benign and self-correcting. Switch to the affected profile and run
-`/login` once. The refresh window reopens. No data is lost — session history is
-not involved.
+**Recovery.** Switch to the affected profile and run `/login` once. That starts
+a new sign-in deadline. No data is lost — session history is not involved.
 
 **Status.** Documented, not fixed. A robust fix would require either an
 inotify-style watch on `.credentials.json` or a stable account discriminator
@@ -836,13 +874,11 @@ parametrisation in `test_profiles.py` and `test_shutdown.py`.
 | `test_gui_import.py` | 7 | Header text per state, full widget-tree render |
 | `test_paths.py` | 7 | Path derivation, store permissions |
 | `test_packaging.py` | 6 | Entry points, packaged-binary imports |
-| `test_retry.py` | 4 | Retry, exhaustion, Windows privilege short-circuit |
 | `test_shutdown.py` | 4 | Signal handling, tooltip teardown |
 
 The suite uses no mocks for filesystem behaviour. Every test builds a real
 directory tree under `tmp_path`, with `Paths.for_home()` redirecting the entire
-application. Clocks are injected (`NOW = 1_785_000_000_000`); `sleep` is injected
-so retry tests do not wait.
+application. Clocks are injected (`NOW = 1_785_000_000_000`).
 
 ### 5.1 QA test plan results
 
@@ -901,7 +937,7 @@ permission failures on a `0600` credentials file.
 | Migration offered as an opt-in button | Broken layout persists until noticed | `5a060e6` |
 | `plugins/` and `history.jsonl` not merged | Second-account plugins and prompt history stranded | `33ece4e` |
 | Bare `OSError` escaping `switch()` | Lock failures invisible to the user | `c851a2b` |
-| No retry on credential writes | Transient locks failed the switch | `c851a2b` |
+| No retry on credential writes | Transient locks failed the switch | `c851a2b`, then removed (§2.2) |
 | umask-dependent directory modes | Token directories `0755` | `c851a2b` |
 
 ### 5.3 Coverage limitations

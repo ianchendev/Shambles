@@ -239,9 +239,26 @@ class CodexProvider:
 
     # -- what the bytes mean ----------------------------------------------
 
+    def refresh_locks(self, *, home) -> list:
+        """None known: Codex's refresh coordination is not documented."""
+        return []
+
     def has_login(self, blob: bytes | None) -> bool:
         token = specmod.pointer(_parse(blob), self.spec["token"]["pointer"])
         return isinstance(token, str) and bool(token.strip())
+
+    def same_login(self, older: bytes | None, newer: bytes | None) -> bool:
+        """Same ChatGPT account *and* the same address in the token.
+
+        tokens.account_id alone is shared by every member of a Team
+        workspace. The address is inside the token, so no other program can
+        make two logins agree on it; a token that names nobody proves
+        nothing.
+        """
+        if not specmod.same_lineage(self.spec, _parse(older), _parse(newer)):
+            return False
+        mine = self.identity(older, home=None).email
+        return bool(mine) and mine == self.identity(newer, home=None).email
 
     def liveness(self, blob: bytes | None, *, now_ms: int) -> Liveness:
         if not blob:
@@ -295,9 +312,14 @@ class CodexProvider:
             display_name=specmod.pointer(claims, block["display_name"]),
             org=specmod.pointer(claims, block["org"]),
             plan=specmod.pointer(claims, block["plan"]),
+            account=specmod.pointer(claims, block.get("account", "")),
         )
 
     # -- what else has to move --------------------------------------------
+
+    def companion_path(self, *, home):
+        """None. ``auth.json`` is self-contained."""
+        return None
 
     def companion_read(self, *, home) -> dict:
         """Nothing. ``auth.json`` is self-contained."""

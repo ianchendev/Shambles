@@ -4,8 +4,34 @@ Notable changes per release. Dates are the tag date.
 
 ## Unreleased
 
+### Changed
+
+- **Claude logins are now kept current, as Codex logins already were.**
+  Claude Code replaces its refresh token every time it refreshes, which was
+  not known when Shambles was written: a saved copy taken before a refresh
+  holds a token that no longer works. The active Claude profile is now saved
+  again after its login refreshes, but only when the login provably continues
+  that profile's own, never because `~/.claude.json` names its address.
+- **Shambles no longer decides by itself, from an address, whose login is
+  live.** When you sign in outside Shambles as an account you have saved, the
+  label no longer moves on its own: the interface says which saved account
+  the login names, and switching to that account files the login there,
+  keeping the one it replaces. The address comes from `~/.claude.json`, which
+  a Claude Code session still running rewrites, and trusting it filed one
+  account's login over another's. When the login itself proves it, the label
+  still moves on its own.
+
 ### Added
 
+- **A saved login is no longer replaced without a copy.** When Shambles
+  saves the live login over a profile's saved one and the two are different
+  logins, the old one is kept beside it as `credentials.json.previous`
+  (owner-only, like the rest). Shambles works out whose a Claude login is
+  partly from `~/.claude.json`, which a Claude Code session still running
+  can rewrite, so it can file a login under the wrong profile; this makes
+  that recoverable by renaming the file back. A routine token refresh of the
+  same login does not replace the kept copy, and a login that has been
+  signed out never replaces one that still works.
 - **Sign a lapsed account back in from the window.** A card marked `needs
   login` or `signed out` now offers **Sign in** in place of Switch, the live
   card included. It runs the vendor's own login with the address filled in
@@ -80,6 +106,47 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **`CLAUDE_CONFIG_DIR` is followed for the account details too, not only
+  the login.** With the variable set, Claude Code keeps its config, including
+  which account is signed in, in that directory. Shambles still read and
+  updated `~/.claude.json`, so it showed whoever last used the default
+  location, refused switches as "signed in as someone else", and wrote the
+  switched-to account into a file Claude Code was not reading. It now uses
+  the same file Claude Code does.
+- **One address in two organisations is no longer treated as one account.**
+  With a personal subscription and a Team or Console seat under the same
+  address, or two ChatGPT workspaces, Shambles saw one account: the "signed in
+  as someone else" warning never appeared between them, and a switch could
+  file one login's token over the other's saved one. The organisation (Claude)
+  and the ChatGPT account (Codex) now count too, the warning names them when
+  the addresses match, and usage figures from the other organisation are no
+  longer filed under this one.
+- **Claude accounts no longer claim that using them renews their login.** A
+  Claude login lasts about 30 days from when you signed in, and using the
+  account does not push that date back: Claude Code refreshes the token, but
+  the deadline stays where it was. The tooltip said "Using the account renews
+  it", and the documentation said an account in daily use never needs signing
+  in again. Both are corrected, and a Claude card now turns `soon` with fewer
+  than four days left instead of one, a day before Claude Code's own warning.
+- **A switch no longer waits and tries again when a file is busy.** It did
+  that only for the `~/.claude.json` backup, and doing it for the login
+  itself would have been worse: a write that waits out whatever is holding
+  the file then overwrites what that program wrote, which could be a token
+  Codex or Claude Code had just replaced. A switch that meets a busy file now
+  stops before anything has moved and says so; try it again.
+- **A switch no longer loses a Claude login that was being renewed at that
+  moment.** Claude Code replaces its login token every time it renews it,
+  and the old token stops working the instant it is sent. A switch that
+  landed while a renewal was on its way back saved the old token, and Claude
+  Code then threw the new one away because the file had changed under it:
+  the account needed signing in again. Shambles now waits for a renewal in
+  progress to finish, using Claude Code's own lock, before it switches.
+- **The terminal interface and `shambles list` / `shambles switch` now bring
+  an old setup up to date themselves**, as the windows always did. Upgrading
+  from 1.0 and using only the terminal used to show no accounts at all, and on
+  the layout from before 1.0 every Claude switch was refused with "run the
+  migration", which no command could do. What was moved is said once, in the
+  terminal interface's status line or on stderr.
 - **A cancelled or failed sign-in in the terminal UI puts you back where you
   were.** Pressing `l` and then Esc, or a sign-in that wrote nothing, left the
   expired account live and the working one signed out, with "The vendor

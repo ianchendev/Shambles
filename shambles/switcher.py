@@ -9,15 +9,19 @@ them -- verify, back up, stash outgoing, restore incoming, splice, record --
 and only its steps differ, which is exactly the split DD-4 describes.
 """
 
+import os
 import shutil
+import stat
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
-from . import configjson, migrate, profiles, retry, state
+from . import configjson, migrate, profiles, state
 from .errors import (AlreadyManagedError, DriftedLoginError,
                      ProfileNotFoundError, ShamblesError, SwitchFailedError)
 from .providers import SIGNED_OUT
+from .providers import Identity
 from .stores.base import StoreUnavailableError
 
 NOTHING_TO_SAVE = (
@@ -66,6 +70,13 @@ def _refuse_legacy_layout(paths) -> None:
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+# ``sleep`` is still accepted by the functions below and no longer used. It
+# fed a retry wrapper that was removed (owner decision D5): a retried write
+# waits out whatever held the file and then overwrites what that program
+# wrote, from a copy taken before the wait -- a rotated token, if the program
+# was the vendor. Kept in the signatures so existing callers need no change.
 
 
 def _store(paths, provider, platform):
@@ -118,29 +129,45 @@ def belongs_to(paths, provider, name, *, platform, blob=_UNREAD) -> bool:
     # whatever the vendor's config file currently says about it. Without this
     # a running Claude Code session could rewrite that file and have Shambles
     # refuse to re-stash a login it had just installed itself.
-    holders = state.profiles_holding(paths, provider.id, blob)
+    holders = state.proven_owners(paths, provider, blob)
     if name in holders:
         return True
-    # And one identical to another profile's stash is that profile's login,
-    # for the same reason. The address cannot be asked here: a switch that
-    # stopped after replacing the credential leaves the old account's address
-    # on file beside the new account's token, and the two then agree.
+    # And one identical to another profile's stash, or continuing its
+    # lineage, is that profile's login, for the same reason. The address
+    # cannot be asked here: a switch that stopped after replacing the
+    # credential leaves the old account's address on file beside the new
+    # account's token, and the two then agree.
     if holders:
         return False
-    expected = state.profile_email(paths, provider, name)
-    live = _email_of(paths, provider, blob)
-    return not (expected and live and expected != live)
+    return not state.disagree(state.profile_identity(paths, provider, name),
+                              _identity_of(paths, provider, blob))
 
 
-def _email_of(paths, provider, blob) -> str | None:
+def _identity_of(paths, provider, blob):
     """Whose login these bytes are, as far as the provider can say.
 
-    ``None`` for an empty store: with nobody signed in, an address left in
-    the vendor's config describes nobody.
+    Empty for an empty store: with nobody signed in, an address left in the
+    vendor's config describes nobody.
     """
     if not blob:
-        return None
-    return provider.identity(blob, home=paths.home, active=True).email
+        return Identity()
+    return provider.identity(blob, home=paths.home, active=True)
+
+
+def _may_file_identity(expected, live) -> bool:
+    """Whether the vendor's account details may be filed as a profile's own.
+
+    Only the same identity, refreshed. Never over one it disagrees with,
+    never one with no address over one that has it, and never an
+    organisation onto a profile saved before organisations were recorded:
+    the config naming one may have been rewritten by a session in another
+    organisation, and once filed the mismatch would read as known.
+    """
+    if state.disagree(expected, live):
+        return False
+    if expected.email and live.email != expected.email:
+        return False
+    return not (expected.email and not expected.account and live.account)
 
 
 def stash_live_login(paths, provider, name, *, platform=sys.platform,
@@ -152,7 +179,7 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
     inherits it -- this write is the one that costs a refresh token.
     """
     store = _store(paths, provider, platform)
-    blob = retry.with_retry(store.read, f"read {store.describe()}", sleep=sleep)
+    blob = store.read()
     if not blob:
         # Nobody is signed in, so there is nothing to file and no login for
         # an identity to describe: whatever the vendor's config names is left
@@ -166,15 +193,16 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
 
     # Everything from here on is decided about the bytes just read, not
     # about whatever a second read of the store would return.
-    expected = state.profile_email(paths, provider, name)
-    live = _email_of(paths, provider, blob)
+    expected = state.profile_identity(paths, provider, name)
+    live = _identity_of(paths, provider, blob)
     if not belongs_to(paths, provider, name, platform=platform, blob=blob):
-        holders = state.profiles_holding(paths, provider.id, blob)
+        holders = state.proven_owners(paths, provider, blob)
         if holders:
             raise DriftedLoginError(HELD_ELSEWHERE.format(
                 holder=holders[0], name=name))
         raise DriftedLoginError(DRIFT_REFUSAL.format(
-            live=live, name=name, expected=expected))
+            live=state.describe(live, expected), name=name,
+            expected=state.describe(expected, live)))
     paths.ensure_profile(provider.id, name)
     _write_credential(paths, provider, name, blob, sleep=sleep)
 
@@ -187,7 +215,7 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
     # unlabelled, and an unlabelled profile is one the drift check can no
     # longer protect.
     companion = provider.companion_read(home=paths.home)
-    if companion and not (expected and live != expected):
+    if companion and _may_file_identity(expected, live):
         configjson.write_sidecar(paths.account(provider.id, name), companion,
                                  now_ms_fn())
 
@@ -195,15 +223,10 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
 def _write_credential(paths, provider, name, blob: bytes, *, sleep) -> None:
     """Write a credential into a profile, 0600, atomically.
 
-    Retried: a running session, an antivirus scan or the Windows indexer can
-    hold the file for a moment, and a single refusal is not a reason to fail
-    the whole switch.
+    Through :func:`profiles.save_credential`, which keeps the login it
+    replaces.
     """
-    from .stores import FileStore
-    destination = FileStore(paths.credentials(provider.id, name), 0o600)
-    retry.with_retry(lambda: destination.write(blob),
-                     f"write {paths.credentials(provider.id, name).name}",
-                     sleep=sleep)
+    profiles.save_credential(paths, provider, name, blob)
 
 
 def switch(paths, provider, target_name: str, *, platform=sys.platform,
@@ -225,7 +248,8 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
 
     # Refuse before anything moves. Whatever is live is about to be replaced,
     # so it has to have somewhere to go first.
-    outgoing = _outgoing_profile(paths, provider, current, platform=platform)
+    outgoing = _outgoing_profile(paths, provider, current, platform=platform,
+                                 target=target_name)
 
     # Refuse before anything moves if the companion cannot be parsed. Writing
     # onto an unreadable config would replace the whole file with two keys.
@@ -237,36 +261,49 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     stamp = now_ms_fn()
     store = _store(paths, provider, platform)
 
+    # The vendor's own refresh lock, held from before the outgoing login is
+    # read until the incoming one is in place. A refresh already in flight
+    # lands first, so the token stashed is the one it was given rather than
+    # the one it just spent. See _hold_refresh_locks.
+    held = _hold_refresh_locks(provider, paths)
+
     # Everything touching the filesystem lives inside one guard, so no path
     # out of here raises a bare OSError. The GUI renders ShamblesError only;
     # anything else reaches the user as a stderr traceback and looks like the
     # switch silently did nothing.
     try:
-        if companion_path is not None:
-            retry.with_retry(
-                lambda: configjson.backup(companion_path, paths.backup_dir, stamp),
-                f"back up {companion_path.name}", sleep=sleep)
+        # Decided again now the lock is held. A refresh that landed while
+        # this waited changed the live bytes, and the answer made before
+        # (whose login is live, where it goes) was about the old ones.
+        current = state.inspect(paths, provider, platform=platform)
+        outgoing = _outgoing_profile(paths, provider, current,
+                                     platform=platform, target=target_name)
 
-        # Stash the outgoing login so switching away is never lossy. Only
-        # under the marked profile. Any other answer from _outgoing_profile
-        # is a profile that already holds these exact bytes, so there is
-        # nothing to copy -- and the one thing a stash would still do is file
-        # the address from the vendor's config beside them. When the marker
-        # is wrong that address usually is too: it would label the incoming
-        # account's profile with the outgoing account's name.
-        if outgoing and outgoing == current.profile:
+        if companion_path is not None:
+            configjson.backup(companion_path, paths.backup_dir, stamp)
+
+        # Stash the outgoing login so switching away is never lossy, except
+        # under a profile other than the marked one that already holds these
+        # exact bytes. There is nothing to copy then, and the one thing a
+        # stash would still do is file the address from the vendor's config
+        # beside them: when the marker is wrong that address usually is too.
+        # A profile whose login this *continues* (refreshed since it was
+        # saved) does need the copy -- its own stash is now a spent token.
+        _touch(held)
+        exact = state.profiles_holding(paths, provider.id, store.read())
+        if outgoing and (outgoing == current.profile or outgoing not in exact):
             stash_live_login(paths, provider, outgoing, platform=platform,
                              now_ms_fn=lambda: stamp, sleep=sleep)
 
+        _touch(held)
+
         incoming = paths.credentials(provider.id, target_name)
         if incoming.exists():
-            blob = incoming.read_bytes()
-            retry.with_retry(lambda: store.write(blob),
-                             f"write {store.describe()}", sleep=sleep)
+            store.write(incoming.read_bytes())
         else:
             # A profile never signed into: clear the login so the vendor
             # prompts for one rather than reusing the last account.
-            retry.with_retry(store.delete, f"clear {store.describe()}", sleep=sleep)
+            store.delete()
 
         # The marker moves with the login, not after the identity write.
         # Anything that fails below leaves the two still agreeing: the marked
@@ -284,6 +321,8 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
         raise SwitchFailedError(
             f"Could not update the login in {store.describe()}:\n{exc}\n\n"
             "Close any running sessions and try again.") from exc
+    finally:
+        _release(held)
 
     provider.companion_write(
         configjson.read_sidecar(paths.account(provider.id, target_name)),
@@ -291,7 +330,124 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     return state.inspect(paths, provider, platform=platform)
 
 
-def _outgoing_profile(paths, provider, current, *, platform) -> str | None:
+#: How long a switch waits for the vendor to finish a refresh in flight.
+#: Claude Code gives up on its own request after 30 seconds.
+REFRESH_LOCK_WAIT_S = 15.0
+
+REFRESH_IN_PROGRESS = (
+    "Claude Code is renewing this login right now.\n\n"
+    "Try again in a moment. Nothing was changed."
+)
+
+
+class _HeldLock:
+    """One lock directory this switch created, and the timestamp it left.
+
+    Claude Code treats a lock untouched for its stale interval as abandoned
+    and takes it over by removing and recreating it. Removing "our" lock on
+    release after that would remove Claude Code's. So the lock is touched as
+    the switch works, and removed only if it still carries the last touch.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.stamp = self._read()
+
+    def _read(self):
+        try:
+            return self.path.lstat().st_mtime_ns
+        except OSError:
+            return None
+
+    def touch(self) -> None:
+        try:
+            os.utime(self.path)
+        except OSError:
+            return
+        self.stamp = self._read()
+
+    def release(self) -> None:
+        if self.stamp is not None and self._read() == self.stamp:
+            try:
+                self.path.rmdir()
+            except OSError:
+                pass
+
+
+def _hold_refresh_locks(provider, paths) -> list:
+    """Take the lock the vendor refreshes under, waiting for it if held.
+
+    Claude Code posts its refresh token, the server spends it at once, and
+    the new one is saved only if the stored token is still the one posted.
+    A switch landing in between stashed the spent token and replaced the
+    stored one, so the save was refused and the new token was lost with the
+    process. Holding the same lock makes a refresh in flight land first.
+
+    A lock directory not touched for the vendor's stale interval belongs to a
+    client that died; it is removed, as the vendor itself would. Anything
+    else in the way -- a live lock, or something that is not a directory and
+    cannot be removed -- is waited on, and still there after
+    ``REFRESH_LOCK_WAIT_S`` it refuses the switch before anything has moved.
+    No config directory means no client to coordinate with, and no lock.
+    """
+    block = provider.spec.get("refresh_lock") or {}
+    stale_s = block.get("stale_ms", 60_000) / 1000
+    held = []
+    deadline = time.monotonic() + REFRESH_LOCK_WAIT_S
+    try:
+        for lock in provider.refresh_locks(home=paths.home):
+            while True:
+                try:
+                    lock.mkdir()
+                    held.append(_HeldLock(lock))
+                    break
+                except FileExistsError:
+                    if _remove_if_abandoned(lock, stale_s):
+                        continue
+                except FileNotFoundError:
+                    break                 # its directory is gone: no client
+                if time.monotonic() >= deadline:
+                    raise SwitchFailedError(REFRESH_IN_PROGRESS)
+                time.sleep(0.05)
+    except BaseException:
+        _release(held)
+        raise
+    return held
+
+
+def _remove_if_abandoned(lock: Path, stale_s: float) -> bool:
+    """Remove a lock directory nobody has touched for ``stale_s``.
+
+    True only when it was removed. A symlink or a file in its place is
+    never removed: it is not a lock this protocol made.
+    """
+    try:
+        info = lock.lstat()
+    except FileNotFoundError:
+        return True                       # released while we looked
+    except OSError:
+        return False
+    if not stat.S_ISDIR(info.st_mode) or time.time() - info.st_mtime <= stale_s:
+        return False
+    try:
+        lock.rmdir()
+    except OSError:
+        return False
+    return True
+
+
+def _touch(held) -> None:
+    for lock in held:
+        lock.touch()
+
+
+def _release(held) -> None:
+    for lock in reversed(held):
+        lock.release()
+
+
+def _outgoing_profile(paths, provider, current, *, platform,
+                      target=None) -> str | None:
     """The profile the live login belongs under before it is replaced.
 
     Raises while the store holds a login that no saved profile could take:
@@ -305,7 +461,7 @@ def _outgoing_profile(paths, provider, current, *, platform) -> str | None:
     running it again.
     """
     live = _store(paths, provider, platform).read()
-    holders = state.profiles_holding(paths, provider.id, live)
+    holders = state.proven_owners(paths, provider, live)
     if holders:
         return current.profile if current.profile in holders else holders[0]
 
@@ -321,6 +477,14 @@ def _outgoing_profile(paths, provider, current, *, platform) -> str | None:
     # while signed in as somebody else destroys that profile's token -- and
     # the card offers the button that does it, with only a warning line to
     # say otherwise.
+    # Unless the switch is *to* the profile whose address the live login
+    # carries. Nothing proves it is that account's login, but the user has
+    # just said so: it is what the notice tells them to do, and the login
+    # is filed there with the one it replaces kept beside it.
+    if (current.kind == state.DRIFTED and target is not None
+            and target == state.owner_by_address(paths, provider,
+                                                 platform=platform)):
+        return target
     if current.kind == state.DRIFTED:
         raise DriftedLoginError(DRIFT_REFUSAL.format(
             live=current.live_email, name=current.profile,
@@ -340,11 +504,7 @@ def _outgoing_profile(paths, provider, current, *, platform) -> str | None:
 
 def _companion_path(provider, paths):
     """Where this provider's companion file lives, or ``None`` if it has none."""
-    from .providers import spec as specmod
-    block = provider.spec.get("companion")
-    if not block:
-        return None
-    return specmod.expand(block["path"], home=paths.home)
+    return provider.companion_path(home=paths.home)
 
 
 def save_current_account(paths, provider, name, *, platform=sys.platform,
@@ -544,7 +704,10 @@ def judge_new_login(paths, provider, name: str, *, platform=sys.platform,
     if (blob is None or not provider.has_login(blob)
             or provider.liveness(blob, now_ms=now_ms_fn()).needs_login):
         return UNCHANGED
-    owner = state.owner_of_live(paths, provider, platform=platform)
+    # Proof or address: this only refuses to file a second copy of a saved
+    # account under a new name, and the vendor has just written the address.
+    owner = (state.owner_of_live(paths, provider, platform=platform)
+             or state.owner_by_address(paths, provider, platform=platform))
     if owner and owner != name:
         return DUPLICATE
     return RENEWED
@@ -603,7 +766,12 @@ def settle_login(paths, provider, name: str, previous: str | None, *,
         return LoginOutcome(RENEWED, name, previous)
 
     if kind in (OTHER_ACCOUNT, DUPLICATE):
-        owner = state.owner_of_live(paths, provider, platform=platform)
+        # A relabelling, after a sign-in the user has just made and whose
+        # address the vendor has just written: the marker only, no login is
+        # filed anywhere.
+        owner = (state.owner_of_live(paths, provider, platform=platform)
+                 or state.owner_by_address(paths, provider,
+                                           platform=platform))
         if owner == name:
             owner = None
         if owner:
@@ -755,21 +923,31 @@ def restash_active(paths, provider, *, platform=sys.platform,
             return False
 
         # Only refresh a stash from a credential that is provably this
-        # profile's. This runs on every window refresh, so without the check
-        # merely opening the window while signed in as someone else replaces
-        # a saved token -- no click, no warning, and no copy left anywhere.
-        # Asked about the bytes just read, which are the bytes written below.
-        if not belongs_to(paths, provider, name, platform=platform, blob=live):
-            return False
+        # profile's: the same login, refreshed. This runs on every refresh of
+        # every interface, with no click, so an address is not enough -- a
+        # session still running rewrites it from memory, and a half-written
+        # config names nobody. Either way another account's token would be
+        # filed here, and the copy made would then pass for proof.
         stashed_path = paths.credentials(provider.id, name)
-        if stashed_path.exists() and stashed_path.read_bytes() == live:
+        try:
+            saved = stashed_path.read_bytes()
+        except FileNotFoundError:
             return False
+        if saved == live or not (provider.has_login(live)
+                                 and provider.same_login(saved, live)):
+            return False
+        expected = state.profile_identity(paths, provider, name)
+        address = _identity_of(paths, provider, live)
         _write_credential(paths, provider, name, live, sleep=time.sleep)
     except (OSError, StoreUnavailableError, SwitchFailedError):
         return False
 
+    # The same rule stash_live_login follows: the identity filed beside a
+    # login is only replaced by the same identity, refreshed. The lineage
+    # proves the token is this profile's; it says nothing about which account
+    # the vendor's config file names right now.
     companion = provider.companion_read(home=paths.home)
-    if companion:
+    if companion and _may_file_identity(expected, address):
         configjson.write_sidecar(paths.account(provider.id, name), companion,
                                  now_ms_fn())
     return True

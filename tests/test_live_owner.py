@@ -72,7 +72,9 @@ def test_the_address_still_answers_when_no_credential_matches(paths):
     write_json(paths.credentials("claude", "Work"),
                credentials(NOW + 86_400_000, access_token="a-different-token"))
 
-    assert state.owner_of_live(paths, claude(), platform="linux") == "Work"
+    # A suggestion, not the proof owner_of_live answers on.
+    assert state.owner_by_address(paths, claude(), platform="linux") == "Work"
+    assert state.owner_of_live(paths, claude(), platform="linux") is None
 
 
 def test_an_unknown_login_still_belongs_to_nobody(two_accounts):

@@ -74,7 +74,7 @@ def write_atomic(path, config: dict) -> None:
 
 
 CORRUPT_CONFIG_HELP = (
-    "~/.claude.json could not be read, so Shambles stopped rather than "
+    "{path} could not be read, so Shambles stopped rather than "
     "overwrite it.\n\n"
     "That file holds every project, MCP server and machine ID. Claude Code "
     "rewrites it on its own schedule, so this usually means a read landed "
@@ -98,18 +98,18 @@ def load_for_write(path) -> dict:
             return {}
     except OSError as exc:
         raise ConfigUnreadableError(
-            CORRUPT_CONFIG_HELP.format(backups="the backups directory")) from exc
+            CORRUPT_CONFIG_HELP.format(path=path, backups="the backups directory")) from exc
 
     try:
         with path.open(encoding="utf-8") as fh:
             config = json.load(fh)
     except (OSError, ValueError) as exc:
         raise ConfigUnreadableError(
-            CORRUPT_CONFIG_HELP.format(backups="the backups directory")) from exc
+            CORRUPT_CONFIG_HELP.format(path=path, backups="the backups directory")) from exc
 
     if not isinstance(config, dict):
         raise ConfigUnreadableError(
-            CORRUPT_CONFIG_HELP.format(backups="the backups directory"))
+            CORRUPT_CONFIG_HELP.format(path=path, backups="the backups directory"))
     return config
 
 
