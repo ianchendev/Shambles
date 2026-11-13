@@ -647,6 +647,15 @@ def judge_relogin(paths, provider, name: str, *, platform=sys.platform,
     if (blob is None or not provider.has_login(blob)
             or provider.liveness(blob, now_ms=now_ms_fn()).needs_login):
         return UNCHANGED
+    # The profile's own saved bytes, still there: nothing new arrived. A
+    # lapsed login is caught above; this is the one that still works, signed
+    # in again early, where a clean exit with no write would otherwise read
+    # as a renewal whose date has not moved.
+    try:
+        if paths.credentials(provider.id, name).read_bytes() == blob:
+            return UNCHANGED
+    except OSError:
+        pass
     if not belongs_to(paths, provider, name, platform=platform, blob=blob):
         return OTHER_ACCOUNT
     return RENEWED
@@ -728,6 +737,10 @@ class LoginOutcome:
     owner: str | None = None
     live_email: str | None = None
     expected_email: str | None = None
+    #: For :data:`UNCHANGED`: whether ``profile``'s login still works where
+    #: it is used, which it does after an early sign-in that came to nothing.
+    #: Lets a frontend say so rather than calling it lapsed.
+    still_works: bool = False
 
 
 def settle_login(paths, provider, name: str, previous: str | None, *,
@@ -787,7 +800,32 @@ def settle_login(paths, provider, name: str, previous: str | None, *,
                            now_ms_fn=now_ms_fn, sleep=sleep)
     except ShamblesError:
         restored = False
-    return LoginOutcome(UNCHANGED, name, previous, restored=restored)
+    return LoginOutcome(UNCHANGED, name, previous, restored=restored,
+                        still_works=_still_works(paths, provider, name,
+                                                 platform=platform,
+                                                 now_ms_fn=now_ms_fn))
+
+
+def _still_works(paths, provider, name, *, platform, now_ms_fn) -> bool:
+    """Whether ``name``'s login works where it is used.
+
+    The live slot when ``name`` is the marked profile, and only if that is
+    provably ``name``'s login: a vendor that emptied it and then failed has
+    signed the user out, whatever the saved copy holds. Otherwise the saved
+    copy, which a switch would install.
+    """
+    try:
+        if state.read_active(paths, provider.id) == name:
+            blob = _store(paths, provider, platform).read()
+            if not blob or name not in state.proven_owners(paths, provider,
+                                                           blob):
+                return False
+        else:
+            blob = paths.credentials(provider.id, name).read_bytes()
+    except (ShamblesError, OSError):
+        return False
+    return (bool(blob) and provider.has_login(blob)
+            and not provider.liveness(blob, now_ms=now_ms_fn()).needs_login)
 
 
 def rename_profile(paths, provider, old_name: str, new_name: str, *,

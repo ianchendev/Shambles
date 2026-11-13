@@ -27,15 +27,37 @@ NOTICE_KEYS = {
     "unsaved_login": "Press s to save it.",
     "signed_in_elsewhere": "Select '{account}' and press Enter to settle it.",
     "store_unreadable": "{remedy} Press r to refresh.",
+    "sign_in_soon": "Select '{account}' and press l to sign in again.",
 }
+
+#: Notices that f answers directly, and what it says when it is the one f
+#: will act on. f takes the first of these on screen, so the line that names
+#: it is always the one it fixes; the rest keep their select-and-press text.
+FIX_KEYS = {
+    "signed_in_elsewhere": "Press f to switch to '{account}' and settle it.",
+    "sign_in_soon": "Press f to sign in to '{account}' again now.",
+}
+
+
+def fix_target(snapshot: Snapshot) -> Optional[Tuple[str, str, str]]:
+    """``(code, provider, account)`` for the notice f acts on, or None."""
+    for group in snapshot.groups:
+        for notice in getattr(group, "notices", None) or []:
+            if notice.code in FIX_KEYS and notice.account:
+                return notice.code, group.provider, notice.account
+    return None
 
 
 def notices_text(snapshot: Snapshot) -> str:
     """Every provider notice, each with what to press. Empty when all is well."""
+    fixed = fix_target(snapshot)
     lines = []
     for group in snapshot.groups:
         for notice in getattr(group, "notices", None) or []:
-            action = NOTICE_KEYS.get(notice.code, "{remedy}").format(
+            keys = NOTICE_KEYS
+            if fixed == (notice.code, group.provider, notice.account):
+                keys, fixed = FIX_KEYS, None
+            action = keys.get(notice.code, "{remedy}").format(
                 account=notice.account or "", remedy=notice.remedy)
             lines.append(f"{group.display_name}: {notice.message} {action}"
                          .rstrip())
@@ -47,13 +69,15 @@ def _chip(account: Account) -> str:
         return "Active"
     if account.needs_login:
         return "needs login"
+    if account.status_label == "soon":
+        return "expires soon"
     return "Saved"
 
 
 def _chip_style(account: Account) -> str:
     if account.active:
         return GOLD
-    if account.needs_login:
+    if account.needs_login or account.status_label == "soon":
         return TERRACOTTA
     return MUTED
 
@@ -126,6 +150,13 @@ def _context_line(account: Account, *, unicode: bool) -> str:
     # need of the key that fixes it, and "Already active" told it nothing.
     if account.needs_login:
         parts = ["Enter or l to sign in", "its saved login no longer works"]
+    elif account.sign_in_due:
+        # Still works, so Enter keeps switching; l is what keeps it.
+        parts = ["l to sign in again",
+                 f"its login ends {account.expires_label or 'soon'}",
+                 "using it does not renew it"]
+        if not account.active:
+            parts.append("Enter to switch")
     elif account.active:
         parts = [
             "Already active",

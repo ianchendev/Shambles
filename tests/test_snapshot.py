@@ -10,8 +10,8 @@ import json
 import pytest
 
 from conftest import posix_only
-from helpers import (DAY_MS, NOW, make_claude_json, make_live_claude_login,
-                     make_profile)
+from helpers import (DAY_MS, NOW, healthy_ms, make_claude_json,
+                     make_live_claude_login, make_profile)
 from shambles import providers, state
 from shambles.app import cli, snapshot as snap
 from shambles.app.service import ActionResult
@@ -199,7 +199,7 @@ def test_the_contract_exposes_every_field_a_shell_renders(paths):
     assert set(group["accounts"][0]) == {
         "name", "email", "display_name", "plan", "active", "state",
         "needs_login", "login_hint", "usage", "expires_at_ms",
-        "status_label", "publishes_usage"}
+        "status_label", "publishes_usage", "sign_in_due", "expires_label"}
     assert set(group["accounts"][0]["usage"][0]) == {
         "label", "used_percent", "resets_at_ms", "resets_label",
         "age_label", "stale", "severity"}
@@ -625,3 +625,100 @@ def test_an_account_says_whether_its_provider_publishes_usage_at_all(paths):
     work = group_of(paths, "claude").accounts[0]
 
     assert work.usage == [] and work.publishes_usage is True
+
+
+# -- a Claude login's fixed deadline ------------------------------------------
+#
+# Claude ends every login about 30 days after it was signed in, however much
+# it is used (measured 2026-11-13, review lane). Reproduced on a synthetic
+# home: an account two days from that date read exactly like a healthy one
+# in `shambles list` and in the terminal UI, and the window coloured a chip
+# whose reason was only in a tooltip. Nothing anywhere offered the one thing
+# that keeps it: signing in again.
+
+#: Liveness here is judged on the real clock (the CLI reads it), so these
+#: dates are relative to it, as healthy_ms's are.
+REAL_NOW = healthy_ms(0)
+
+
+def closing_home(paths):
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True,
+                 refresh_expires_ms=healthy_ms(2))
+    make_profile(paths, "claude", "Fine", email="f@example.test")
+    make_profile(paths, "claude", "Gone", email="g@example.test",
+                 refresh_expires_ms=REAL_NOW - DAY_MS)
+    make_profile(paths, "codex", "Laptop", email="c@example.test",
+                 refresh_expires_ms=healthy_ms(1))
+    # Work is live, as the account in daily use is.
+    make_claude_json(paths, email="w@example.test")
+    paths.claude_dir.mkdir(parents=True, exist_ok=True)
+    (paths.claude_dir / ".credentials.json").write_bytes(
+        paths.credentials("claude", "Work").read_bytes())
+
+
+def test_a_claude_login_near_its_deadline_is_due_a_sign_in(paths):
+    closing_home(paths)
+    groups = {g.provider: g for g in build(paths, now_ms=REAL_NOW).groups}
+    claude_ = {a.name: a for a in groups["claude"].accounts}
+    codex_ = {a.name: a for a in groups["codex"].accounts}
+
+    assert claude_["Work"].sign_in_due is True
+    # Healthy, already lapsed (that is needs_login), and a provider whose
+    # date use renews are none of them due.
+    assert claude_["Fine"].sign_in_due is False
+    assert claude_["Gone"].sign_in_due is False
+    assert claude_["Gone"].needs_login is True
+    assert codex_["Laptop"].sign_in_due is False
+
+
+def test_an_account_carries_its_expiry_as_words(paths):
+    closing_home(paths)
+    work = next(a for a in group_of(paths, "claude", now_ms=REAL_NOW).accounts
+                if a.name == "Work")
+    assert work.expires_label
+    assert work.expires_label != str(work.expires_at_ms)
+
+
+def test_a_due_sign_in_is_a_notice_that_says_why(paths):
+    closing_home(paths)
+    notices = [n for n in group_of(paths, "claude", now_ms=REAL_NOW).notices
+               if n.code == "sign_in_soon"]
+
+    assert [n.account for n in notices] == ["Work"]
+    notice = notices[0]
+    assert "'Work'" in notice.message
+    # Why, in the user's terms: a fixed date that use does not move.
+    assert "30 days" in notice.message
+    assert "however much you use it" in notice.message
+    assert "Sign in to 'Work' again" in notice.remedy
+
+
+def test_a_closing_codex_login_gets_no_sign_in_notice(paths):
+    closing_home(paths)
+    assert not [n for n in group_of(paths, "codex", now_ms=REAL_NOW).notices
+                if n.code == "sign_in_soon"]
+
+
+def test_the_sign_in_fields_reach_the_wire(paths):
+    closing_home(paths)
+    group = next(g for g in snap.to_dict(build(paths, now_ms=REAL_NOW))["groups"]
+                 if g["provider"] == "claude")
+    work = next(a for a in group["accounts"] if a["name"] == "Work")
+    assert work["sign_in_due"] is True
+    assert work["expires_label"]
+    assert "sign_in_soon" in [n["code"] for n in group["notices"]]
+
+
+def test_list_says_which_logins_end_soon_and_how_to_keep_them(paths, capsys):
+    closing_home(paths)
+    assert cli.main(["--home", str(paths.home), "list"]) == 0
+    out = capsys.readouterr().out
+    lines = {line.split()[1] if line.startswith("  *") else line.split()[0]:
+             line for line in out.splitlines() if line.startswith("  ")
+             and not line.startswith("  !") and line.split()}
+
+    assert "expires soon" in lines["Work"]
+    assert "expires soon" in lines["Laptop"]
+    assert "expires soon" not in lines["Fine"]
+    assert "however much you use it" in out
+    assert "Run 'shambles', select 'Work' and press l to sign in again." in out

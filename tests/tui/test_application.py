@@ -1612,7 +1612,7 @@ async def test_a_saved_account_signed_in_elsewhere_names_the_account(service):
     app = ShamblesTUI(service)
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.pause()
-        assert "Select 'Work' and press Enter" in words(app)
+        assert "Press f to switch to 'Work'" in words(app)
 
 
 def test_the_terminal_ui_opens_on_a_settled_marker(monkeypatch):
@@ -1639,3 +1639,111 @@ async def test_the_active_account_menu_does_not_offer_remove(service):
         await pilot.pause()
         assert service.remove_plan_calls == []
         assert app.screen.id != "confirm-action"
+
+
+# --- Round 2: a fixed sign-in deadline, and a one-key fix ------------------
+#
+# Reproduced on synthetic homes (scratch, not committed):
+# - Work in its last two days of a Claude sign-in: the list said "Active",
+#   the pane said "Already active", and nothing anywhere mentioned a date.
+# - Marked Work, signed in as saved Home: the notice said to select Home and
+#   press Enter, three keys from where the cursor starts.
+
+SOON = Notice(
+    "sign_in_soon",
+    "'Work' stops working on Mon 16 Nov, 14:00. Claude Code ends a login "
+    "about 30 days after you sign in, however much you use it.",
+    "Sign in to 'Work' again before then.", account="Work")
+
+ELSEWHERE = Notice(
+    "signed_in_elsewhere",
+    "Signed in as h@example.test, which is saved as 'Home', but 'Work' is "
+    "marked active.", "Switch to 'Home' to settle it.", account="Home")
+
+
+def soon_service(*notices):
+    return SnapshotService(Snapshot(1, groups=[
+        Group("claude", "Claude Code", state="managed",
+              notices=list(notices or [SOON]),
+              accounts=[Account("Home", email="h@example.test"),
+                        Account("Work", email="w@example.test", active=True,
+                                state="closing", status_label="soon",
+                                sign_in_due=True,
+                                expires_label="Mon 16 Nov, 14:00")]),
+    ]))
+
+
+async def test_a_login_near_its_deadline_says_why_and_which_key_renews_it():
+    app = ShamblesTUI(soon_service())
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause()
+        text = words(app)
+        assert "however much you use it" in text
+        assert "Press f to sign in to 'Work' again" in text
+
+
+async def test_f_signs_in_the_account_whose_deadline_is_near():
+    service = soon_service()
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.press("f")
+        await pilot.pause()
+        assert service.login_calls == [("claude", "Work")]
+        assert app.screen.id == "login-progress"
+
+
+async def test_f_settles_a_stale_marker_in_one_key():
+    service = soon_service(ELSEWHERE, SOON)
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause()
+        text = words(app)
+        # The marker comes first: it is what a switch would otherwise trip on.
+        assert "Press f to switch to 'Home'" in text
+        assert "Select 'Work' and press l to sign in again" in text
+
+        await pilot.press("f")
+        await pilot.pause()
+        assert service.plan_calls == [("claude", "Home")]
+        assert service.switch_calls == [("claude", "Home")]
+
+
+async def test_f_with_nothing_to_fix_does_nothing(service):
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.press("f")
+        await pilot.pause()
+        assert service.switch_calls == [] and service.login_calls == []
+
+
+async def test_the_pane_of_a_login_near_its_deadline_offers_sign_in():
+    app = ShamblesTUI(soon_service())
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause()
+        text = words(app)
+        assert "l to sign in again" in text
+        assert "Mon 16 Nov, 14:00" in text
+
+
+async def test_a_parked_login_near_its_deadline_says_so_in_the_list():
+    service = SnapshotService(Snapshot(1, groups=[
+        Group("claude", "Claude Code", accounts=[
+            Account("Home", state="closing", status_label="soon",
+                    sign_in_due=True),
+            Account("Work", active=True)]),
+    ]))
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.pause()
+        assert "expires soon" in screen_text(app)
+
+
+async def test_help_lists_save_and_fix_and_why_claude_needs_signing_in(service):
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.press("question_mark")
+        await pilot.pause()
+        text = words(app)
+        assert "s Save a signed-in login" in text
+        assert "f Do what the notice at the top says" in text
+        assert "about 30 days after you sign in" in text

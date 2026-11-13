@@ -74,6 +74,11 @@ class Account:
     #: recorded yet", which is worth a line of explanation, from "never will
     #: be", which is not.
     publishes_usage: bool = False
+    #: The login still works, but only a new sign-in keeps it past
+    #: ``expires_at_ms``: offer Sign in now, as for ``needs_login``.
+    sign_in_due: bool = False
+    #: ``expires_at_ms`` in the user's local time, for a shell to show as is.
+    expires_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -169,12 +174,15 @@ def _group(paths, provider, *, platform: str, now_ms: int) -> Group:
             expires_at_ms=profile.liveness.expires_at_ms,
             status_label=profiles_mod.expiry_label(profile),
             publishes_usage=profile.publishes_usage,
+            sign_in_due=profiles_mod.sign_in_due(profile),
+            expires_label=_when(profile.liveness.expires_at_ms),
         ))
     return Group(provider.id, provider.display_name, surfaces, accounts,
                  state=current.kind, live_email=current.live_email,
                  can_save=can_save,
                  notices=_notices(paths, provider, current, owner=owner,
-                                  can_save=can_save, unreadable=unreadable),
+                                  can_save=can_save, unreadable=unreadable)
+                 + _sign_in_notices(provider, accounts),
                  can_sign_in=login_mod.available(provider),
                  cli=login_mod.binary(provider))
 
@@ -259,6 +267,44 @@ def _notices(paths, provider, current, *, owner, can_save, unreadable):
     return notices
 
 
+def _sign_in_notices(provider, accounts) -> list:
+    """One per login that a new sign-in, and only that, will keep.
+
+    Last, after anything about the live login: those block a switch, and
+    this is advance warning. The date is the credential's own; the span is
+    the vendor's, for the reason alone.
+    """
+    days = profiles_mod.sign_in_lasts_days(provider.id)
+    why = profiles_mod.sign_in_reason(provider.id, provider.display_name)
+    again = (f"That starts a new {days} days." if days
+             else "That sets a new date.")
+    notices = []
+    for account in accounts:
+        if not account.sign_in_due:
+            continue
+        when = (f"on {account.expires_label}" if account.expires_label
+                else "soon")
+        notices.append(Notice(
+            "sign_in_soon",
+            f"'{account.name}' stops working {when}. {why}",
+            f"Sign in to '{account.name}' again before then. {again} "
+            "Nothing else about the account changes.",
+            account=account.name))
+    return notices
+
+
+def _when(ms) -> str | None:
+    """A timestamp in the user's local time, the way usage resets read."""
+    if not isinstance(ms, int):
+        return None
+    try:
+        when = datetime.datetime.fromtimestamp(ms / 1000,
+                                               tz=datetime.timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return when.astimezone().strftime("%a %d %b, %H:%M")
+
+
 def _windows(profile, *, now_ms: int) -> list:
     """Quota bars, flattened to the wire shape.
 
@@ -325,6 +371,8 @@ def to_dict(snapshot: Snapshot) -> dict:
                         "expires_at_ms": a.expires_at_ms,
                         "status_label": a.status_label,
                         "publishes_usage": a.publishes_usage,
+                        "sign_in_due": a.sign_in_due,
+                        "expires_label": a.expires_label,
                         "usage": [
                             {
                                 "label": w.label,
