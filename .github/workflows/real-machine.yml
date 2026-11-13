@@ -119,6 +119,10 @@ jobs:
           - ubuntu-22.04
           - ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
+    # A hang used to run to GitHub's six-hour limit (three did, in
+    # tests/test_gui_import.py, before #52). The slowest of these takes about
+    # 11 minutes, so 30 is room to spare and still ends a hang within the hour.
+    timeout-minutes: 30
     env:
       SHAMBLES_REAL_MACHINE: "1"
       SHAMBLES_REQUIRE_VENDORS: "1"
