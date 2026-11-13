@@ -17,13 +17,14 @@ HOUR = 3_600_000
 
 def account(name, *, active=False, state="live", needs_login=False,
             status_label=None, email=None, plan="max_5x", usage=(),
-            expires_at_ms=None, publishes_usage=False, renewed_by_use=False):
+            expires_at_ms=None, publishes_usage=False, renewed_by_use=False,
+            sign_in_due=False):
     return Account(name=name, email=email or f"{name.lower()}@example.test",
                    plan=plan, active=active, state=state,
                    needs_login=needs_login, status_label=status_label,
                    usage=list(usage), expires_at_ms=expires_at_ms,
                    publishes_usage=publishes_usage,
-                   renewed_by_use=renewed_by_use)
+                   renewed_by_use=renewed_by_use, sign_in_due=sign_in_due)
 
 
 def group(*accounts, provider="claude", title="Claude Code", notices=(),
@@ -500,3 +501,63 @@ def test_settling_works_even_when_the_named_accounts_own_login_has_lapsed():
     shown = drifted(account("Work", active=True), lapsed_home)
 
     assert shown["settle"]["account"] == "Home"
+
+
+
+# -- R11: a sign-in that is due before the date ---------------------------------------
+
+
+def due_account(name, **kw):
+    return account(name, state="closing", status_label="soon",
+                   sign_in_due=True, **kw)
+
+
+def test_the_live_account_due_a_sign_in_offers_one():
+    """It still works, and only a new sign-in keeps it past the date."""
+    live = only(view(group(due_account("Work", active=True))))["live"]
+
+    assert (live["action"], live["actionLabel"]) == ("signin", "Sign in")
+    assert live["actionEnabled"] is True
+    assert live["signIn"] is True
+
+
+def test_a_parked_account_due_a_sign_in_offers_it_beside_switch():
+    """As the Tk window does: it still works, so Switch stays, and Sign in
+    is offered next to it before the date rather than after."""
+    other = only(view(group(account("Work", active=True),
+                            due_account("Spare"))))["others"][0]
+
+    assert other["action"] == "switch" and other["actionEnabled"] is True
+    assert other["signIn"] is True and other["signInExtra"] is True
+
+
+def test_a_lapsed_account_still_signs_in_and_never_switches():
+    lapsed = account("Old", state="closed", needs_login=True,
+                     status_label="needs login")
+    other = only(view(group(account("Work", active=True), lapsed)))["others"][0]
+
+    assert other["action"] == "signin"
+    assert other["signIn"] is True and other["signInExtra"] is False
+
+
+def test_a_due_sign_in_without_the_cli_is_not_offered_as_working():
+    other = only(view(group(account("Work", active=True), due_account("Spare"),
+                            can_sign_in=False)))["others"][0]
+
+    assert other["action"] == "switch" and other["actionEnabled"] is True
+    assert other["signIn"] is False
+
+
+def test_the_sign_in_soon_notice_has_a_sign_in_button():
+    notice = Notice("sign_in_soon",
+                    "'Work' stops working on Tue 17 Nov. Claude ends every "
+                    "login a fixed time after it was signed in.",
+                    "Sign in to 'Work' again before then.", account="Work")
+
+    shown = only(view(group(due_account("Work", active=True),
+                            notices=[notice])))["notices"][0]
+
+    assert shown["action"] == "signin"
+    assert shown["actionLabel"] == "Sign in to Work"
+    assert shown["account"] == "Work"
+    assert shown["tone"] == "warn"

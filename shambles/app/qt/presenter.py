@@ -28,11 +28,12 @@ USAGE_LABELS = {"session": "Session", "week": "Week"}
 #: Notices the window draws as something other than a plain banner.
 UNSAVED = "unsaved_login"
 ELSEWHERE = "signed_in_elsewhere"
+SIGN_IN_SOON = "sign_in_soon"
 MISSING = "missing_profile"
 UNREADABLE = "store_unreadable"
 OVERRIDE = "config_override"
 
-NOTICE_TONES = {UNREADABLE: "bad", MISSING: "warn",
+NOTICE_TONES = {UNREADABLE: "bad", MISSING: "warn", "sign_in_soon": "warn",
                 "signed_in_elsewhere": "warn", OVERRIDE: "info"}
 
 #: Past this many accounts the header grows a filter box. Below it a filter
@@ -133,17 +134,26 @@ def _group(group, needle: str) -> dict:
                                           [a.name for a in group.accounts]),
             }
             continue
+        if notice.code == MISSING:
+            # A marker for a deleted profile can simply be dropped. Offered
+            # beside the notice, never instead of saving a live login.
+            action, action_label = "forget", "Forget that profile"
+        elif notice.code == SIGN_IN_SOON and notice.account \
+                and group.can_sign_in:
+            # The notice's whole point is that signing in again is what
+            # keeps the account, so it carries the button that does it.
+            action, action_label = "signin", f"Sign in to {notice.account}"
+        else:
+            action, action_label = "", ""
         notices.append({
             "code": notice.code,
             "tone": NOTICE_TONES.get(notice.code, "info"),
             "message": notice.message,
             "remedy": notice.remedy,
             "provider": group.provider,
-            # A marker for a deleted profile can simply be dropped. Offered
-            # beside the notice, never instead of saving a live login.
-            "action": "forget" if notice.code == MISSING else "",
-            "actionLabel": "Forget that profile"
-                           if notice.code == MISSING else "",
+            "account": notice.account or "",
+            "action": action,
+            "actionLabel": action_label,
             "collapsed": notice.code == OVERRIDE,
         })
 
@@ -154,7 +164,8 @@ def _group(group, needle: str) -> dict:
                        "be added or signed in here.",
             "remedy": "Switching between accounts you already saved still "
                       f"works. Install {group.cli}, then refresh.",
-            "action": "", "actionLabel": "", "collapsed": False,
+            "account": "", "action": "", "actionLabel": "",
+            "collapsed": False,
         })
 
     empty = None
@@ -219,8 +230,15 @@ def _account(group, account, *, hold: str) -> dict:
     # it Live would put a stranger's session under its name.
     live = account.active and group.state == "managed"
 
+    # A sign-in is offered for a login that has lapsed, and for one that
+    # still works but that only a new sign-in keeps past its fixed date
+    # (sign_in_due: a Claude login near its deadline). The first can only be
+    # signed in; the second can still be switched to, so Sign in sits beside
+    # Switch there, as it does in the Tk window.
+    due = account.sign_in_due and not account.needs_login
+    sign_in = (account.needs_login or due) and group.can_sign_in
     action, label, enabled, reason = "", "", False, ""
-    if account.needs_login:
+    if account.needs_login or (due and live):
         # Never Switch on a lapsed login: that installs a dead token and
         # leaves the vendor prompting for the sign-in this button runs.
         action, label = "signin", "Sign in"
@@ -233,6 +251,7 @@ def _account(group, account, *, hold: str) -> dict:
         enabled = not hold
     if hold and action:
         reason = hold
+    sign_in_extra = sign_in and action == "switch"
 
     email = account.email or ""
     return {
@@ -252,6 +271,11 @@ def _account(group, account, *, hold: str) -> dict:
         "actionLabel": label,
         "actionEnabled": enabled,
         "actionReason": reason,
+        # Whether Sign in is offered at all, and whether as a second button
+        # beside Switch rather than as the row's own action.
+        "signIn": sign_in,
+        "signInExtra": sign_in_extra,
+        "signInEnabled": sign_in and not hold,
         "key": "",
         "usage": usage,
         "usageSummary": " · ".join(

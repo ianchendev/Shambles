@@ -166,6 +166,16 @@ Notable changes per release. Dates are the tag date.
   keeps "Using the account renews it." for Codex, where it is true. The
   snapshot carries `renewed_by_use` per account so no frontend has to know
   which provider is which.
+- **Switching no longer freezes the new window.** A switch can wait up to
+  15 seconds for Claude Code to finish renewing its login. The new window
+  now says so at the bottom while it waits, instead of drawing nothing and
+  ignoring clicks, and holds every other action until the switch is done.
+  Closing it mid-switch closes it once the switch has finished, never in
+  the middle of one.
+- **The new window offers a sign-in before a Claude login's fixed date.**
+  An account near its deadline shows Sign in beside Switch, the account in
+  use shows Sign in, and the notice that says the date is coming has a
+  "Sign in to X" button.
 - **Signed in as a saved account that is not the one marked, the new window
   offers to switch to it, not to save it again.** It shows a card naming the
   account, with one button, "Switch to Home", that files the live login

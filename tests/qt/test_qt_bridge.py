@@ -13,8 +13,8 @@ import pytest
 pytest.importorskip("PySide6.QtCore", exc_type=ImportError,
                     reason="PySide6 is not installed or cannot load")
 
-from qt_fakes import (Clipboard, FakeService, account, failure, group,  # noqa: E402
-                      saved_elsewhere, unsaved)
+from qt_fakes import (Clipboard, FakeService, account, due, failure,  # noqa: E402
+                      group, saved_elsewhere, unsaved)
 from qt_support import pump, qt_app  # noqa: E402,F401
 from shambles.app.qt import bridge as bridge_mod  # noqa: E402
 from shambles.app.service import ActionResult  # noqa: E402
@@ -23,9 +23,13 @@ from shambles.app.snapshot import Snapshot  # noqa: E402
 
 @pytest.fixture
 def make(qt_app):
+    """A bridge on a fake service. Background work runs inline, so a flow
+    reads top to bottom; the tests about the worker thread pass
+    ``runner=None`` to get the real one."""
     def _make(service=None, **kw):
         service = service or FakeService()
         clipboard = Clipboard()
+        kw.setdefault("runner", lambda work: work())
         made = bridge_mod.Bridge(service, clipboard=clipboard, **kw)
         made.start()
         return made, service, clipboard
@@ -520,7 +524,8 @@ def test_settling_on_the_real_service_files_the_login_and_loses_nothing(
     service = ShamblesService(paths=paths,
                               providers=[providers.load("claude", env={})],
                               platform="linux")
-    ui = bridge_mod.Bridge(service, clipboard=Clipboard())
+    ui = bridge_mod.Bridge(service, clipboard=Clipboard(),
+                           runner=lambda work: work())
     ui.start()
     shown = ui.view["groups"][0]
 
@@ -543,3 +548,117 @@ def test_settling_on_the_real_service_files_the_login_and_loses_nothing(
     assert ui.view["groups"][0]["live"]["name"] == "Home"
     assert json.loads(fresh) == json.loads(
         (paths.claude_dir / ".credentials.json").read_bytes())
+
+
+
+# -- R10: a switch runs off the window's thread ------------------------------------
+
+
+def test_a_switch_does_not_hold_the_window_while_it_waits(make, pump):
+    """A switch can wait up to 15 s on Claude Code's refresh lock. The Tk
+    window freezes for that long; this one must keep drawing."""
+    import threading
+
+    service = FakeService()
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+    seen = []
+    ui.confirmed.connect(seen.append)
+
+    ui.switchTo("claude", "Personal")
+
+    assert ui.busy is True, "the click did not return before the switch did"
+    assert pump(lambda: "renewing its login" in ui.busyText), \
+        "never said why nothing has happened yet"
+    assert seen == []
+
+    service.hold.set()
+    assert pump(lambda: not ui.busy, timeout=5)
+    assert seen == ["claude/Personal"]
+    assert ui.busyText == ""
+    assert "Switched to Personal" in ui.toast["text"]
+
+
+def test_nothing_else_moves_while_a_switch_is_running(make, pump):
+    import threading
+
+    service = FakeService()
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+
+    ui.switchTo("claude", "Personal")
+    ui.switchTo("claude", "Personal")
+    ui.pressKey("1")
+    ui.signIn("claude", "Old")
+    ui.askRemove("claude", "Personal")
+    ui.openAdd("")
+
+    assert ui.sheet == {}
+    assert service.named("start_login") == []
+    service.hold.set()
+    assert pump(lambda: not ui.busy, timeout=5)
+    assert len(service.named("switch")) == 1
+
+
+def test_closing_mid_switch_waits_for_it_to_finish(make, pump):
+    """An interrupted switch is the one thing that could lose a login. The
+    window waits for it rather than exiting under it."""
+    import threading
+
+    service = FakeService()
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+    ui.switchTo("claude", "Personal")
+    assert ui.busy
+
+    threading.Timer(0.3, service.hold.set).start()
+    ui.shutdown()
+
+    assert service.named("switch") == [("switch", "claude", "Personal")]
+
+
+def test_a_close_request_mid_switch_is_held_until_it_finishes(make, pump):
+    import threading
+
+    service = FakeService()
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+    quit_asked = []
+    ui.quitRequested.connect(lambda: quit_asked.append(True))
+
+    assert ui.closeRequested() is True, "an idle window must close at once"
+    ui.switchTo("claude", "Personal")
+    assert ui.closeRequested() is False
+    assert "closes when" in ui.busyText
+
+    service.hold.set()
+    assert pump(lambda: quit_asked == [True], timeout=5)
+
+
+def test_settling_also_runs_off_the_windows_thread(make, pump):
+    import threading
+
+    service = FakeService(saved_elsewhere())
+    service.hold = threading.Event()
+    ui, _, _ = make(service, runner=None)
+
+    ui.settle("claude")
+    assert ui.busy
+    service.hold.set()
+    assert pump(lambda: not ui.busy, timeout=5)
+    assert service.named("switch") == [("switch", "claude", "Home")]
+
+
+# -- R11: a sign-in that is due, before the date -------------------------------------
+
+
+def test_a_due_sign_in_can_be_started_from_its_notice_and_its_row(make):
+    ui, service, _ = make(FakeService(due()))
+
+    ui.signIn("claude", "Work")
+    assert service.named("start_login") == [("start_login", "claude", "Work")]
+    ui.cancelLogin()
+    service.settle(failure("login", "login_cancelled", "Sign-in cancelled."))
+
+    ui.signIn("claude", "Spare")
+    assert service.named("start_login")[-1] == ("start_login", "claude", "Spare")

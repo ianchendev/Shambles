@@ -45,6 +45,7 @@ Rectangle {
         Btn {
             kind: "primary"
             text: root.settle.label || ""
+            enabled: !ui.busy
             implicitHeight: 40
             onClicked: ui.settle(root.settle.provider)
         }

@@ -45,6 +45,23 @@ def saved_elsewhere():
                               state="drifted", live_email="home@example.test")])
 
 
+def due():
+    """Work live and due a sign-in; Spare parked and due; Codex healthy."""
+    notice = Notice("sign_in_soon",
+                    "'Work' stops working on Tue 17 Nov. Claude ends every "
+                    "login a fixed time after it was signed in.",
+                    "Sign in to 'Work' again before then. That starts a new "
+                    "30 days. Nothing else about the account changes.",
+                    account="Work")
+    work = Account(name="Work", email="work@example.test", plan="max_5x",
+                   active=True, state="closing", status_label="soon",
+                   sign_in_due=True)
+    spare = Account(name="Spare", email="spare@example.test", plan="max_5x",
+                    state="closing", status_label="soon", sign_in_due=True)
+    return Snapshot(1, [group(work, spare, account("Other"),
+                              notices=[notice])])
+
+
 def unsaved():
     notice = Notice("unsaved_login",
                     "Signed in as new@example.test, which is not saved yet.",
@@ -124,7 +141,15 @@ class FakeService:
         self.theme = theme
         return ActionResult(True, "set_window_theme")
 
-    def switch(self, provider, name):
+    def switch(self, provider, name, *, on_wait=None):
+        """Like the service: ``on_wait`` once if it has to wait. Set
+        ``self.hold`` to a threading.Event to make the switch wait for it,
+        the way a real one waits on Claude Code's refresh lock."""
+        hold = getattr(self, "hold", None)
+        if hold is not None:
+            if on_wait is not None:
+                on_wait()
+            hold.wait(10)
         return self._done("switch", provider, name)
 
     def save_current(self, provider, name):
