@@ -90,11 +90,21 @@ class Dashboard(Widget):
                          markup=False)
         notices.display = bool(notices_text(self.snapshot))
         yield notices
+        # What a switch in progress is waiting for. Hidden unless it waits.
+        status = Static(id="switch-status", markup=False)
+        status.display = False
+        yield status
         with Vertical(id="dashboard-body"):
             with Horizontal(id="main-panes"):
                 yield AccountList(self.snapshot, id="account-list")
                 yield account_details
         yield Static(id="shortcut-footer")
+
+    def show_status(self, text: str) -> None:
+        """Say what a running action is waiting for; empty text hides it."""
+        status = self.query_one("#switch-status", Static)
+        status.update(text)
+        status.display = bool(text)
 
     def on_resize(self, event: events.Resize) -> None:
         width, height = event.size.width, event.size.height
