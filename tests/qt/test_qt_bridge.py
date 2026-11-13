@@ -14,7 +14,7 @@ pytest.importorskip("PySide6.QtCore", exc_type=ImportError,
                     reason="PySide6 is not installed or cannot load")
 
 from qt_fakes import (Clipboard, FakeService, account, failure, group,  # noqa: E402
-                   unsaved)
+                      saved_elsewhere, unsaved)
 from qt_support import pump, qt_app  # noqa: E402,F401
 from shambles.app.qt import bridge as bridge_mod  # noqa: E402
 from shambles.app.service import ActionResult  # noqa: E402
@@ -448,3 +448,98 @@ def test_a_refresh_that_raises_does_not_take_the_window_down(make):
 
     assert ui.toast["tone"] == "bad"
     assert ui.view["count"] == 3, "the last good view was thrown away"
+
+
+
+# -- settling a login that is saved under another name ----------------------------
+
+
+def test_settling_switches_to_the_account_the_notice_names(make):
+    ui, service, _ = make(FakeService(saved_elsewhere()))
+    seen = []
+    ui.confirmed.connect(seen.append)
+
+    ui.settle("claude")
+
+    assert service.named("switch") == [("switch", "claude", "Home")]
+    assert seen == ["claude/Home"]
+
+
+def test_settling_does_nothing_where_there_is_nothing_to_settle(make):
+    ui, service, _ = make()
+
+    ui.settle("claude")
+    ui.settle("nobody")
+
+    assert service.named("switch") == []
+
+
+def test_while_unsettled_only_the_named_account_can_be_switched_to(make):
+    ui, service, _ = make(FakeService(saved_elsewhere()))
+
+    ui.switchTo("claude", "Third")
+    ui.pressKey("1")
+
+    assert all(call[2] == "Home" for call in service.named("switch")), \
+        "switched somewhere the core would refuse, or worse"
+
+
+def test_settling_on_the_real_service_files_the_login_and_loses_nothing(
+        qt_app, paths):
+    """Signed in again in the browser as Home, which is saved, while Work is
+    still marked. Nothing proves the login is Home's, so the window offers no
+    Save and holds every other Switch; its one button switches to Home,
+    which files the fresh login there and keeps Home's old one beside it."""
+    import json
+
+    from helpers import (credentials, healthy_ms, make_claude_json,
+                         make_profile, write_json)
+    from shambles import providers, state
+    from shambles.app.service import ShamblesService
+
+    def login(access, refresh, days):
+        # Different deadlines on purpose: a login whose deadline matches a
+        # profile's to the second continues that profile's login, which is
+        # proof, and proof settles itself on refresh. This test is about the
+        # case nothing proves.
+        blob = credentials(refresh_expires_ms=healthy_ms(days),
+                           access_token=access)
+        blob["claudeAiOauth"]["refreshToken"] = refresh
+        return blob
+
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Home", email="h@example.test")
+    make_profile(paths, "claude", "Third", email="t@example.test")
+    write_json(paths.credentials("claude", "Home"), login("a-old", "r-old", 12))
+    old_home = paths.credentials("claude", "Home").read_bytes()
+    work = paths.credentials("claude", "Work").read_bytes()
+    make_claude_json(paths, email="h@example.test")
+    write_json(paths.claude_dir / ".credentials.json", login("a-new", "r-new", 29))
+    fresh = (paths.claude_dir / ".credentials.json").read_bytes()
+
+    service = ShamblesService(paths=paths,
+                              providers=[providers.load("claude", env={})],
+                              platform="linux")
+    ui = bridge_mod.Bridge(service, clipboard=Clipboard())
+    ui.start()
+    shown = ui.view["groups"][0]
+
+    assert shown["save"] is None, "offered to save a login that is Home's"
+    assert shown["settle"]["account"] == "Home"
+    others = {a["name"]: a for a in shown["others"]}
+    assert others["Third"]["actionEnabled"] is False
+
+    ui.switchTo("claude", "Third")
+    assert (paths.claude_dir / ".credentials.json").read_bytes() == fresh
+
+    ui.settle("claude")
+
+    assert state.read_active(paths, "claude") == "Home"
+    assert paths.credentials("claude", "Home").read_bytes() == fresh
+    assert (paths.profile_dir("claude", "Home")
+            / "credentials.json.previous").read_bytes() == old_home
+    assert paths.credentials("claude", "Work").read_bytes() == work
+    assert ui.view["groups"][0]["settle"] is None
+    assert ui.view["groups"][0]["live"]["name"] == "Home"
+    assert json.loads(fresh) == json.loads(
+        (paths.claude_dir / ".credentials.json").read_bytes())

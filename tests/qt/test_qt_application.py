@@ -161,6 +161,21 @@ def test_every_sheet_and_both_themes_draw_without_a_qml_warning(window, pump):
     assert messages == []
 
 
+def test_the_settle_card_draws_and_settles_without_a_qml_warning(window,
+                                                                pump):
+    from qt_fakes import saved_elsewhere
+
+    engine, ui, service, messages = window(FakeService(saved_elsewhere()))
+    root = engine.rootObjects()[0]
+    pump(timeout=0.05)
+    root.grabWindow()
+    ui.settle("claude")
+    pump(timeout=0.05)
+
+    assert service.named("switch") == [("switch", "claude", "Home")]
+    assert messages == []
+
+
 def test_the_unsaved_login_and_empty_states_draw_without_a_qml_warning(
         window, pump):
     engine, ui, service, messages = window(FakeService(unsaved()))

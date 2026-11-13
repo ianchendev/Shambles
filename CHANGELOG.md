@@ -141,6 +141,21 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **The new window no longer says using a Claude account renews its login.**
+  Claude's login lasts a fixed time from sign-in, about thirty days, and no
+  amount of use moves it. An opened row now says "Using the account does
+  not move this date. Sign in again before then to keep it." for Claude, and
+  keeps "Using the account renews it." for Codex, where it is true. The
+  snapshot carries `renewed_by_use` per account so no frontend has to know
+  which provider is which.
+- **Signed in as a saved account that is not the one marked, the new window
+  offers to switch to it, not to save it again.** It shows a card naming the
+  account, with one button, "Switch to Home", that files the live login
+  there and keeps the one it replaces. Every other Switch waits until then,
+  with the reason, because Shambles would refuse it anyway. Saving would
+  only have made a second account for the same login. This matches the
+  classic window.
+
 - **`CLAUDE_CONFIG_DIR` is followed for the account details too, not only
   the login.** With the variable set, Claude Code keeps its config, including
   which account is signed in, in that directory. Shambles still read and

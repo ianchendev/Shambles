@@ -20,6 +20,8 @@ from ... import __version__
 from . import presenter, theme
 
 SWITCHED = "Switched to {name}. Start a new session to pick it up."
+SETTLED = ("{name} is the account in use, and its login is saved. Start a "
+           "new session if one was running as another account.")
 SIGNED_IN = "{name} is signed in and live. Start a new session to pick it up."
 NO_BROWSER = ("No browser could be launched from here, which is usual under "
               "WSL and over SSH. The link is on your clipboard.")
@@ -210,6 +212,25 @@ class Bridge(QObject):
             return
         result = self._service.switch(provider, name)
         if self._report(result, SWITCHED.format(name=name)):
+            self.confirmed.emit(f"{provider}/{name}")
+
+    @Slot(str)
+    def settle(self, provider):
+        """Switch to the saved account the live login's address names.
+
+        Only to the account the snapshot names, and only through the
+        service's ordinary switch, which files the live login there and
+        keeps the one it replaces. Not gated on that account's own row: its
+        saved login may have lapsed while the live one is fresh, and this is
+        exactly what puts the fresh one in its place.
+        """
+        group = presenter.find_group(self._view, provider)
+        settle = group["settle"] if group else None
+        if not settle or self._handle:
+            return
+        name = settle["account"]
+        result = self._service.switch(provider, name)
+        if self._report(result, SETTLED.format(name=name)):
             self.confirmed.emit(f"{provider}/{name}")
 
     @Slot(str)
