@@ -1,3 +1,5 @@
+import os
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -756,6 +758,86 @@ def test_the_footer_offers_a_refresh(paths, make_app):
     app = make_app(paths)
     app.update()
     assert app.glyph["refresh"] in _label_texts(app), "no refresh control"
+
+
+def test_a_dialog_no_test_expected_answers_no_instead_of_waiting(
+        paths, make_app, no_real_dialogs):
+    """A native dialog is modal, and on a CI runner nobody answers it: the
+    whole run then sits out the six-hour job limit, which it did three times
+    on Windows. Under test every one answers the safe way at once -- No,
+    Cancel, nothing typed -- and the test that opened it fails, naming it."""
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.test")
+    app = make_app(paths)
+    app.update()
+
+    app.on_remove("claude", "Other")
+
+    assert [kind for kind, *_ in no_real_dialogs.opened] == ["askyesno"]
+    assert paths.credentials("claude", "Other").exists(), "answered yes"
+    with pytest.raises(pytest.fail.Exception, match="Remove Profile"):
+        no_real_dialogs.verdict()
+    no_real_dialogs.opened.clear()       # seen here, so not a teardown failure
+
+
+def _remove_button(app):
+    found = [w for w in _every_widget(app) if isinstance(w, ttk.Button)
+             and str(w.cget("style")) == "Danger.TButton"]
+    assert len(found) == 1, found
+    return found[0]
+
+
+@pytest.mark.skipif(
+    not (sys.platform == "win32" and os.environ.get("GITHUB_ACTIONS")),
+    reason="drives the real Windows pointer; only on a CI runner's desktop")
+def test_a_real_click_on_the_runner_desktop_never_reaches_a_test_window(
+        paths, make_app, no_real_dialogs):
+    """What hung the Windows jobs: real input on the runner's desktop landed
+    on a test window -- the remove button, in the one caught with a
+    traceback -- and opened a modal dialog. Windows the tests build take no
+    input from the OS at all; events a test generates still reach them.
+
+    The second click is the control: on an ordinary window the same click
+    does reach the button, so the first one could have."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    LEFTDOWN, LEFTUP, MOVE, ABSOLUTE = 0x0002, 0x0004, 0x0001, 0x8000
+
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, "claude", "Other", email="o@example.test")
+    app = make_app(paths)
+    app.geometry("+120+120")
+    app.attributes("-topmost", True)
+    app.update()
+    remove = _remove_button(app)
+
+    def click_remove():
+        x = remove.winfo_rootx() + remove.winfo_width() // 2
+        y = remove.winfo_rooty() + remove.winfo_height() // 2
+        assert user32.SetCursorPos(x, y)
+        user32.mouse_event(LEFTDOWN, 0, 0, 0, 0)
+        user32.mouse_event(LEFTUP, 0, 0, 0, 0)
+        # Input is routed in order: once a later move has landed, the click
+        # has gone wherever Windows sent it, and update() drains our share.
+        user32.mouse_event(MOVE | ABSOLUTE, 0, 0, 0, 0)
+        point = wintypes.POINT()
+        assert _pump(app, lambda: user32.GetCursorPos(ctypes.byref(point))
+                     and (point.x, point.y) == (0, 0)), "the move never landed"
+        app.update()
+
+    click_remove()
+    assert no_real_dialogs.opened == [], "a real click reached a test window"
+
+    app.attributes("-disabled", False)
+    click_remove()
+    assert _pump(app, lambda: no_real_dialogs.opened), (
+        "the control click never reached the button, so the first proves "
+        "nothing")
+    assert [kind for kind, *_ in no_real_dialogs.opened] == ["askyesno"]
+    no_real_dialogs.opened.clear()
+    assert paths.credentials("claude", "Other").exists()
 
 
 def test_refresh_only_reads(paths, make_app):
