@@ -79,22 +79,32 @@ on the refresh token in `.credentials.json`:
 claudeAiOauth.accessToken             ~8 hour lifetime, refreshed silently
 claudeAiOauth.refreshToken            the credential that avoids the email
 claudeAiOauth.expiresAt               epoch ms
-claudeAiOauth.refreshTokenExpiresAt   epoch ms — rolling; width varies, read it
+claudeAiOauth.refreshTokenExpiresAt   epoch ms — fixed at sign-in; read it
 claudeAiOauth.scopes / subscriptionType / rateLimitTier
 ```
 
 Preserving that file per account makes every subsequent switch instant. An
-account returns to the email flow only after the refresh window lapses, since
-each use re-mints it.
+account returns to the email flow when its refresh deadline passes.
 
-**The window width is not a constant and must not be hardcoded.** Measurements
-recorded in [token-storage.md](docs/token-storage.md) differ by an order of
-magnitude — ~28 days across three blobs on Linux/Team, ~4 days on a single
-macOS/Max 5x sample. Which variable moves it is unresolved.
-`profiles.refresh_expiry_ms()` reads `refreshTokenExpiresAt` out of the blob
-rather than deriving it, so the countdown is correct under either regime. The
-**rolling** property is confirmed by both samples and is what matters: an
-account in regular use never approaches its deadline.
+**The deadline does not roll.** Earlier versions of this document said it did,
+from two samples whose two timestamps shared a millisecond; that only shows
+both were computed at the same refresh. Measured on a Linux machine on 2026-11-13, comparing a profile's stash with
+the live file across one ordinary refresh, by hash and timestamp only:
+`refreshToken` changed, and `refreshTokenExpiresAt` moved by -1.375 s. In each
+file `expiresAt` and `refreshTokenExpiresAt` end in the same millisecond, so
+both are recomputed at every refresh as "now plus the seconds the server says
+are left" -- that is the wobble -- but the server's deadline itself stays
+where sign-in put it, about 30 days later. Claude Code 2.1.300 stores whatever
+`refresh_token` and `refresh_token_expires_in` the refresh returns, keeps the
+old values only when none come back, and warns in its own interface when
+three days or fewer remain.
+
+So an account in daily use still reaches its deadline, and the only way past
+it is a new sign-in. The countdown is read from the blob, never derived, and
+Claude's `warn_days` is 3 so that "soon" appears a day before Claude Code's own
+banner (§4.1). The refresh token also **rotates**: a stash taken before a
+refresh holds a spent token, which is why the active profile is re-stashed
+after use (§0.2).
 
 **Shambles never rotates, refreshes, decodes or transmits a token.** It moves
 bytes on a local filesystem. All token lifecycle management remains Claude
@@ -811,6 +821,17 @@ different terminals.
 
 ### 4.4 Known edge case — the 8-hour access token
 
+**No longer true of current clients.** Claude Code 2.1.300 takes a lock
+(`<config dir>/.oauth_refresh.lock`) before refreshing and re-reads the stored
+login first. If the stored access token is not the one it holds, it adopts
+the stored login and never posts its own refresh token, and it only saves a
+refresh result if the stored refresh token is still the one it posted. So a
+session left running across a switch does not write the old account back,
+and does not spend the old account's saved token: it becomes the new account
+at its next refresh. What remains is a refresh already in flight at the
+moment of a switch. The text below describes the older behaviour and is kept
+for clients that predate the lock.
+
 **Scenario.** A session outlives its ~8-hour access token *and* an account switch
 occurred in the interim. Claude Code performs a silent refresh and may write the
 refreshed tokens for the **previous** account into `.credentials.json`, which now
@@ -830,9 +851,8 @@ so no stable field survives to compare.
 documented in the README's *Adding an account* and *Switching* procedures. A
 session started within the last few hours is not at risk.
 
-**Recovery.** Benign and self-correcting. Switch to the affected profile and run
-`/login` once. The refresh window reopens. No data is lost — session history is
-not involved.
+**Recovery.** Switch to the affected profile and run `/login` once. That starts
+a new sign-in deadline. No data is lost — session history is not involved.
 
 **Status.** Documented, not fixed. A robust fix would require either an
 inotify-style watch on `.credentials.json` or a stable account discriminator

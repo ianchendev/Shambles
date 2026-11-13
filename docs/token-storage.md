@@ -541,6 +541,23 @@ a wide margin.
 
 ### The window rolls, so an account in daily use never expires
 
+> **Superseded 2026-11-13: it does not roll.** Measured on a Linux machine on 2026-11-13, comparing a profile's stash with
+> the live file across one ordinary refresh, by hash and timestamp only:
+> `refreshToken` changed, and `refreshTokenExpiresAt` moved by -1.375 s. In each
+> file `expiresAt` and `refreshTokenExpiresAt` end in the same millisecond, so
+> both are recomputed at every refresh as "now plus the seconds the server says
+> are left" -- that is the wobble -- but the server's deadline itself stays
+> where sign-in put it, about 30 days later. Claude Code 2.1.300 stores whatever
+> `refresh_token` and `refresh_token_expires_in` the refresh returns, keeps the
+> old values only when none come back, and warns in its own interface when
+> three days or fewer remain.
+>
+> The reasoning below took "both timestamps share a millisecond" as proof
+> that the deadline is re-minted forward on every refresh. It only shows that
+> both were computed at the same refresh, from "now plus the seconds left".
+> The 3.55-day macOS figure above is most likely a 30-day deadline measured
+> near its end, not a window four days wide. Kept for the record.
+
 This is why a short window goes unnoticed. Both timestamps are re-minted on every
 refresh, and a refresh happens automatically whenever the access token lapses —
 roughly every ten hours of use. Each day of use therefore pushes the deadline

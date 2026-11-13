@@ -419,7 +419,7 @@ Each card shows a state chip only when something needs you:
 | Chip | Meaning |
 |---|---|
 | *(nothing)* | Healthy, or an expiry it cannot read |
-| `soon` (amber) | The refresh window closes within a day (Claude) or two (Codex) |
+| `soon` (amber) | Fewer than four days left (Claude) or three (Codex). For Claude, using the account does not push the date back: sign in again before it |
 | `needs login` (red) | The window closed, or this profile has no credential yet. Press **Sign in** |
 | `signed out` (red) | The login was cleared. The profile survives, the token is empty |
 

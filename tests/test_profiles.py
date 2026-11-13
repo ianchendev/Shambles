@@ -61,13 +61,16 @@ def test_codex_email_comes_out_of_the_jwt(paths, codex):
 
 HOUR_MS = 3_600_000
 
-#: Offsets from the reference clock rather than whole days, because the two
-#: interesting cases are not expressible in days. Claude's warn window is one
-#: day (DD-1), so "closing" lives between 0 and 1 days out, and "today" means
-#: some hours from now -- an expiry of *exactly* now is closed, not closing.
-#: Face labels are state words (DD-1 / quieter UI), not countdown numbers.
+#: Offsets from the reference clock rather than whole days, because the
+#: interesting cases are not expressible in days. Claude's deadline is fixed
+#: at sign-in and does not move with use, so "soon" starts with fewer than
+#: four days left (warn_days 3): a day before Claude Code's own banner. "Today"
+#: means some hours from now -- an expiry of *exactly* now is closed, not
+#: closing. Face labels are state words (DD-1), not countdown numbers.
 @pytest.mark.parametrize("offset_ms, state, label", [
     (30 * DAY_MS, LIVE, None),
+    (4 * DAY_MS + HOUR_MS, LIVE, None),
+    (3 * DAY_MS + HOUR_MS, CLOSING, "soon"),
     (DAY_MS + HOUR_MS, CLOSING, "soon"),
     (6 * HOUR_MS, CLOSING, "soon"),
     (-3 * DAY_MS, CLOSED, "needs login"),
@@ -93,21 +96,22 @@ def test_an_expiry_of_exactly_now_is_closed_not_closing(paths, claude):
 def test_the_same_token_reads_differently_under_each_provider_threshold(paths):
     """DD-1's actual requirement: one shared constant cannot serve both.
 
-    A token 2 days out is comfortable for Claude (1-day window) but already
-    closing for Codex (2-day window).
+    Three days out is already closing for Claude, whose deadline is fixed at
+    sign-in and has to be met by signing in again, but not for Codex, whose
+    date is an access token it replaces on its own when used.
     """
     claude_p, codex_p = providers.load("claude"), providers.load("codex")
     make_profile(paths, "claude", "Work", email="w@example.com",
-                 refresh_expires_ms=NOW + 2 * DAY_MS)
+                 refresh_expires_ms=NOW + 3 * DAY_MS + HOUR_MS)
     make_profile(paths, "codex", "Work", email="c@example.com",
-                 refresh_expires_ms=NOW + 2 * DAY_MS)
+                 refresh_expires_ms=NOW + 3 * DAY_MS + HOUR_MS)
 
     claude_state = profiles.discover(
         paths, claude_p, None, NOW, platform="linux")[0].liveness.state
     codex_state = profiles.discover(
         paths, codex_p, None, NOW, platform="linux")[0].liveness.state
 
-    assert (claude_state, codex_state) == (LIVE, CLOSING)
+    assert (claude_state, codex_state) == (CLOSING, LIVE)
 
 
 def test_a_profile_with_no_token_is_absent_not_expired(paths, claude):
@@ -130,7 +134,8 @@ def test_expiry_severity_covers_absent_without_days(paths, claude):
 
 
 def test_the_warn_threshold_is_per_provider(claude, codex):
-    """DD-1: Claude's window is ~4 days against Codex's ~10, so one shared
+    """DD-1: the two dates mean different things -- a fixed sign-in deadline
+    for Claude, a self-renewing access token for Codex -- so one shared
     constant cannot serve both."""
     assert claude.warn_days != codex.warn_days
 

@@ -969,7 +969,7 @@ def test_an_expiry_chip_keeps_its_own_colour_under_the_pointer(paths, make_app,
     # Half a day, not a whole number of them. days_left is math.floor()ed
     # against a *second*, later reading of the clock, so `now + N * DAY_MS`
     # lands on N or N-1 depending on how many milliseconds the window took to
-    # build -- and Claude's warn_days is 1, so N=2 is right on the boundary.
+    # build -- so a whole number of days can sit right on Claude's boundary.
     make_profile(paths, "claude", "Work", email="w@example.com", active=True)
     make_profile(paths, "claude", "Soon", email="s@example.com",
                  refresh_expires_ms=switcher.now_ms() + DAY_MS // 2)
@@ -1552,10 +1552,28 @@ def test_an_expired_tooltip_says_to_sign_in_not_to_use_it(paths, claude):
     assert "Using the account renews it." not in tip
 
 
-def test_a_closing_tooltip_still_says_using_it_renews_it(paths, claude):
+def test_a_closing_claude_tooltip_says_the_date_does_not_move(paths, claude):
+    """Claude's deadline is fixed at sign-in: Claude Code refreshes the token
+    on use but the server keeps the same deadline (measured 2026-11-13).
+    Telling someone that using the account renews it sends them past the
+    date with nothing done."""
     make_profile(paths, "claude", "Soon", email="s@example.com",
                  refresh_expires_ms=healthy_ms(1))
     found = profiles.discover(paths, claude, None, switcher.now_ms(),
+                              platform="linux")[0]
+
+    tip = gui.expiry_tooltip(found)
+
+    assert "renews it" not in tip.replace("Sign in again to renew it.", "")
+    assert "Using the account does not move this date." in tip
+    assert "Sign in again before then" in tip
+
+
+def test_a_closing_codex_tooltip_still_says_using_it_renews_it(paths, codex):
+    """Codex's date is its access token, which Codex replaces on use."""
+    make_profile(paths, "codex", "Soon", email="s@example.com",
+                 refresh_expires_ms=healthy_ms(1))
+    found = profiles.discover(paths, codex, None, switcher.now_ms(),
                               platform="linux")[0]
 
     assert "Using the account renews it." in gui.expiry_tooltip(found)
