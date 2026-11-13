@@ -8,7 +8,6 @@ and machine IDs untouched and in their original order.
 
 import json
 import os
-import shutil
 from pathlib import Path
 
 from .errors import ConfigUnreadableError
@@ -112,9 +111,9 @@ def backup(path, backup_dir, now_ms: int) -> Path | None:
     The directory is created ``0700`` and each snapshot ``0600``, like the rest
     of the store. These are copies of ``~/.claude.json``, which carries the
     account's email, organisation and UUIDs -- no token, but not something to
-    leave at the umask either. ``shutil.copy2`` preserves the source's mode,
-    and Claude Code writes that file ``0600``, but a snapshot's protection
-    should not depend on the vendor's choice.
+    leave at the umask either. Written through ``replace_file``, so a
+    snapshot is owner-only from its first byte, whatever the source's mode,
+    and is never seen half written under its real name.
     """
     path, backup_dir = Path(path), Path(backup_dir)
     if not path.exists():
@@ -125,11 +124,7 @@ def backup(path, backup_dir, now_ms: int) -> Path | None:
     except OSError:
         pass  # Windows cannot express this; the file modes still apply
     dest = backup_dir / f"claude.json.{now_ms}"
-    shutil.copy2(path, dest)
-    try:
-        os.chmod(dest, 0o600)
-    except OSError:
-        pass
+    filemod.replace_file(dest, path.read_bytes(), mode=0o600)
     prune(backup_dir)
     return dest
 

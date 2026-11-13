@@ -18,6 +18,7 @@ to remove once satisfied.
 
 import os
 import shutil
+import stat
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,9 +173,13 @@ def survey(paths) -> Plan:
 def _merge_tree(src: Path, dest: Path) -> tuple[int, int]:
     """Copy files that are not already at ``dest``. Never overwrites.
 
-    Each file arrives under a temporary name and is renamed into place. A
-    copy cut short by a full disk would otherwise leave a truncated file at
-    the real name, and "already there" is exactly what the retry skips.
+    Each file goes through ``replace_file``: a temp file of its own, synced,
+    then renamed into place. A copy cut short by a full disk would otherwise
+    leave a truncated file at the real name, and "already there" is exactly
+    what the retry skips; a shared temp name would let two windows migrating
+    at once fill one file between them. The source's mode and times come
+    along, as ``copy2`` kept them: sessions are listed by when they were
+    written.
     """
     merged = skipped = 0
     for path in src.rglob("*"):
@@ -185,13 +190,10 @@ def _merge_tree(src: Path, dest: Path) -> tuple[int, int]:
             skipped += 1
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + TMP_SUFFIX)
-        try:
-            shutil.copy2(path, tmp)
-            os.replace(tmp, target)
-        except OSError:
-            tmp.unlink(missing_ok=True)
-            raise
+        info = path.stat()
+        filemod.replace_file(target, path.read_bytes(),
+                             mode=stat.S_IMODE(info.st_mode))
+        os.utime(target, ns=(info.st_atime_ns, info.st_mtime_ns))
         merged += 1
     return merged, skipped
 
@@ -210,9 +212,10 @@ def _merge_jsonl(src: Path, dest: Path) -> int:
     string, leaving two halves that are no longer JSON. Bytes split only at
     the newline the writer put there.
 
-    Written beside ``dest`` and renamed over it. ``dest`` is the base
-    profile's own history, the only copy of it, and writing in place empties
-    it first: a full disk at that moment lost every prompt it held.
+    Written beside ``dest`` and renamed over it, through ``replace_file``.
+    ``dest`` is the base profile's own history, the only copy of it, and
+    writing in place empties it first: a full disk at that moment lost every
+    prompt it held. It keeps its mode; a new one is owner-only.
     """
     if not src.is_file():
         return 0
@@ -223,13 +226,9 @@ def _merge_jsonl(src: Path, dest: Path) -> int:
     if not added:
         return 0
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + TMP_SUFFIX)
-    try:
-        tmp.write_bytes(b"\n".join(existing + added).rstrip(b"\n") + b"\n")
-        os.replace(tmp, dest)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
+    mode = stat.S_IMODE(dest.stat().st_mode) if dest.is_file() else 0o600
+    filemod.replace_file(
+        dest, b"\n".join(existing + added).rstrip(b"\n") + b"\n", mode=mode)
     return len(added)
 
 
