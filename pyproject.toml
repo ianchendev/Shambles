@@ -71,6 +71,8 @@ packages = ["shambles", "shambles.app", "shambles.app.tui", "shambles.app.qt", "
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+# tests/settling.py is shared by the suite in tests/ and in tests/tui/.
+pythonpath = ["tests"]
 asyncio_mode = "auto"
 # A test stuck longer than this dumps every thread's stack, so a hang leaves
 # evidence instead of an idle process (one did, for 80 minutes, on a shared

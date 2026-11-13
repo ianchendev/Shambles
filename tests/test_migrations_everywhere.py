@@ -14,6 +14,7 @@ import os
 import pytest
 
 from helpers import make_claude_json, make_legacy_profile, make_v1_profile
+from settling import settled
 from shambles import migrate, state
 from shambles.app import cli
 from shambles.app.service import ShamblesService
@@ -73,7 +74,8 @@ async def test_the_terminal_interface_brings_a_1_0_store_across(paths):
 
     app = ShamblesTUI(service, motion=False)
     async with app.run_test(size=(100, 40)) as pilot:
-        await pilot.pause()
+        await settled(pilot, app, lambda: "moved" in str(
+            app.query_one("#refresh-status").render()))
         names = [a.name for g in app.snapshot.groups for a in g.accounts]
         status = str(app.query_one("#refresh-status").render())
 
