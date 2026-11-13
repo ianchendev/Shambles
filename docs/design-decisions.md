@@ -21,7 +21,24 @@ Status values: **Decided** · **Leaning** (a direction, not yet committed) ·
 
 ## DD-1 — Token lifetime is system state, not a user-facing number
 
-**Status: Decided**
+**Status: Decided; context corrected 2026-11-13**
+
+> **Correction.** The context below says Claude's window rolls forward on every
+> refresh. It does not. Measured on a Linux machine on 2026-11-13, comparing a profile's stash with
+> the live file across one ordinary refresh, by hash and timestamp only:
+> `refreshToken` changed, and `refreshTokenExpiresAt` moved by -1.375 s. In each
+> file `expiresAt` and `refreshTokenExpiresAt` end in the same millisecond, so
+> both are recomputed at every refresh as "now plus the seconds the server says
+> are left" -- that is the wobble -- but the server's deadline itself stays
+> where sign-in put it, about 30 days later. Claude Code 2.1.300 stores whatever
+> `refresh_token` and `refresh_token_expires_in` the refresh returns, keeps the
+> old values only when none come back, and warns in its own interface when
+> three days or fewer remain.
+>
+> So the first bullet below is wrong: an account in regular use does lapse,
+> about 30 days after its last sign-in. The decision stands (a state, not a
+> duration), but the threshold rose from 1 day to 3 for Claude, and the
+> tooltip no longer tells anyone that using the account renews it.
 
 ### Context
 

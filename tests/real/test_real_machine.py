@@ -630,6 +630,60 @@ def test_with_credman_on_a_switch_leaves_no_stale_file_behind(machine):
     assert signed_in and said.get("email") == "b@example.test"
 
 
+@windows_only
+def test_what_2_1_2_left_in_credential_manager_is_reported_and_ignored(machine):
+    """What a Windows user upgrading from 2.1.2 or older has.
+
+    2.1.2 wrote every switch into Credential Manager under Claude Code's own
+    names, as raw 2000-byte pieces and a bare count. With those still there,
+    Claude Code must read its own login, a switch must work and leave them
+    alone, and doctor must list exactly them and remove nothing.
+    """
+    from shambles.stores.credman import _Advapi32
+
+    env = {"CLAUDE_CODE_FORCE_WINDOWS_CREDMAN": "1"}
+    blobs = {"CI-A": claude_blob("a"), "CI-B": claude_blob("b")}
+    accounts = {"CI-A": claude_account("a"), "CI-B": claude_account("b")}
+    box = machine("claude", blobs, env=env, accounts=accounts)
+
+    api = _Advapi32()
+    base = "Claude Code-credentials/claude-code-user"
+    old = claude_blob("old", padding=3000)
+    pieces = [old[i:i + 2000] for i in range(0, len(old), 2000)]
+    left = [f"{base}#{i}" for i in range(len(pieces))] + [f"{base}#m"]
+    for name in left:
+        assert api.read(name) is None, f"{name} is already on this runner"
+    try:
+        for index, piece in enumerate(pieces):
+            api.write(f"{base}#{index}", piece)
+        api.write(f"{base}#m", str(len(pieces)).encode("ascii"))
+
+        box.seed("CI-A")
+        signed_in, said = claude_status(vendor_env(**env))
+        assert signed_in and said.get("email") == "a@example.test", (
+            "Claude Code did not read its own login beside 2.1.2's entries")
+
+        box.switch("CI-B")
+        assert box.store().read() == blobs["CI-B"]
+        signed_in, said = claude_status(vendor_env(**env))
+        assert signed_in and said.get("email") == "b@example.test"
+
+        done = box.run("doctor", "--json")
+        report = json.loads(done.stdout)
+        found = [f for f in report["findings"]
+                 if f["code"] == "credman_leftovers"]
+        assert len(found) == 1, report
+        listed = [line.strip() for line in found[0]["message"].splitlines()
+                  if line.startswith("  ")]
+        assert listed == left
+        for index, piece in enumerate(pieces):
+            assert api.read(f"{base}#{index}") == piece, "doctor changed an entry"
+        assert api.read(f"{base}#m") == str(len(pieces)).encode("ascii")
+    finally:
+        for name in left:
+            api.delete(name)
+
+
 def test_switching_codex_changes_who_codex_says_is_signed_in(machine):
     blobs = {"CI-A": codex_blob("a"), "CI-B": codex_blob("b")}
     box = machine("codex", blobs)

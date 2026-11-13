@@ -22,7 +22,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import configjson, state
+from . import configjson, profiles, state
 from .errors import ShamblesError
 from .paths import ACCOUNT_NAME, CREDENTIALS_NAME
 from .stores import FileStore, StoreUnavailableError
@@ -363,7 +363,7 @@ def _prepare(paths, plan, base_dir, now_ms):
     # fresher than any sidecar.
     if active:
         live = configjson.extract_account_keys(
-            configjson.load(paths.claude_json))
+            configjson.load(_claude().config_file(home=paths.home)))
         if live.get("oauthAccount"):
             identities[active] = (identities[active][0], live)
 
@@ -413,7 +413,10 @@ def _file_profile(paths, name, creds, account, now_ms, *,
     store = FileStore(paths.credentials(V1_PROVIDER, name), 0o600)
     held = store.read() or None
     if creds and (held is None or (refresh and held != creds)):
-        store.write(creds)
+        # Through save_credential, which keeps what it replaces: what an
+        # earlier run filed is the same login, but older, and if Claude Code
+        # rotated it in between it may still be the only copy of something.
+        profiles.save_credential(paths, _claude(), name, creds)
         held = creds
     if held != (creds or None):
         return
@@ -640,3 +643,9 @@ def _lock_down(path: Path) -> None:
         os.chmod(path, 0o600)
     except OSError:
         pass
+
+
+def _claude():
+    """The provider every pre-1.0 and v1.0 profile belongs to."""
+    from .providers import load
+    return load(V1_PROVIDER)

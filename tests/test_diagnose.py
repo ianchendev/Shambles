@@ -5,6 +5,7 @@ checks are looks, never changes, so every test also has nothing to clean up.
 """
 
 import json
+import sys
 
 import pytest
 
@@ -12,17 +13,20 @@ from shambles import diagnose, providers
 from shambles.app import cli
 from shambles.diagnose import INFO, PROBLEM, WARNING
 from shambles.providers.codex import CodexProvider
+from shambles.stores.base import StoreUnavailableError
+from tests.fakes import FakeCredman
 
 
 def run(paths, *, env=None, platform="linux", which=None, wsl=False,
-        only=None):
+        only=None, credman=None):
     env = env or {}
     found = diagnose.diagnose(
         paths,
         [providers.load("claude", env=env),
          CodexProvider(env=env, system_root=paths.home / "root")],
         platform=platform, env=env, wsl=wsl,
-        which=which or (lambda name: f"/usr/local/bin/{name}"))
+        which=which or (lambda name: f"/usr/local/bin/{name}"),
+        credman=FakeCredman() if credman is None else credman)
     return [f for f in found if only is None or f.code == only]
 
 
@@ -234,3 +238,126 @@ def test_doctor_json_is_one_object_a_program_can_read(
     assert {"level", "provider", "code", "message"} <= set(payload["findings"][0])
     assert any(f["code"] == "auth_override" and f["provider"] == "codex"
                for f in payload["findings"])
+
+
+# -- what Shambles 2.1.2 and older left in Credential Manager -----------------
+
+OLD = "Claude Code-credentials/claude-code-user"
+
+
+def left_by_2_1_2(backend, service="Claude Code-credentials", pieces=2):
+    """What 2.1.2 wrote on a switch: raw pieces, then a bare count."""
+    base = f"{service}/claude-code-user"
+    for index in range(pieces):
+        backend.write(f"{base}#{index}", b'{"claudeAiOauth": "piece"}')
+    backend.write(f"{base}#m", str(pieces).encode("ascii"))
+    return base
+
+
+def test_entries_left_by_2_1_2_are_reported_on_windows(paths):
+    backend = FakeCredman()
+    left_by_2_1_2(backend)
+    before = dict(backend.entries)
+
+    found = run(paths, platform="win32", credman=backend,
+                only="credman_leftovers")
+
+    assert [(f.provider, f.level) for f in found] == [("claude", WARNING)]
+    message = found[0].message
+    for name in (f"{OLD}#0", f"{OLD}#1", f"{OLD}#m"):
+        assert f"  {name}\n" in message
+    assert "has not changed or deleted anything" in message
+    assert "safe to delete once no copy of Shambles 2.1.2 or older" in message
+    assert f"Do not remove '{OLD}' itself" in message
+    assert backend.entries == before, "doctor must only look"
+
+
+def test_they_are_not_a_problem(paths):
+    """Switching works with them there, so doctor still exits 0."""
+    backend = FakeCredman()
+    left_by_2_1_2(backend)
+    found = run(paths, platform="win32", credman=backend)
+    assert not [f for f in found if f.level == PROBLEM]
+
+
+def test_claude_codes_own_entries_are_not_reported(paths):
+    """A single entry, or pieces with Claude Code's JSON count, are its login."""
+    backend = FakeCredman()
+    backend.write(OLD, b'{"claudeAiOauth": {}}')
+    backend.write("Claude Code-credentials-0123abcd/claude-code-user#0", b"QUJD")
+    backend.write("Claude Code-credentials-0123abcd/claude-code-user#m",
+                  b'{"n":1,"l":4}')
+    assert run(paths, platform="win32", credman=backend,
+               only="credman_leftovers") == []
+
+
+def test_a_write_under_way_is_not_reported(paths):
+    """A ``#p`` marker means pieces are being written by somebody now."""
+    backend = FakeCredman()
+    base = left_by_2_1_2(backend)
+    backend.write(base + "#p", b"2")
+    assert run(paths, platform="win32", credman=backend,
+               only="credman_leftovers") == []
+
+
+def test_every_service_name_2_1_2_could_have_used_is_found(paths):
+    backend = FakeCredman()
+    left_by_2_1_2(backend, "Claude Code-credentials-0123abcd", pieces=1)
+    left_by_2_1_2(backend, "Claude Code-custom-oauth-credentials", pieces=3)
+    left_by_2_1_2(backend, "Claude Code-staging-credentials", pieces=1)
+    backend.write("Other/claude-code-user#m", b"1")
+
+    message = run(paths, platform="win32", credman=backend,
+                  only="credman_leftovers")[0].message
+
+    assert "holds 6 entries" in message
+    assert "Claude Code-credentials-0123abcd/claude-code-user#0" in message
+    assert "Claude Code-custom-oauth-credentials/claude-code-user#2" in message
+    assert "staging" not in message and "Other/" not in message
+
+
+def test_pieces_are_listed_in_order_and_the_count_last(paths):
+    backend = FakeCredman()
+    left_by_2_1_2(backend, pieces=11)
+    message = run(paths, platform="win32", credman=backend,
+                  only="credman_leftovers")[0].message
+    listed = [line.strip() for line in message.splitlines()
+              if line.startswith("  ")]
+    assert listed == [f"{OLD}#{i}" for i in range(11)] + [f"{OLD}#m"]
+
+
+@pytest.mark.parametrize("count", [b"0", b"-1", b"2x", b"", b"\xff", b"999"])
+def test_a_count_2_1_2_could_not_have_written_is_not_reported(paths, count):
+    backend = FakeCredman()
+    backend.write(OLD + "#0", b"piece")
+    backend.write(OLD + "#m", count)
+    assert run(paths, platform="win32", credman=backend,
+               only="credman_leftovers") == []
+
+
+def test_nothing_is_looked_for_off_windows(paths):
+    backend = FakeCredman()
+    left_by_2_1_2(backend)
+    for platform in ("linux", "darwin"):
+        found = run(paths, platform=platform, credman=backend)
+        assert not [f for f in found if f.code.startswith("credman")]
+
+
+def test_a_credential_manager_that_cannot_be_listed_is_said_plainly(paths):
+    class Refusing(FakeCredman):
+        def targets(self, prefix):
+            raise StoreUnavailableError("access denied (error 5)")
+
+    found = run(paths, platform="win32", credman=Refusing())
+    unchecked = [f for f in found if f.code == "credman_leftovers_unchecked"]
+    assert [(f.provider, f.level) for f in unchecked] == [("claude", INFO)]
+    assert "access denied" in unchecked[0].message
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a system without advapi32")
+def test_without_credential_manager_doctor_says_so_instead_of_failing(paths):
+    found = diagnose.diagnose(
+        paths, [providers.load("claude", env={})], platform="win32", env={},
+        wsl=False, which=lambda name: None)
+    assert "credman_leftovers_unchecked" in {f.code for f in found}
+
