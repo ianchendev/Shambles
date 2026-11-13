@@ -895,12 +895,12 @@ def test_switching_to_the_account_that_is_already_live_is_not_refused(
 
 def closing_claude(paths, *, active):
     claude_ = providers.load("claude", env={})
-    make_profile(paths, "claude", "Work", email="w@example.com",
+    make_profile(paths, "claude", "Work", email="w@example.test",
                  active=active, refresh_expires_ms=healthy_ms(2))
-    make_profile(paths, "claude", "Home", email="h@example.com",
+    make_profile(paths, "claude", "Home", email="h@example.test",
                  active=not active)
     live_owner = "Work" if active else "Home"
-    make_claude_json(paths, email=f"{live_owner[0].lower()}@example.com")
+    make_claude_json(paths, email=f"{live_owner[0].lower()}@example.test")
     paths.claude_dir.mkdir(parents=True, exist_ok=True)
     (paths.claude_dir / ".credentials.json").write_bytes(
         paths.credentials("claude", live_owner).read_bytes())

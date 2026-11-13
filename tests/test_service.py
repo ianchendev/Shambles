@@ -1222,10 +1222,10 @@ def test_an_unknown_window_theme_is_refused_and_nothing_is_written(paths):
 
 def seed_closing_work(paths):
     """Work is live and works, but its sign-in ends in two days."""
-    make_profile(paths, "claude", "Work", email="work@example.com",
+    make_profile(paths, "claude", "Work", email="work@example.test",
                  active=True, refresh_expires_ms=NOW + 2 * 86_400_000)
-    make_profile(paths, "claude", "Home", email="home@example.com")
-    make_claude_json(paths, email="work@example.com")
+    make_profile(paths, "claude", "Home", email="home@example.test")
+    make_claude_json(paths, email="work@example.test")
     live = paths.claude_dir / ".credentials.json"
     live.parent.mkdir(parents=True, exist_ok=True)
     live.write_bytes(paths.credentials("claude", "Work").read_bytes())
@@ -1262,7 +1262,7 @@ def test_an_early_sign_in_files_the_new_login_and_keeps_the_old(
     done = []
     handle = service(paths).start_login("claude", "Work", lambda line: None,
                                         done.append)
-    fresh_login(paths, "claude", "work@example.com")
+    fresh_login(paths, "claude", "work@example.test")
     deferred_login[0].finish(0)
 
     assert handle.wait(timeout=1)

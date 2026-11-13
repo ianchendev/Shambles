@@ -1875,10 +1875,10 @@ def test_an_unmarked_live_login_is_named_rather_than_guessed_at(
 # does nothing for it. Only a new sign-in moves Claude's date.
 
 def _parked_closing(paths, provider="claude"):
-    make_profile(paths, "claude", "Work", email="w@example.com", active=True)
-    make_profile(paths, provider, "Soon", email="s@example.com",
+    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
+    make_profile(paths, provider, "Soon", email="s@example.test",
                  refresh_expires_ms=healthy_ms(2))
-    make_claude_json(paths, email="w@example.com")
+    make_claude_json(paths, email="w@example.test")
     make_live_claude_login(paths, access_token="tok-Work")
 
 
@@ -1914,9 +1914,9 @@ def test_a_closing_claude_card_offers_sign_in_beside_switch(paths, make_app,
 def test_a_closing_active_claude_card_offers_sign_in(paths, make_app,
                                                      monkeypatch):
     _vendor_installed(monkeypatch)
-    make_profile(paths, "claude", "Soon", email="s@example.com",
+    make_profile(paths, "claude", "Soon", email="s@example.test",
                  refresh_expires_ms=healthy_ms(2), active=True)
-    make_claude_json(paths, email="s@example.com")
+    make_claude_json(paths, email="s@example.test")
     paths.claude_dir.mkdir(parents=True, exist_ok=True)
     (paths.claude_dir / ".credentials.json").write_bytes(
         paths.credentials("claude", "Soon").read_bytes())
