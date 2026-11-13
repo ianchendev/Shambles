@@ -31,7 +31,9 @@ Useful context for judging impact. Fuller detail in
   (`credentials.json.previous`) when a save replaced a different login.
   Files are written `0600`,
   directories `0700`, applied to a temp file before an atomic rename so a
-  credential is never briefly world-readable. Tokens are copied byte-for-byte
+  credential is never briefly world-readable. Each write has its own temp
+  file, so two Shambles windows saving at once cannot mix their writes, and
+  a temp file left by a killed process is removed by the next write. Tokens are copied byte-for-byte
   and never parsed beyond reading an expiry timestamp.
 - **Transmits nothing unless you turn on update checks.** One module in the
   package, `shambles/update_check.py`, may open a socket, and only when

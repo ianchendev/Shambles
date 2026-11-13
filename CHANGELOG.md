@@ -127,6 +127,20 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **Two Shambles windows saving the same login at once could corrupt it.**
+  Every write shared one temp file name, so when the window and the terminal
+  UI re-saved a login at the same moment, one could fail or install a file
+  that mixed both writes. Measured with two processes writing one file: 449
+  of 1200 writes failed and 1618 of 18,259 reads saw a file that was neither
+  write. Each write now has a temp file of its own, private from its first
+  byte, written in full and flushed to disk before it is renamed into place;
+  the same measurement shows no failures and no bad reads. A temp file left
+  by a failed or interrupted write is removed, and one left by a killed
+  process is removed by the next write once it is five minutes old. The
+  migration from the old `~/.claude-profiles` store now copies each saved
+  login the same way: a copy cut short by a full disk was left at its final
+  name, and every later run skipped it as already there.
+
 - **`CLAUDE_CONFIG_DIR` is followed for the account details too, not only
   the login.** With the variable set, Claude Code keeps its config, including
   which account is signed in, in that directory. Shambles still read and

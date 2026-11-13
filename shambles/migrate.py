@@ -26,6 +26,7 @@ from . import configjson, profiles, state
 from .errors import ShamblesError
 from .paths import ACCOUNT_NAME, CREDENTIALS_NAME
 from .stores import FileStore, StoreUnavailableError
+from .stores import file as filemod
 
 #: Directories inside a profile that hold machine-scoped state and must be
 #: merged rather than picked from one profile. ``plugins`` belongs here for the
@@ -562,8 +563,7 @@ def _copy_store(paths, provider_id: str, plan: StorePlan) -> None:
             source = entry / filename
             dest = directory / filename
             if source.is_file() and not dest.exists() and not kept:
-                shutil.copy2(source, dest)
-                _lock_down(dest)
+                _copy_private(source, dest)
 
     # A marker naming a profile that did not come across would surface as
     # MISSING_PROFILE on a brand-new layout, which is a confusing thing to
@@ -636,6 +636,18 @@ def _clear_staging(paths) -> None:
         return
     for leftover in leftovers:
         shutil.rmtree(leftover, ignore_errors=True)
+
+
+def _copy_private(source: Path, dest: Path) -> None:
+    """Copy a saved login, or the identity beside it, to ``dest``.
+
+    Through the same write as every other saved login: owner-only from its
+    first byte, and renamed into place whole. A plain copy to the final name
+    left a file cut short by a full disk at that name, and "already there"
+    is exactly what the next run skips, so the profile kept the broken login
+    for good. Raises ``OSError``, which :func:`migrate_store` reports.
+    """
+    filemod.replace_file(dest, source.read_bytes(), mode=0o600)
 
 
 def _lock_down(path: Path) -> None:
