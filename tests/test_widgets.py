@@ -10,6 +10,8 @@ import time
 
 import pytest
 
+from conftest import away_from_the_real_pointer
+
 from shambles import widgets
 
 
@@ -115,6 +117,7 @@ def root():
     except tk.TclError as exc:
         pytest.skip(f"no display: {exc}")
     made.geometry("360x240")
+    away_from_the_real_pointer(made)
     yield made
     made.destroy()
 
@@ -327,10 +330,14 @@ def test_a_card_arriving_under_the_pointer_keeps_its_hover(root, palette):
     """
     import tkinter as tk
 
+    # The pointer here is the generated <Enter>; the root fixture keeps the
+    # real one off the window (conftest.away_from_the_real_pointer).
     card = _card(root, palette)
     tk.Label(card.body, text="Personal", bg=palette["card"]).pack()
     card.watch_pointer()
     root.update()
+    left = []
+    card.bind("<Leave>", lambda e: left.append((e.x_root, e.y_root)), add="+")
 
     card.appear(palette["window"], delay_ms=40)
     card.event_generate("<Enter>")
@@ -343,7 +350,9 @@ def test_a_card_arriving_under_the_pointer_keeps_its_hover(root, palette):
             break
 
     assert card.itemcget(card.surface, "fill") == palette["card_hover"], (
-        "the entry fade washed the hover away")
+        "the entry fade washed the hover away; <Leave> at "
+        f"{left}, real pointer at {root.winfo_pointerxy()}, window at "
+        f"{root.winfo_rootx()},{root.winfo_rooty()}")
 
 
 def test_a_card_can_pulse_its_spine(root, palette, monkeypatch):
