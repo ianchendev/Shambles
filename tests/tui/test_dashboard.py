@@ -130,12 +130,15 @@ def screen_text(app) -> str:
 async def screen_showing(pilot, app, text: str, *, within: float = 5.0) -> str:
     """The screen once ``text`` is on it, or once ``within`` seconds pass.
 
-    Waits on the clock, not on a count of pumps. ``pilot.pause()`` with no
+    Waits on the clock, not on a count of pumps: ``pilot.pause()`` with no
     delay drains the message queue and lets no time pass, so a frame Textual
-    finishes on a timer never arrives inside ten of them on a busy runner:
-    CI caught the list missing after a resize on Windows and macOS while
-    every local run, starved of CPU or not, had it after the first pump.
-    Returns either way, so the caller's assertion reports the real screen.
+    finishes on a timer can miss any number of them. Returns either way, so
+    the caller's assertion reports the real screen.
+
+    Waiting longer was not what this test needed, though. When it failed on
+    CI the screen never recovered: the header had kept the height of the
+    text before the resize (see BrandHeader). Waiting is for frames; a
+    screen that is wrong for good fails here with the layout attached.
     """
     deadline = time.monotonic() + within
     screen = screen_text(app)
@@ -669,3 +672,37 @@ async def test_an_80_column_footer_still_names_the_sign_in_key(snapshot):
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         assert "l login" in screen_text(app)
+
+
+# CI probe on macOS (draft PR #49): after a resize from 100 to 60 columns the
+# header stayed 23 rows tall around the one-line compact header -- the wide
+# 76-column lockup, wrapped at 60 -- and pushed the account list off the
+# screen. A forced refresh did not bring it back. The header's height was
+# measured from the text last pushed into it, not from the size it was being
+# measured at; nothing can leave those two disagreeing if the header derives
+# its text from that size.
+
+async def test_the_header_measures_for_the_size_it_is_measured_at(snapshot):
+    from textual.geometry import Size
+
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        header = app.query_one("#dashboard-header")
+        assert header.region.height == 11
+
+        narrow = Size(60, 32)
+        assert header.get_content_height(narrow, narrow, 60) == 1
+        wide = Size(100, 32)
+        assert header.get_content_height(wide, wide, 100) == 11
+
+
+async def test_the_header_follows_every_resize(snapshot):
+    app = DashboardHarness(snapshot)
+    async with app.run_test(size=(100, 32)) as pilot:
+        for size, rows in [((60, 32), 1), ((100, 32), 11), ((40, 24), 1),
+                           ((100, 32), 11)]:
+            await pilot.resize_terminal(*size)
+            await pilot.pause()
+            header = app.query_one("#dashboard-header")
+            assert header.region.height == rows, (size, header.region)

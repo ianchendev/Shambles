@@ -11,8 +11,8 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from ..snapshot import Account, Group, Snapshot
-from .brand import LOCKUP_MIN_HEIGHT, header_kind, header_text
-from .widgets import AccountDetails, AccountList, notices_text
+from .brand import LOCKUP_MIN_HEIGHT, header_kind
+from .widgets import AccountDetails, AccountList, BrandHeader, notices_text
 
 
 MINIMUM_HEIGHT = 16
@@ -83,7 +83,7 @@ class Dashboard(Widget):
             f"Terminal is too small. Use at least {MINIMUM_HEIGHT} rows.",
             id="terminal-too-small",
         )
-        yield Static(id="dashboard-header", markup=False)
+        yield BrandHeader(id="dashboard-header")
         # What is true about a provider rather than an account: a login
         # nobody saved, a stale marker, an override. Hidden when all is well.
         notices = Static(notices_text(self.snapshot), id="provider-notices",
@@ -115,9 +115,6 @@ class Dashboard(Widget):
         self.set_class(width < 48, "compact")
         self.set_class(height < MINIMUM_HEIGHT, "too-short")
         self.set_class(not unicode, "ascii")
-        self.query_one("#dashboard-header", Static).update(
-            header_text(width, height, unicode=unicode)
-        )
         self.query_one("#shortcut-footer", Static).update(
             _paint_footer(_footer_for_width(width, wide=wide, unicode=unicode))
         )
