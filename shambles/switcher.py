@@ -18,6 +18,7 @@ from . import configjson, migrate, profiles, retry, state
 from .errors import (AlreadyManagedError, DriftedLoginError,
                      ProfileNotFoundError, ShamblesError, SwitchFailedError)
 from .providers import SIGNED_OUT
+from .providers import Identity
 from .stores.base import StoreUnavailableError
 
 NOTHING_TO_SAVE = (
@@ -128,20 +129,35 @@ def belongs_to(paths, provider, name, *, platform, blob=_UNREAD) -> bool:
     # account's token, and the two then agree.
     if holders:
         return False
-    expected = state.profile_email(paths, provider, name)
-    live = _email_of(paths, provider, blob)
-    return not (expected and live and expected != live)
+    return not state.disagree(state.profile_identity(paths, provider, name),
+                              _identity_of(paths, provider, blob))
 
 
-def _email_of(paths, provider, blob) -> str | None:
+def _identity_of(paths, provider, blob):
     """Whose login these bytes are, as far as the provider can say.
 
-    ``None`` for an empty store: with nobody signed in, an address left in
-    the vendor's config describes nobody.
+    Empty for an empty store: with nobody signed in, an address left in the
+    vendor's config describes nobody.
     """
     if not blob:
-        return None
-    return provider.identity(blob, home=paths.home, active=True).email
+        return Identity()
+    return provider.identity(blob, home=paths.home, active=True)
+
+
+def _may_file_identity(expected, live) -> bool:
+    """Whether the vendor's account details may be filed as a profile's own.
+
+    Only the same identity, refreshed. Never over one it disagrees with,
+    never one with no address over one that has it, and never an
+    organisation onto a profile saved before organisations were recorded:
+    the config naming one may have been rewritten by a session in another
+    organisation, and once filed the mismatch would read as known.
+    """
+    if state.disagree(expected, live):
+        return False
+    if expected.email and live.email != expected.email:
+        return False
+    return not (expected.email and not expected.account and live.account)
 
 
 def stash_live_login(paths, provider, name, *, platform=sys.platform,
@@ -167,15 +183,16 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
 
     # Everything from here on is decided about the bytes just read, not
     # about whatever a second read of the store would return.
-    expected = state.profile_email(paths, provider, name)
-    live = _email_of(paths, provider, blob)
+    expected = state.profile_identity(paths, provider, name)
+    live = _identity_of(paths, provider, blob)
     if not belongs_to(paths, provider, name, platform=platform, blob=blob):
-        holders = state.profiles_holding(paths, provider.id, blob)
+        holders = state.proven_owners(paths, provider, blob)
         if holders:
             raise DriftedLoginError(HELD_ELSEWHERE.format(
                 holder=holders[0], name=name))
         raise DriftedLoginError(DRIFT_REFUSAL.format(
-            live=live, name=name, expected=expected))
+            live=state.describe(live, expected), name=name,
+            expected=state.describe(expected, live)))
     paths.ensure_profile(provider.id, name)
     _write_credential(paths, provider, name, blob, sleep=sleep)
 
@@ -188,7 +205,7 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
     # unlabelled, and an unlabelled profile is one the drift check can no
     # longer protect.
     companion = provider.companion_read(home=paths.home)
-    if companion and not (expected and live != expected):
+    if companion and _may_file_identity(expected, live):
         configjson.write_sidecar(paths.account(provider.id, name), companion,
                                  now_ms_fn())
 
@@ -790,8 +807,8 @@ def restash_active(paths, provider, *, platform=sys.platform,
         if saved == live or not (provider.has_login(live)
                                  and provider.same_login(saved, live)):
             return False
-        expected = state.profile_email(paths, provider, name)
-        address = _email_of(paths, provider, live)
+        expected = state.profile_identity(paths, provider, name)
+        address = _identity_of(paths, provider, live)
         _write_credential(paths, provider, name, live, sleep=time.sleep)
     except (OSError, StoreUnavailableError, SwitchFailedError):
         return False
@@ -801,7 +818,7 @@ def restash_active(paths, provider, *, platform=sys.platform,
     # proves the token is this profile's; it says nothing about which account
     # the vendor's config file names right now.
     companion = provider.companion_read(home=paths.home)
-    if companion and not (expected and address != expected):
+    if companion and _may_file_identity(expected, address):
         configjson.write_sidecar(paths.account(provider.id, name), companion,
                                  now_ms_fn())
     return True

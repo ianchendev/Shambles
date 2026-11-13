@@ -50,6 +50,10 @@ class Identity:
     display_name: str | None = None
     org: str | None = None
     plan: str | None = None
+    #: What the address does not say: which organisation (Claude) or ChatGPT
+    #: account (Codex) the login is for. One address can sign in to several,
+    #: and each is a separate login with its own token.
+    account: str | None = None
 
     @property
     def known(self) -> bool:
