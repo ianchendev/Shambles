@@ -186,22 +186,66 @@ def holder_of_live_credential(paths, provider, *, platform: str = sys.platform):
     return holders[0] if holders else None
 
 
-def owner_of_live(paths, provider, *, platform: str = sys.platform):
-    """The saved profile this live login belongs to, or None.
+def profiles_continuing(paths, provider, blob) -> list[str]:
+    """Every profile whose saved login ``blob`` is a refresh of.
 
-    Asks the credential first and the address second. A stashed credential
-    that matches the live one byte for byte settles the question outright;
-    only when none matches does this fall back to the address, which is what
-    a rotating token and a never-stashed browser login both need.
-
-    Used to answer the question the drift warning raises but never resolves:
-    the machine is signed in as somebody, and either that somebody is already
-    one of the saved accounts -- in which case the marker is simply pointing
-    at the wrong one -- or they are new and worth offering to save.
+    Lineage, as the provider defines it: Claude's sign-in deadline, which a
+    refresh recomputes to within a second or so; Codex's account and the
+    address inside the token. A credential with no token in it continues
+    nothing -- a login cleared in place keeps its deadline.
     """
-    holder = holder_of_live_credential(paths, provider, platform=platform)
-    if holder:
-        return holder
+    if not blob or not provider.has_login(blob):
+        return []
+    found = []
+    for name in profile_names(paths, provider.id):
+        try:
+            saved = paths.credentials(provider.id, name).read_bytes()
+        except OSError:
+            continue
+        if provider.same_login(saved, blob):
+            found.append(name)
+    return found
+
+
+def proven_owners(paths, provider, blob) -> list[str]:
+    """The profiles ``blob`` provably belongs to: the bytes, else the lineage.
+
+    Proof is what no other program can produce. The address in the vendor's
+    config file is not proof: any Claude Code session still running rewrites
+    it from memory, and it reads as nobody while a write is half done.
+    """
+    return (profiles_holding(paths, provider.id, blob)
+            or profiles_continuing(paths, provider, blob))
+
+
+def owner_of_live(paths, provider, *, platform: str = sys.platform):
+    """The saved profile this live login provably belongs to, or None.
+
+    The bytes first, then the lineage; never the address. What this answers
+    is acted on without asking -- the marker is moved to it on every refresh
+    of every interface -- and the next switch files the live login under
+    whatever the marker names. See :func:`owner_by_address` for the
+    suggestion that may only be offered.
+    """
+    try:
+        live = provider.store(home=paths.home, platform=platform).read()
+    except Exception:
+        return None  # an unreadable store is not evidence of anything
+    owners = proven_owners(paths, provider, live)
+    marked = read_active(paths, provider.id)
+    if marked in owners:
+        return marked
+    return owners[0] if owners else None
+
+
+def owner_by_address(paths, provider, *, platform: str = sys.platform):
+    """The saved profile whose stored address the live login carries, or None.
+
+    A suggestion, never a proof: something to name to the user, who knows
+    which account they signed in as. For a new browser sign-in, whose bytes
+    and lineage no profile can share yet, it is the only clue there is, and
+    switching to the profile it names is how the user confirms it.
+    """
     live = live_email(paths, provider, platform=platform)
     if not live:
         return None
@@ -235,13 +279,19 @@ def inspect(paths, provider, *, platform: str = sys.platform) -> State:
     # lag a switch, and it can agree with the marker while the bytes in the
     # store are another profile's. A stashed credential identical to the live
     # one is proof either way.
-    holders = holders_of_live_credential(paths, provider, platform=platform)
-    if marked in holders:
+    # The lineage next: a refresh rotates the token, so the bytes stop
+    # matching within hours, but the login it continues is still known.
+    try:
+        blob = provider.store(home=paths.home, platform=platform).read()
+    except Exception:
+        blob = None
+    owners = proven_owners(paths, provider, blob)
+    if marked in owners:
         return State(MANAGED, provider.id, profile=marked,
                      live_email=expected or live)
-    if holders:
+    if owners:
         return State(DRIFTED, provider.id, profile=marked,
-                     live_email=(profile_email(paths, provider, holders[0])
+                     live_email=(profile_email(paths, provider, owners[0])
                                  or live),
                      expected_email=expected)
 

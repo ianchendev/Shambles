@@ -42,10 +42,15 @@ It runs `claude auth login` or `codex login` — the vendor opens the browser an
 runs its own OAuth callback. Shambles adds no OAuth code and no network
 imports; `tests/test_login.py` asserts the latter by walking the package AST.
 
-**§0.2 Rotation.** Codex replaces its refresh token on every use, so a stashed
-snapshot goes stale while its profile is active. `switcher.restash_active`
-corrects that on each window refresh. It is a *display* fix: switching away was
-already safe, because `switch` stashes the outgoing login first.
+**§0.2 Rotation.** Both vendors replace the refresh token on every refresh, so
+a stashed snapshot goes stale while its profile is active. Claude was believed
+not to until a real refresh on 2026-11-13 replaced it; Claude Code 2.1.300
+stores whatever refresh token the server returns. `switcher.restash_active`
+corrects the stash on each refresh of any interface, **on proof only**: the
+live login must continue the marked profile's own (§1.7), never merely carry
+its address. Switching away was already safe, because `switch` stashes the
+outgoing login first; the re-stash keeps the stash a token that works and
+keeps the proof alive.
 
 **§0.3 Migrations.** Two independent hops, both additive, both leaving the
 source on disk: the pre-1.0 symlink layout → a shared `~/.claude`, and
@@ -232,22 +237,32 @@ discrepancy is strictly better than displaying a confidently wrong account name.
 A profile that has never been logged into carries no stored identity, so it has
 no expectation to violate and is not treated as drift.
 
-**The credential is asked before the address.** `~/.claude.json` is rewritten
-from memory by any Claude Code session still running, so the address in it can
-lag a switch or contradict it. A stashed credential identical to the live one,
-byte for byte, is proof no other process can forge, and `state.inspect()`,
-`state.owner_of_live()` and `switcher.belongs_to()` all consult it first:
+**Proof is asked before the address.** `~/.claude.json` is rewritten from memory
+by any Claude Code session still running, so the address in it can lag a
+switch, contradict it, or read as nobody while a write is half done. Two
+things no other process can produce prove whose a live login is:
 
-- the marked profile holds the live bytes: `MANAGED`, whatever the address says;
-- another saved profile holds them: `DRIFTED`, even when the addresses agree.
-  That is what a switch interrupted between replacing the credential and
-  moving the marker looks like, and running the switch again finishes it;
-- nobody holds them: fall back to comparing addresses, as above.
+- **bytes**: a stashed credential identical to the live one;
+- **lineage**: the live login continues a stashed one, refreshed. Claude's
+  sign-in deadline is fixed at sign-in and recomputed at every refresh to
+  within a second or so, so two credentials whose deadlines agree within 10 s
+  are one login; Codex's account and the address inside its token do the
+  same. A credential with no token continues nothing.
 
-This proof lasts only while the bytes are unchanged. Once the vendor refreshes
-the live token nothing matches, and the address is all there is again. An
-interrupted switch that is not retried before then is not recoverable this
-way, and neither is a marker moved on the strength of a stale address.
+`state.inspect()`, `state.owner_of_live()` and `switcher.belongs_to()` consult
+proof first: the marked profile proven is `MANAGED` whatever the address says;
+another profile proven is `DRIFTED` even when the addresses agree (a switch
+interrupted between replacing the credential and moving the marker, which
+running the switch again finishes); with no proof they fall back to comparing
+addresses.
+
+**Only proof is acted on without a click.** The marker is moved by itself
+(`switcher.adopt_live_owner`, on every refresh of every interface) and the
+active stash is refreshed (`restash_active`) only on proof. The address is a
+suggestion: `state.owner_by_address` names the saved account it points at, the
+interfaces say so, and switching to that account is the user's answer -- the
+live login is filed there and the one it replaces kept beside it. Acting on
+the address alone once filed one account's token over another's.
 
 **A live login always has somewhere to go.** Every operation that replaces the
 live credential (`switch`, `add_empty_account`, `begin_relogin`, and the

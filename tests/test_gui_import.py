@@ -1304,23 +1304,36 @@ def test_a_nonsense_expiry_timestamp_still_renders_the_window(paths, make_app):
 # Nothing was lost, but the card offered a Switch button whose copy-out
 # would have filed that personal login under "Ian Work".
 
-def test_opening_the_window_adopts_the_account_actually_signed_in(paths,
-                                                                  make_app):
-    """If the live login is one of the saved accounts, the marker is simply
-    pointing at the wrong one. Say so by pointing it at the right one."""
+def test_opening_the_window_asks_rather_than_adopts_on_an_address(
+        paths, make_app):
+    """Signed in again outside Shambles, as an account already saved. The
+    window used to move the marker on the address alone. That address comes
+    from a file a running session rewrites, and moving on it filed one
+    account's token over another's, so the window now says what it sees and
+    leaves the move to the user: Personal's own Switch button files the
+    login there, keeping the one it replaces. No "Save" is offered, which
+    would only make a second card for the same account."""
     make_profile(paths, "claude", "Work", email="work@example.com", active=True)
     make_profile(paths, "claude", "Personal", email="personal@example.com")
-    # Signed in as Personal, outside Shambles.
+    personal = paths.credentials("claude", "Personal").read_bytes()
+    # Signed in as Personal, outside Shambles: a new login of its own.
     make_claude_json(paths, email="personal@example.com")
-    make_live_claude_login(paths)
+    live = make_live_claude_login(paths)
 
     app = make_app(paths)
     app.update()
 
-    assert state.read_active(paths, "claude") == "Personal", (
-        "the marker still names the account that is not signed in")
-    text = _all_text(app.rows)
-    assert "but 'Work' expects" not in text, "still warning about drift"
+    assert state.read_active(paths, "claude") == "Work"
+    assert not [b for b in _buttons(app.rows)
+                if str(b.cget("text")).startswith("Save")]
+
+    app.on_switch(providers.load("claude"), "Personal")
+
+    assert state.read_active(paths, "claude") == "Personal"
+    assert paths.credentials("claude", "Personal").read_bytes() == \
+        live.read_bytes()
+    assert (paths.profile_dir("claude", "Personal")
+            / "credentials.json.previous").read_bytes() == personal
 
 
 def test_adopting_an_account_moves_no_credential(paths, make_app):

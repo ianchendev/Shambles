@@ -980,6 +980,15 @@ class ShamblesApp(tk.Tk):
             return
         if not self._has_live_login(provider):
             return
+        # The live login carries a saved account's address. Saving it would
+        # make a second card for that account; that profile's own Switch is
+        # the answer, and the heading already says whose address it is.
+        try:
+            if state.owner_by_address(self.paths, provider,
+                                      platform=self.platform):
+                return
+        except ShamblesError:
+            pass
 
         t = self.theme
         who = current.live_email
