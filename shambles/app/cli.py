@@ -26,6 +26,7 @@ from .. import settings
 from ..paths import Paths
 from . import snapshot as snapshot_mod
 from .launch import LaunchRequest, replace_process
+from . import service as service_mod
 from .service import ShamblesService
 
 EXIT_OK = 0
@@ -246,9 +247,15 @@ def cmd_list(args) -> int:
     return EXIT_OK
 
 
+def _say_waiting() -> None:
+    # stderr, so --json output on stdout stays one parseable line.
+    print(service_mod.waiting_for_refresh(), file=sys.stderr, flush=True)
+
+
 def cmd_switch(args) -> int:
     try:
-        result = _ready_service(args).switch(args.provider, args.account)
+        result = _ready_service(args).switch(
+            args.provider, args.account, on_wait=_say_waiting)
     except KeyError:
         known = ", ".join(registry.ids())
         return _fail(args, "unknown_provider",

@@ -59,6 +59,9 @@ class SnapshotService:
         self.switch_started = threading.Event()
         self.release_switch = threading.Event()
         self.block_switch = False
+        #: Report a wait for the vendor's refresh lock, as the real switch
+        #: does when Claude Code is renewing a login.
+        self.switch_waits = False
         self.refresh_calls = 0
 
         # Lifecycle actions (save/add/rename/remove/eject) share one blocking
@@ -109,9 +112,11 @@ class SnapshotService:
             "switch", provider, account, False, f"Switch to {account}?"
         )
 
-    def switch(self, provider, account):
+    def switch(self, provider, account, on_wait=None):
         self.switch_calls.append((provider, account))
         self.switch_thread = threading.get_ident()
+        if self.switch_waits and on_wait is not None:
+            on_wait()
         self.switch_started.set()
         if self.block_switch:
             if not self.release_switch.wait(5):
@@ -1641,13 +1646,15 @@ async def test_the_active_account_menu_does_not_offer_remove(service):
         assert app.screen.id != "confirm-action"
 
 
-# --- Round 2: a fixed sign-in deadline, and a one-key fix ------------------
+# --- Round 2: a fixed sign-in deadline, a one-key fix, a visible wait --------
 #
 # Reproduced on synthetic homes (scratch, not committed):
 # - Work in its last two days of a Claude sign-in: the list said "Active",
 #   the pane said "Already active", and nothing anywhere mentioned a date.
 # - Marked Work, signed in as saved Home: the notice said to select Home and
 #   press Enter, three keys from where the cursor starts.
+# - Claude Code's refresh lock held: Enter on Home, then fifteen seconds with
+#   no sign that anything was happening, then a refusal.
 
 SOON = Notice(
     "sign_in_soon",
@@ -1736,6 +1743,22 @@ async def test_a_parked_login_near_its_deadline_says_so_in_the_list():
     async with app.run_test(size=(110, 40)) as pilot:
         await pilot.pause()
         assert "expires soon" in screen_text(app)
+
+
+async def test_a_switch_waiting_on_claude_code_says_so(service):
+    service.switch_waits = True
+    service.block_switch = True
+    app = ShamblesTUI(service)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.press("j", "enter")
+        assert service.switch_started.wait(2)
+        await pilot.pause(0.2)
+        assert "Waiting for Claude Code" in words(app)
+
+        service.release_switch.set()
+        await pilot.pause(0.3)
+        assert app.screen.id == "result"
+        assert "Waiting for Claude Code" not in words(app)
 
 
 async def test_help_lists_save_and_fix_and_why_claude_needs_signing_in(service):

@@ -21,7 +21,7 @@ from textual.widgets import Static
 from ... import __version__, settings, update_check
 from ...errors import ShamblesError
 from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
-                       ShamblesService)
+                       ShamblesService, waiting_for_refresh)
 from ..snapshot import Snapshot
 from .brand import header_text
 from .dashboard import Dashboard, MINIMUM_HEIGHT
@@ -42,6 +42,10 @@ class SwitchFinished(Message):
         super().__init__()
         self.provider = provider
         self.result = result
+
+
+class SwitchWaiting(Message):
+    """The switch is waiting for Claude Code to finish renewing a login."""
 
 
 class MutationFinished(Message):
@@ -616,7 +620,9 @@ class ShamblesTUI(App[str | None]):
     @work(thread=True, exclusive=True, group="mutation")
     def perform_switch(self, provider: str, account: str) -> None:
         try:
-            result = self.service.switch(provider, account)
+            result = self.service.switch(
+                provider, account,
+                on_wait=lambda: self.post_message(SwitchWaiting()))
         except Exception:
             # Unexpected store/OS failures must not expose an exception dump
             # or close the interface before the user can read the result.
@@ -626,7 +632,20 @@ class ShamblesTUI(App[str | None]):
             ))
         self.post_message(SwitchFinished(provider, result))
 
+    def on_switch_waiting(self, _: "SwitchWaiting") -> None:
+        # On the dashboard, under the notices, rather than a toast in a
+        # corner: it is the only thing happening, and the result screen
+        # replaces it either way.
+        self._show_status(waiting_for_refresh())
+
+    def _show_status(self, text: str) -> None:
+        try:
+            self.query_one(Dashboard).show_status(text)
+        except NoMatches:
+            pass
+
     async def on_switch_finished(self, event: SwitchFinished) -> None:
+        self._show_status("")
         self._capture_selection()
         if event.result.snapshot is not None:
             await self.render_snapshot(event.result.snapshot)
