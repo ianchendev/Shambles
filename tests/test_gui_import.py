@@ -829,6 +829,7 @@ def test_a_real_click_on_the_runner_desktop_never_reaches_a_test_window(
 
     click_remove()
     assert no_real_dialogs.opened == [], "a real click reached a test window"
+    assert make_app.foreign == [], make_app.foreign
 
     app.attributes("-disabled", False)
     click_remove()
@@ -836,7 +837,11 @@ def test_a_real_click_on_the_runner_desktop_never_reaches_a_test_window(
         "the control click never reached the button, so the first proves "
         "nothing")
     assert [kind for kind, *_ in no_real_dialogs.opened] == ["askyesno"]
+    # ... and make_app saw it come in, as it would any input from outside.
+    assert any("button 1" in seen for seen in make_app.foreign), (
+        make_app.foreign)
     no_real_dialogs.opened.clear()
+    make_app.foreign.clear()
     assert paths.credentials("claude", "Other").exists()
 
 

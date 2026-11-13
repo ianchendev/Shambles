@@ -196,6 +196,12 @@ def make_app():
     cannot leak a window into the next test.
     """
     created = []
+    foreign = []
+
+    def _described(event):
+        what = (f"key {event.keysym}" if str(event.type) == "KeyPress"
+                else f"button {event.num}")
+        return f"{what} on {event.widget} at {event.x_root},{event.y_root}"
 
     def _make(paths, *, platform="linux"):
         """Build the window against a synthetic home.
@@ -223,8 +229,17 @@ def make_app():
             # with event_generate goes through Tk's own queue and still
             # arrives.
             app.attributes("-disabled", True)
+        # No test presses a mouse button or a key: they call commands
+        # directly and generate only <Enter> and <Leave>. A press or a key
+        # here came from outside the process, and whatever the test then
+        # saw is not what it set up.
+        app.bind_all("<ButtonPress>", lambda e: foreign.append(_described(e)),
+                     add="+")
+        app.bind_all("<KeyPress>", lambda e: foreign.append(_described(e)),
+                     add="+")
         return app
 
+    _make.foreign = foreign
     yield _make
 
     for app in created:
@@ -232,6 +247,10 @@ def make_app():
             app.destroy()
         except Exception:
             pass
+    if foreign:
+        pytest.fail("real input reached a test window, so the test saw "
+                    "something it did not set up:\n  " + "\n  ".join(foreign),
+                    pytrace=False)
 
 
 posix_only = pytest.mark.skipif(
