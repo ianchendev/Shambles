@@ -162,7 +162,7 @@ Notable changes per release. Dates are the tag date.
 - **The terminal UI no longer loses the account list after a resize.**
   Making the window narrower could leave the header as tall as the wide
   banner it had just replaced, around the one-line header, with the account
-  list pushed off the screen until the next restart. The header now takes
+  list pushed off the screen until the window was resized again. The header now takes
   its size from the window it is drawn in. In ASCII mode the details pane no
   longer draws a block-glyph scrollbar when it overflows.
 
