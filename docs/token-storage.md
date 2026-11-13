@@ -315,6 +315,13 @@ is not the empty string.
 `OAUTH_FILE_SUFFIX` is `""` in production, `"-custom-oauth"` under a custom
 `CLAUDE_CODE_OAUTH_CLIENT_ID`, `"-local-oauth"` for local dev [SRC].
 
+> **[2026-11] Superseded.** `"-custom-oauth"` is set by
+> `CLAUDE_CODE_CUSTOM_OAUTH_URL`, not by `CLAUDE_CODE_OAUTH_CLIENT_ID`, which
+> changes only the client id. Read from the 2.1.322 binaries [SRC], and
+> independently from 2.1.300 by the review lane; see "Re-check, 2026-11-13"
+> above. Shambles has keyed the suffix on `CLAUDE_CODE_CUSTOM_OAUTH_URL` since
+> the fix in #14.
+
 **Independently verified** [OBS]: computing the algorithm by hand gives
 `sha256(NFC("/Users/<user>/.claude"))[:8] = 7f69f673`, matching exactly the
 service name observed when the CLI was actually run with

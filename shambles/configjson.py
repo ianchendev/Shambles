@@ -12,18 +12,14 @@ import shutil
 from pathlib import Path
 
 from .errors import ConfigUnreadableError
+from .stores import file as filemod
 
 #: Account identity, carried between profiles so the UI names the right person.
 ACCOUNT_KEYS = ("oauthAccount",)
 
 BACKUP_RETENTION = 10
-TMP_SUFFIX = ".shambles-tmp"
-
-#: Windows descriptors default to text mode and rewrite every "\n" as
-#: "\r\n". Harmless for JSON's validity, but the payload is already encoded
-#: bytes by the time it reaches os.write, so translating it means the file on
-#: disk is not what was serialised. No such mode exists on POSIX.
-BINARY_FLAG = getattr(os, "O_BINARY", 0)
+#: How a temp file of :func:`write_atomic` ends; see ``stores.file``.
+TMP_SUFFIX = filemod.TMP_SUFFIX
 
 
 def load(path) -> dict:
@@ -48,29 +44,15 @@ def extract_account_keys(config: dict) -> dict:
 
 
 def write_atomic(path, config: dict) -> None:
-    """Write via a same-directory temp file, then rename over the original.
+    """Write ``config`` as JSON, owner-only, replacing the file whole.
 
-    The descriptor is chmod'd before anything is written to it, not after --
-    ``O_CREAT`` only honours a mode on creation, so a ``*.shambles-tmp`` left
-    at a loose mode by a crashed run would otherwise take the full plaintext
-    payload while still world-readable. ``os.fchmod`` acts on the open fd
-    regardless of whether the file pre-existed; Windows has no ``os.fchmod``,
-    so the trailing ``os.chmod`` stays for that platform and is a no-op
-    everywhere else.
+    Through the same write as every saved login
+    (:func:`shambles.stores.file.replace_file`): a temp file of its own,
+    private from its first byte, renamed into place. Two windows writing the
+    same account file at once each install a complete one.
     """
-    path = Path(path)
-    tmp = path.with_name(path.name + TMP_SUFFIX)
     payload = (json.dumps(config, indent=2) + "\n").encode("utf-8")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | BINARY_FLAG,
-                 0o600)
-    try:
-        if hasattr(os, "fchmod"):
-            os.fchmod(fd, 0o600)
-        os.write(fd, payload)
-    finally:
-        os.close(fd)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    filemod.replace_file(Path(path), payload, mode=0o600)
 
 
 CORRUPT_CONFIG_HELP = (
