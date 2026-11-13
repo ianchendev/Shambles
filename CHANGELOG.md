@@ -92,6 +92,15 @@ Notable changes per release. Dates are the tag date.
 
   Plain `shambles gui` still opens the classic window.
 
+- **The window has an icon and a place in your applications menu.** The
+  title bar and taskbar show a Shambles icon instead of a blank one.
+  `install.sh` adds a launcher entry on Linux
+  (`~/.local/share/applications/shambles.desktop`) and `install.ps1` adds a
+  Start menu shortcut on Windows, both pointing at the installed window.
+  On macOS, where the window is not yet an app Launchpad can list, it says
+  to open it with `shambles gui` instead. Set `SHAMBLES_NO_DESKTOP=1` to
+  skip either.
+
 - **The installers fetch the new window as its own download.** It carries
   Qt (a 36 to 82 MB download, depending on the platform), so it ships beside
   the `shambles` binary instead of inside it: every other command stays as

@@ -233,3 +233,15 @@ def test_a_sign_in_finishing_as_the_window_closes_does_not_touch_dead_qml(
     pump(timeout=0.05)
 
     assert messages == []
+
+
+def test_the_window_has_an_icon(window):
+    """Without one the title bar and taskbar show the toolkit's blank
+    default."""
+    engine, _ui, _service, _messages = window()
+    from PySide6.QtGui import QGuiApplication
+
+    icon = QGuiApplication.instance().windowIcon()
+
+    assert not icon.isNull()
+    assert icon.pixmap(64, 64).width() == 64

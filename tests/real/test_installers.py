@@ -407,12 +407,58 @@ def publish_window(release, name):
         sums.write(f"{digest}  {name}\n")
 
 
+def start_menu_shortcut(shell, expected):
+    """``"MATCH"``, ``"OTHER"`` or ``"MISSING"``: whether the per-user
+    Shambles shortcut points at ``expected``.
+
+    Compared inside PowerShell, with the expected path handed over in the
+    environment, so neither direction depends on the console's code page --
+    the point of one of these tests is a path that code page cannot hold.
+    Read through Shell.Application, which is Unicode, not WScript.Shell,
+    which is not.
+    """
+    env = dict(os.environ)
+    env["SHAMBLES_EXPECT"] = str(expected)
+    done = run_ps(shell, (
+        "$p = Join-Path ([Environment]::GetFolderPath('Programs')) "
+        "'Shambles.lnk'; if (-not (Test-Path -LiteralPath $p)) { "
+        "'MISSING'; return }; $l = (New-Object -ComObject "
+        "Shell.Application).NameSpace((Split-Path $p)).ParseName("
+        "'Shambles.lnk').GetLink; if ($l.Path -eq $env:SHAMBLES_EXPECT) "
+        "{ 'MATCH' } else { 'OTHER' }"), env)
+    words = done.stdout.split()
+    return words[-1] if words else "MISSING"
+
+
 @windows_only
 @pytest.mark.parametrize("shell", SHELLS)
-def test_install_ps1_installs_the_window(
+def test_the_start_menu_shortcut_in_a_plain_folder(release, tmp_path, shell):
+    """The shortcut on its own, in a folder whose name is plain ASCII, so a
+    failure here cannot be the folder name's fault."""
+    local = tmp_path / "plain"
+    local.mkdir()
+    release()
+    window = this_asset().replace("shambles-windows-",
+                                  "shambles-window-windows-") \
+                         .replace(".exe", ".zip")
+    publish_window(release, window)
+
+    done = run_ps(shell, f"irm {release.base}/install.ps1 | iex",
+                  windows_env(local, release.base, SHAMBLES_NO_PATH="1"))
+
+    assert done.returncode == 0
+    assert "Could not add a Start menu shortcut" not in done.stdout
+    assert start_menu_shortcut(
+        shell, local / "Shambles" / "window" / "shambles-window.exe") == "MATCH"
+
+
+@windows_only
+@pytest.mark.parametrize("shell", SHELLS)
+def test_install_ps1_installs_the_window_and_a_start_menu_shortcut(
         release, tmp_path, shell):
-    """Unpacking the zip and swapping it in, under Windows PowerShell 5.1
-    and PowerShell 7, into a folder with spaces and non-ASCII characters."""
+    """The one part of the window's install that could only be read until
+    now: unpacking the zip, swapping it in, and the shortcut, written by a
+    COM object under Windows PowerShell 5.1 and PowerShell 7."""
     local = tmp_path / "Lôcal App Data 家"
     local.mkdir()
     release()
@@ -434,6 +480,14 @@ def test_install_ps1_installs_the_window(
                  if p.name not in ("shambles.exe", "shamblesw.exe", "window")]
     assert leftovers == [], f"left behind: {leftovers}"
 
+    # The folder name holds characters outside the ANSI code page, which is
+    # the case WScript.Shell refuses and the IShellLinkW fallback exists for.
+    assert "Could not add a Start menu shortcut" not in done.stdout
+    assert start_menu_shortcut(shell, installed_window) == "MATCH"
+
+    # The shortcut is left for the next parametrisation to overwrite; the
+    # runner is thrown away afterwards.
+
 
 @windows_only
 def test_a_window_that_fails_its_checksum_leaves_shambles_installed(
@@ -448,7 +502,8 @@ def test_a_window_that_fails_its_checksum_leaves_shambles_installed(
         sums.write(f"{'0' * 64}  {window}\n")
 
     done = run_ps(SHELLS[0], f"irm {release.base}/install.ps1 | iex",
-                  windows_env(tmp_path, release.base, SHAMBLES_NO_PATH="1"))
+                  windows_env(tmp_path, release.base, SHAMBLES_NO_PATH="1",
+                              SHAMBLES_NO_DESKTOP="1"))
 
     assert done.returncode == 0
     assert (tmp_path / "Shambles" / "shambles.exe").is_file()
