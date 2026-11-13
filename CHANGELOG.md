@@ -32,6 +32,10 @@ Notable changes per release. Dates are the tag date.
   cancelled or does not finish leaves the account exactly as it was. Codex
   accounts are marked `expires soon` too, but using one renews it, so they
   get no notice.
+- **A switch that has to wait says why.** While Claude Code is renewing a
+  login, a switch waits for it to finish (up to 15 seconds) so the new token
+  is the one saved. The terminal UI and `shambles switch` now say that it is
+  waiting and on what, instead of sitting silent until the result.
 - **One key for what the notice says.** In the terminal UI, `f` does what
   the notice at the top says: sign that account in again, or switch to the
   saved account a login belongs to when the label names another. Both took

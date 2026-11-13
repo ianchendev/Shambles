@@ -253,7 +253,7 @@ def test_cli_switch_calls_application_service(paths, monkeypatch):
     ])
     monkeypatch.setattr(
         "shambles.app.cli.ShamblesService.switch",
-        lambda self, provider, account:
+        lambda self, provider, account, on_wait=None:
             called.append((provider, account))
             or ActionResult(True, "switch", snapshot=result_snapshot))
     assert cli.main(["--home", str(paths.home), "switch",
