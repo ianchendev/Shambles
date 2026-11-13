@@ -106,7 +106,7 @@ it in `~/.local/bin`. No sudo, nothing to build.
 curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash
 
 # or pin a release
-curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.1.0
+curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.2.0
 ```
 
 **Windows PowerShell** installs `shambles.exe` and its windowed twin
@@ -124,7 +124,7 @@ execution policy. From `cmd.exe`, wrap it:
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex"
 ```
 
-To pin a release, set `$env:SHAMBLES_VERSION = 'v2.1.2'` before the line.
+To pin a release, set `$env:SHAMBLES_VERSION = 'v2.2.0'` before the line.
 
 Three things to know first:
 
@@ -202,9 +202,43 @@ message instead of a syntax error from deep inside the package.
 path.
 
 **Not on npm yet.** `npm install -g shambles` fails today. A launcher package
-is designed and waiting on the macOS and Windows credential work below.
+is designed but not built.
 
 </details>
+
+### Updating
+
+Run the same install command again. It replaces Shambles with the latest
+release, and the window with it, in place. Your saved accounts, settings and
+logins live in `~/.shambles` and are not touched.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex
+```
+
+The new version is checked against the release's `SHA256SUMS` and run once
+before it replaces the old one, so a bad download leaves your working copy
+as it was. On Windows it can update while Shambles is open; the new version
+takes over the next time you start it. Installed with pipx instead:
+`pipx install --force git+https://github.com/ianchendev/Shambles`.
+
+Check with `shambles --version`, then run `shambles doctor`. It says whether
+switching works on this machine and points at anything the update could not
+fix by itself.
+
+**Coming from 2.1.2 or older on native Windows:** switching Claude Code
+accounts never worked there before 2.2.0 (see
+[Will it work for you?](#will-it-work-for-you)). After updating, if
+`shambles doctor` and `claude auth status` name different accounts, switch
+once to the account you want. Do not use `claude auth logout` or `/logout` to
+fix it: signing out revokes the login, including the copy Shambles saved.
+
+To hear about new releases without checking, turn on
+[update checks](#update-checks).
 
 ### Will it work for you?
 

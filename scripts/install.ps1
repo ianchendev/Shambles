@@ -7,8 +7,8 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex"
 #
 # A specific release:
-#   $env:SHAMBLES_VERSION = 'v2.1.2'; irm .../scripts/install.ps1 | iex
-#   .\install.ps1 -Version v2.1.2
+#   $env:SHAMBLES_VERSION = 'v2.2.0'; irm .../scripts/install.ps1 | iex
+#   .\install.ps1 -Version v2.2.0
 #
 # A saved copy is a script file, and Windows refuses to run those by default
 # ("running scripts is disabled on this system"). The one-liner above is not
