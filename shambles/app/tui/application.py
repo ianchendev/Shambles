@@ -23,10 +23,9 @@ from ...errors import ShamblesError
 from ..service import (ActionError, ActionPlan, ActionResult, LoginHandle,
                        ShamblesService, waiting_for_refresh)
 from ..snapshot import Snapshot
-from .brand import header_text
 from .dashboard import Dashboard, MINIMUM_HEIGHT
 from .overlays import ConfirmAction, ResultScreen, overlay_panel_classes
-from .widgets import AccountList, fix_target, notices_text
+from .widgets import AccountList, BrandHeader, fix_target, notices_text
 from .workflows import AccountMenu, AddAccountScreen, LoginProgress, NameInputScreen
 
 #: A state and the key that changes it. The footer already lists "a add",
@@ -220,18 +219,15 @@ class Onboarding(Widget):
             f"Terminal is too small. Use at least {MINIMUM_HEIGHT} rows.",
             id="terminal-too-small",
         )
-        yield Static(id="dashboard-header", markup=False)
+        yield BrandHeader(id="dashboard-header")
         with Vertical(id="welcome-body"):
             yield Static(self.welcome_copy(), id="welcome-copy", markup=False)
         yield Static(id="shortcut-footer", markup=False)
 
     def on_resize(self, event: events.Resize) -> None:
-        width, height = event.size.width, event.size.height
+        height = event.size.height
         unicode = getattr(self.app, "unicode", self.unicode)
         self.set_class(height < MINIMUM_HEIGHT, "too-short")
-        self.query_one("#dashboard-header", Static).update(
-            header_text(width, height, unicode=unicode)
-        )
         self.query_one("#shortcut-footer", Static).update(
             WELCOME_FOOTER if unicode else WELCOME_FOOTER_ASCII
         )

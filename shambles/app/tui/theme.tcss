@@ -148,6 +148,13 @@ Dashboard.ascii #inline-details {
     border: ascii #e07a5f;
 }
 
+/* Textual draws scrollbars with block glyphs whatever the border style. The
+   account list hides its own always; in ASCII the details pane does too. */
+Dashboard.ascii #account-details,
+Dashboard.ascii #inline-details {
+    scrollbar-size: 0 0;
+}
+
 Dashboard.too-short #dashboard-body,
 Dashboard.too-short #dashboard-header,
 Dashboard.too-short #shortcut-footer {

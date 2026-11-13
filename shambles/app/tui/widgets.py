@@ -311,6 +311,37 @@ class AccountList(ListView):
                 return
 
 
+class BrandHeader(Static):
+    """The header for the size of the screen it sits in, wide or compact.
+
+    Derived where it is measured and drawn, never pushed in from a Resize
+    handler. Pushed in, Textual measured the old text at the new width: on a
+    CI runner the 76-column lockup, measured at 60 columns after a resize,
+    wrapped to 23 rows around the one-line compact header that replaced it,
+    and pushed the account list off the screen. No refresh brought it back.
+    Asked for its height at a size, this answers for that size, so its text
+    and its height cannot come from two different moments.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(markup=False, **kwargs)
+
+    def _text(self, width: int, height: int) -> str:
+        from .brand import header_text
+        return header_text(width, height,
+                           unicode=getattr(self.app, "unicode", True))
+
+    def render(self):
+        area = self.parent.size if self.parent is not None else self.size
+        return self._text(area.width, area.height)
+
+    def get_content_height(self, container, viewport, width: int) -> int:
+        # Not cached: Textual's cache is keyed on width alone, and the header
+        # also changes with height. Neither form is ever wider than the
+        # width it is chosen for, so its lines are its rows.
+        return len(self._text(container.width, container.height).splitlines())
+
+
 class _DetailsBody(Static):
     """The rendered account, derived from this widget's own current width.
 
