@@ -24,6 +24,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
+# The offscreen platform has no system font database of its own. On Windows
+# it looks in PySide6's lib/fonts, which Qt no longer ships, and says so once
+# per process -- into whichever test first draws text, which then fails on
+# the message (the window test did, on every Windows run, and only CI's
+# retries, in a process that had already said it, let it pass). A real
+# window uses the Windows font database, so give offscreen the same fonts.
+if sys.platform == "win32" and os.environ.get("WINDIR"):
+    os.environ.setdefault("QT_QPA_FONTDIR",
+                          str(Path(os.environ["WINDIR"]) / "Fonts"))
+
 
 @pytest.fixture(scope="session")
 def qt_app():
