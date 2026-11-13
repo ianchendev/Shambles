@@ -418,6 +418,7 @@ async def test_list_groups_by_provider_and_keeps_one_line_rows(snapshot):
         accounts = app.query_one(AccountList)
         assert accounts.highlighted == 0  # Work is active
         await pilot.press("down")
+        await settled(pilot, app, lambda: accounts.highlighted == 1)
         assert accounts.highlighted == 1
 
 
@@ -637,6 +638,8 @@ async def test_resizing_preserves_selection_and_recovers_from_too_short(snapshot
     app = DashboardHarness(snapshot)
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.press("down", "down", "enter")
+        await settled(pilot, app, lambda: (
+            app.selected_messages == [('codex', 'Personal')]))
         assert app.selected_messages == [("codex", "Personal")]
         for size in [(60, 32), (40, 24), (80, 8), (100, 32)]:
             await pilot.resize_terminal(*size)
@@ -659,6 +662,10 @@ async def test_selecting_an_account_updates_both_detail_views(snapshot):
         account_list = app.query_one(AccountList)
         account_list.highlighted = 1
         await pilot.press("enter")
+        await settled(pilot, app, lambda: (
+            'Personal' in rendered_text(app.query_one('#account-details'))
+            and 'Personal' in rendered_text(app.query_one('#inline-details'))
+            and app.selected_messages == [('claude', 'Personal')]))
 
         assert "Personal" in rendered_text(app.query_one("#account-details"))
         assert "Personal" in rendered_text(app.query_one("#inline-details"))
