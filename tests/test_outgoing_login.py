@@ -625,7 +625,9 @@ def test_abandoning_keeps_an_add_whose_login_another_window_already_filed(
     created = switcher.add_empty_account(paths, codex, "New", platform="linux",
                                          sleep=lambda _: None)
     make_live_codex_login(paths, email="new@example.test")    # the vendor
-    assert switcher.restash_active(paths, codex, platform="linux")  # window 2
+    # Window 2 files it under New (its own sign-in result, say).
+    switcher.stash_live_login(paths, codex, "New", platform="linux",
+                              sleep=lambda _: None)
 
     assert switcher.abandon_new_account(paths, codex, created, "Work",
                                         platform="linux",

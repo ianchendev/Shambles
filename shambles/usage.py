@@ -305,7 +305,8 @@ def _ms_from_timestamp(value) -> int | None:
     return int(when.timestamp() * 1000)
 
 
-def capture_live(paths, provider_id, active_name, *, now_ms) -> bool:
+def capture_live(paths, provider_id, active_name, *, now_ms,
+                 provider=None) -> bool:
     """Record the active account's live figures into its own profile.
 
     Without this a profile only learns its usage at the moment you switch
@@ -331,8 +332,21 @@ def capture_live(paths, provider_id, active_name, *, now_ms) -> bool:
     if not expected:
         return False
 
-    live = configjson.load(paths.claude_json).get("cachedUsageUtilization")
+    if provider is None:
+        from .providers import load
+        provider = load(provider_id)
+    source = provider.companion_path(home=paths.home)
+    if source is None:
+        return False
+    config = configjson.load(source)
+    live = config.get("cachedUsageUtilization")
     if not isinstance(live, dict) or live.get("accountUuid") != expected:
+        return False
+    # accountUuid is the person, not the organisation: one person in two
+    # organisations has two logins and two sets of figures.
+    mine = account.get("organizationUuid")
+    theirs = (config.get("oauthAccount") or {}).get("organizationUuid")
+    if mine and theirs and mine != theirs:
         return False
 
     if sidecar.get("usage") == live:

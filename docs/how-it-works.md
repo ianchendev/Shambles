@@ -78,6 +78,7 @@ belongs to the machine and stays shared.
 | `~/.claude/projects/`, `plugins/`, `file-history/`, `settings.json` | **never touched** |
 | `~/.codex/auth.json` | swapped. Codex's whole login, identity included |
 | `~/.shambles/<provider>/<Name>/credentials.json` | that account's tokens |
+| `~/.shambles/<provider>/<Name>/credentials.json.previous` | the login that file last replaced with a different one, kept in case it was filed under the wrong account. Rename it back over `credentials.json` to undo |
 | `~/.shambles/claude/<Name>/account.json` | that account's identity (Claude only) |
 | `~/.shambles/<provider>/active` | which profile is live, per provider |
 | `~/.shambles/.backups/` | last 10 copies of `~/.claude.json` |
@@ -112,20 +113,23 @@ protection Claude Code's own `.credentials.json` gets.
 
 ## Token health
 
-"Closing" means one day or less for Claude Code, and two for Codex. That is
-shorter than you might expect. The windows differ by an order of magnitude
-across platforms and plans (see [token-storage.md](token-storage.md)), and
-against a measured window of about four days a seven-day threshold would leave
-every profile permanently amber. Each provider sets its own figure.
+"Closing" means fewer than four days left for Claude Code, and fewer than
+three for Codex. Each provider sets its own figure, because the two dates mean
+different things.
 
-Two things worth knowing:
+Three things worth knowing:
 
 - **Ignore the access token.** It expires within hours and refreshes on its
   own. Only `refreshTokenExpiresAt` decides whether you face the email again.
-- **The clock resets on use, not on the calendar.** Every refresh mints a
-  replacement with a fresh window. Rotating between accounts normally keeps
-  them all alive forever. Only an account parked untouched for 30+ days needs
-  a new login.
+- **Claude's deadline does not move with use.** It is set when you sign in,
+  about 30 days out, and using the account does not push it back. Claude Code
+  refreshes the token every few hours, but the server keeps the same deadline.
+  Before it passes, sign in again (the card's **Sign in** button does it
+  without leaving the profile). Earlier versions of this page said the clock
+  reset on every use; it does not.
+- **The refresh token is replaced on every refresh**, for both vendors. A
+  saved copy taken before a refresh no longer works, which is why Shambles
+  saves the active account again whenever its login refreshes.
 
 ### Why Shambles leaves an expired token in place
 

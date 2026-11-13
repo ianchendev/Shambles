@@ -228,7 +228,9 @@ and Linux.
 through Shambles on macOS or native Windows, and nobody has used Codex with a
 real account on any system. Signing in is the vendor's own command, which
 Shambles only starts, so there is little of ours to go wrong, but it has not
-been seen to work. If you try it, please
+been seen to work. If you try it,
+[Testing with real accounts](docs/testing-with-real-accounts.md) lists what
+to try and what to report, and please
 [say how it went](https://github.com/ianchendev/Shambles/issues), either way.
 
 **macOS.** Claude Code keeps its login in the Keychain. When the Keychain
@@ -243,7 +245,9 @@ store that Anthropic is switching on account by account. Shambles reads the
 same switch Claude Code reads and follows it. Versions up to 2.1.2 used
 Credential Manager regardless, in a layout Claude Code does not read, so a
 switch on Windows changed the name on screen and left the old login in place.
-Upgrade before using it there.
+Upgrade before using it there. Those versions also left entries in Credential
+Manager that nothing reads; `shambles doctor` lists them and says how to
+remove them.
 
 **Codex.** Shambles swaps `~/.codex/auth.json`, the same path on every
 system. That only works while Codex keeps its login in that file, which is
@@ -419,7 +423,7 @@ Each card shows a state chip only when something needs you:
 | Chip | Meaning |
 |---|---|
 | *(nothing)* | Healthy, or an expiry it cannot read |
-| `soon` (amber) | The refresh window closes within a day (Claude) or two (Codex) |
+| `soon` (amber) | Fewer than four days left (Claude) or three (Codex). For Claude, using the account does not push the date back: sign in again before it |
 | `needs login` (red) | The window closed, or this profile has no credential yet. Press **Sign in** |
 | `signed out` (red) | The login was cleared. The profile survives, the token is empty |
 
@@ -647,7 +651,14 @@ Code and Codex, then drives Shambles against the real Keychain and the real
 Credential Manager with made-up credentials, and asks the vendors' own
 commands who is signed in after each switch. It also runs both install
 scripts for real. It runs on every pull request and once a week, so a vendor
-moving its login is noticed without anyone opening a pull request.
+moving its login is noticed without anyone opening a pull request. A pull
+request that changes where a login is kept, the install scripts or the build
+(the paths in `.github/real-machine-paths.txt`) cannot merge until every
+machine passes; on any other, a failure shows without blocking.
+
+The SwiftUI menu bar panel in `macos/` is an experiment. It is not part of
+any release and no installer provides it. CI builds it and runs its tests on
+macOS 26 only, because it uses an API that the macOS 15 SDK does not have.
 
 Tagging `v*` builds unsigned binaries for six targets: Linux x86_64 and
 arm64, macOS Intel and Apple Silicon, and Windows x64 and arm64. It attaches
@@ -678,6 +689,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 | [TECH_SPEC.md](TECH_SPEC.md) | Architecture reference. Its §-numbered mechanism is authoritative. Its single-provider paths describe v1.0 and are superseded |
 | [docs/token-storage.md](docs/token-storage.md) | Field research into how Claude and Codex store credentials on macOS, Windows and Linux |
 | [docs/design-decisions.md](docs/design-decisions.md) | Recorded decisions and reasoning |
+| [docs/testing-with-real-accounts.md](docs/testing-with-real-accounts.md) | A checklist for trying Shambles with two real accounts on macOS or Windows, and what to report |
 | [SECURITY.md](SECURITY.md) | The security posture, and the one opt-in network call |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to report a bug, and what a change needs |
 

@@ -3,6 +3,7 @@
 import base64
 import json
 import time
+import zlib
 
 NOW = 1_785_000_000_000  # fixed reference clock for every test
 DAY_MS = 86_400_000
@@ -47,8 +48,22 @@ def account(email="a@example.com", org="Acme", uuid="uuid-a"):
     }
 
 
+def signed_in_at(token: str) -> int:
+    """A sign-in deadline of its own for each login a test builds.
+
+    Claude's deadline is fixed when the account signs in and identifies the
+    login across refreshes (Shambles compares it to within ten seconds), so
+    two different logins must not share one. Derived from the token rather
+    than drawn at random, so the same login built twice is the same bytes:
+    the round-trip tests compare credentials byte for byte. Minutes apart,
+    and always comfortably healthy.
+    """
+    return healthy_ms() + (zlib.crc32(token.encode("utf-8")) % 997) * 60_000
+
+
 def credentials(refresh_expires_ms=None, access_token="tok"):
-    refresh_expires_ms = (healthy_ms() if refresh_expires_ms is None
+    refresh_expires_ms = (signed_in_at(access_token)
+                          if refresh_expires_ms is None
                           else refresh_expires_ms)
     return {
         "claudeAiOauth": {
@@ -181,14 +196,13 @@ def make_profile(paths, provider_id, name, *, email=None, token=True,
     correct switch from one that swapped two accounts' tokens -- it would
     compare a blob against an identical blob and pass either way.
     """
-    refresh_expires_ms = (healthy_ms() if refresh_expires_ms is None
-                          else refresh_expires_ms)
     directory = paths.ensure_profile(provider_id, name)
     if token:
         blob = (credentials(refresh_expires_ms, access_token=f"tok-{name}")
                 if provider_id == "claude"
                 else codex_auth(email=email or "a@example.com",
-                                exp_ms=refresh_expires_ms))
+                                exp_ms=(healthy_ms() if refresh_expires_ms is None
+                                        else refresh_expires_ms)))
         write_json(paths.credentials(provider_id, name), blob)
     if email and provider_id == "claude":
         write_json(paths.account(provider_id, name),

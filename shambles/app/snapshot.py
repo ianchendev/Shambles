@@ -138,7 +138,11 @@ def _group(paths, provider, *, platform: str, now_ms: int) -> Group:
     unreadable = _store_error(paths, provider, platform=platform)
     live_login = unreadable is None and _has_login(paths, provider,
                                                    platform=platform)
-    owner = (state_mod.owner_of_live(paths, provider, platform=platform)
+    # Proof if there is any, else the account the address names: shown as a
+    # suggestion ("switch to it to settle this"), and switching to it is how
+    # the user confirms. Never acted on here.
+    owner = ((state_mod.owner_of_live(paths, provider, platform=platform)
+              or state_mod.owner_by_address(paths, provider, platform=platform))
              if current.kind == state_mod.DRIFTED else None)
     can_save = live_login and current.kind != state_mod.MANAGED and not owner
 

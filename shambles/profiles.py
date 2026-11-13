@@ -12,10 +12,15 @@ from pathlib import Path
 
 from . import configjson, state, usage as usage_mod
 from .errors import ProfileNameError, ShamblesError
+from .stores import FileStore
+from .stores.base import StoreUnavailableError
 from .providers import (ABSENT, CLOSED, CLOSING, NEEDS_LOGIN, SIGNED_OUT,
                         Liveness)
 
 INVALID_NAME_CHARS = set('/\\:*?"<>|')
+
+#: One generation of what a stash replaced, beside the profile's login.
+PREVIOUS_CREDENTIALS_NAME = "credentials.json.previous"
 
 #: How loudly the UI draws the attention chip.
 EXPIRY_OK = "ok"
@@ -99,6 +104,21 @@ def needs_login(profile: Profile) -> bool:
     return profile.liveness.state in NEEDS_LOGIN
 
 
+def renewed_by_use(profile: Profile) -> bool:
+    """Whether using the account moves its expiry date back on its own.
+
+    True for Codex, whose date is an access token it replaces when used.
+    False for Claude: its date is a deadline fixed at sign-in, which only a
+    new sign-in moves, whatever the account is used for in between.
+    """
+    from .providers import spec as specmod
+    try:
+        block = specmod.load(profile.provider).get("liveness") or {}
+    except (OSError, ValueError):
+        return False
+    return bool(block.get("renewed_by_use"))
+
+
 def list_profile_names(paths, provider_id: str) -> list[str]:
     """Profile directories, case-insensitively sorted for display."""
     return sorted(state.profile_names(paths, provider_id), key=str.casefold)
@@ -130,7 +150,8 @@ def resolve_usage(paths, provider, name: str, active_name: str | None):
 
     if active_name is not None and name == active_name:
         live = usage_mod.parse(
-            configjson.load(paths.claude_json).get("cachedUsageUtilization"))
+            configjson.load(provider.companion_path(home=paths.home))
+            .get("cachedUsageUtilization"))
         if live:
             return live
 
@@ -146,12 +167,11 @@ def resolve_liveness(paths, provider, name: str, blob, *, active: bool,
     """How much of its refresh window one profile has left.
 
     The active profile's truth is in the live credential, not in our stash.
-    A rolling window is re-minted on every use and written to the live
+    The vendor refreshes it on use and writes the result to the live
     location only; the stash keeps whatever it held when the profile was last
-    switched away from or first saved, and ``restash_active`` deliberately
-    skips a provider whose tokens do not rotate. The stash therefore goes
-    stale *by design* -- and read as liveness, that reports the account you
-    are working in as needing a login, which is the one thing this tool must
+    switched away from or first saved, until ``restash_active`` next catches
+    up. Read as liveness, a stale stash can report the account you are
+    working in as needing a login, which is the one thing this tool must
     never get wrong.
 
     Everyone else has no live credential to consult, so their stash really is
@@ -215,3 +235,73 @@ def validate_profile_name(name, existing) -> str:
     if any(str(other).casefold() == lowered for other in existing):
         raise ProfileNameError(f"A profile named '{cleaned}' already exists.")
     return cleaned
+
+
+def previous_credentials(paths, provider_id: str, name: str) -> Path:
+    """Where :func:`save_credential` keeps the login it last replaced."""
+    return paths.profile_dir(provider_id, name) / PREVIOUS_CREDENTIALS_NAME
+
+
+def save_credential(paths, provider, name: str, blob: bytes) -> None:
+    """Write ``blob`` as profile ``name``'s saved login, keeping what it replaces.
+
+    Every write of a saved login comes through here. The one it replaces is
+    kept as ``credentials.json.previous`` in the same owner-only directory,
+    written first: if it cannot be kept, nothing is replaced. Shambles decides
+    whose a Claude login is partly from an address a running session can
+    rewrite, so a stash can be wrong, and this is what makes a wrong one
+    recoverable by hand.
+
+    One generation, and only of a *different* login. A refresh of the same
+    login (see ``lineage`` in the provider specs) is written over the old one
+    without moving the backup: both vendors rotate the refresh token on use,
+    so the old token is spent, and letting each routine refresh push the
+    backup along would lose the one worth keeping two refreshes after a
+    wrong stash.
+
+    A login that holds a token is never replaced by one that does not: a
+    login cleared in place keeps its deadline and would otherwise pass for
+    the same login, refreshed.
+    """
+    path = paths.credentials(provider.id, name)
+    try:
+        held = path.read_bytes()
+    except FileNotFoundError:
+        held = None
+    except OSError as exc:
+        raise StoreUnavailableError(f"Could not read {path}:\n{exc}") from exc
+    if held == blob:
+        return
+    if held and provider.has_login(held) and not provider.has_login(blob):
+        # A login cleared in place keeps its deadline, so it reads as the
+        # same login and would take no backup. It cannot sign in; the one it
+        # would replace might. Keeping that is never worse.
+        return
+    backup = previous_credentials(paths, provider.id, name)
+    displaced = None
+    if held and not _same_login(provider, held, blob):
+        try:
+            displaced = backup.read_bytes()
+        except FileNotFoundError:
+            displaced = b""
+        except OSError:
+            displaced = None
+        FileStore(backup, 0o600).write(held)
+    try:
+        FileStore(path, 0o600).write(blob)
+    except Exception:
+        # The login was not replaced, so the backup should not have moved:
+        # put back the one it held, as far as that is possible.
+        if displaced is not None:
+            try:
+                if displaced:
+                    FileStore(backup, 0o600).write(displaced)
+                else:
+                    backup.unlink(missing_ok=True)
+            except Exception:
+                pass
+        raise
+
+
+def _same_login(provider, older: bytes, newer: bytes) -> bool:
+    return provider.same_login(older, newer)
