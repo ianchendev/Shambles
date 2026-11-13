@@ -1,0 +1,111 @@
+name: release-install
+
+# Installs a published release the way its notes tell people to, on real
+# machines: the documented one-line command from main, first over the
+# previous release (the update everyone already installed will take), then on
+# a clean machine. Nothing is built here; this downloads what users download.
+#
+# The other workflows test the scripts against binaries built in the same
+# run. Only this one proves that the release on GitHub, as published, reaches
+# someone who runs the command.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      previous:
+        description: "Release to update from"
+        required: false
+        default: "v2.1.2"
+
+permissions:
+  contents: read
+
+env:
+  SH_URL: https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh
+  PS_URL: https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1
+  PREVIOUS: ${{ inputs.previous || 'v2.1.2' }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  unix:
+    # A pre-release is not "latest", so the unpinned command would not fetch
+    # it; there is nothing to check for one.
+    if: ${{ !github.event.release.prerelease }}
+    name: install.sh on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15, macos-15-intel]
+    steps:
+      - name: The release the command should install
+        run: |
+          tag="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          echo "EXPECT=${tag#v}" >> "$GITHUB_ENV"
+          echo "latest release: $tag"
+
+      - name: Install the previous release
+        run: |
+          export HOME="$RUNNER_TEMP/update"; mkdir -p "$HOME"
+          curl -fsSL "$SH_URL" | bash -s "$PREVIOUS"
+          "$HOME/.local/bin/shambles" --version
+
+      - name: Update with the documented command
+        run: |
+          export HOME="$RUNNER_TEMP/update"
+          curl -fsSL "$SH_URL" | bash
+          got="$("$HOME/.local/bin/shambles" --version 2>/dev/null)"
+          echo "$got"
+          test "$got" = "shambles $EXPECT"
+          test -d "$HOME/.local/share/shambles/window"
+          "$HOME/.local/bin/shambles" --home "$HOME" list
+
+      - name: Fresh install with the documented command
+        run: |
+          export HOME="$RUNNER_TEMP/fresh"; mkdir -p "$HOME"
+          curl -fsSL "$SH_URL" | bash
+          got="$("$HOME/.local/bin/shambles" --version 2>/dev/null)"
+          echo "$got"
+          test "$got" = "shambles $EXPECT"
+          test -d "$HOME/.local/share/shambles/window"
+          "$HOME/.local/bin/shambles" --home "$HOME" doctor || true
+
+  windows:
+    if: ${{ !github.event.release.prerelease }}
+    name: install.ps1 on ${{ matrix.os }} (${{ matrix.shell }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - name: The release the command should install
+        run: |
+          $tag = gh release view -R $env:GITHUB_REPOSITORY --json tagName -q .tagName
+          "EXPECT=$($tag.TrimStart('v'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "latest release: $tag"
+
+      # 2.1.2 shipped no Arm build; on Arm the update starts from nothing.
+      - name: Install the previous release
+        if: matrix.os == 'windows-latest'
+        run: |
+          $env:SHAMBLES_VERSION = $env:PREVIOUS
+          irm $env:PS_URL | iex
+          & "$env:LOCALAPPDATA\Shambles\shambles.exe" --version
+
+      - name: Update (or install) with the documented command
+        run: |
+          Remove-Item Env:SHAMBLES_VERSION -ErrorAction SilentlyContinue
+          irm $env:PS_URL | iex
+          $got = (& "$env:LOCALAPPDATA\Shambles\shambles.exe" --version 2>$null | Out-String).Trim()
+          $got
+          if ($got -ne "shambles $env:EXPECT") { throw "expected shambles $env:EXPECT, got '$got'" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Shambles\window")) { throw 'the window was not installed' }
+          & "$env:LOCALAPPDATA\Shambles\shambles.exe" --home "$env:RUNNER_TEMP\home" doctor
+          exit 0
