@@ -431,7 +431,7 @@ Each account shows a state only when something needs you:
 | Shown | Meaning |
 |---|---|
 | *(nothing)* | Healthy, or an expiry it cannot read |
-| `Expires soon` (amber) | Fewer than four days left (Claude) or three (Codex). For Codex, using the account renews it. For Claude it does not: the date is fixed at sign-in, so sign in again before it |
+| `Expires soon` (amber) | Fewer than four days left (Claude) or three (Codex). For Codex, using the account renews it. For Claude it does not: the date is fixed at sign-in, so the window offers **Sign in** beside Switch until you do |
 | `Needs sign-in` (red) | The window closed, or this account has no login yet. Press **Sign in** |
 | `Signed out` (red) | The login was cleared. The account survives, the token is empty |
 
