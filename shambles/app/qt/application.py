@@ -13,6 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QFontDatabase, QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickWindow  # noqa: F401  (types the root window)
 
 from .bridge import Bridge
 
@@ -40,6 +41,17 @@ RESCALED_ENV = "SHAMBLES_RESCALED"
 
 #: How often to hand control back to Python so a pending Ctrl+C is seen.
 SIGNAL_POLL_MS = 150
+
+#: Set by the release workflow to prove a built bundle can draw. The window
+#: opens, draws one frame, says so on stdout and exits. If the value is a
+#: path ending in ``.png`` the frame is saved there. The only check that a
+#: bundle works on an OS nobody on the project can sit in front of.
+SMOKE_ENV = "SHAMBLES_WINDOW_SMOKE"
+SMOKE_TIMEOUT_MS = 30_000
+#: With the above: one thing to do before the frame is taken, written the
+#: way a click reaches the bridge, ``slot:arg:arg`` (``signIn:claude:Work``).
+#: Lets the same run prove a sheet draws, not only the list behind it.
+SMOKE_DO_ENV = "SHAMBLES_WINDOW_SMOKE_DO"
 
 
 def is_wsl(env) -> bool:
@@ -159,6 +171,53 @@ def build(service, *, motion=True, app=None):
     return engine, bridge
 
 
+def _smoke(app, window, target, bridge, step="") -> None:
+    """Draw one frame, report it, and stop. See :data:`SMOKE_ENV`."""
+    from PySide6.QtCore import qInstallMessageHandler, qVersion
+
+    # Everything Qt has to say goes into a log beside the picture. The
+    # Windows build has no console, so stdout alone would lose it there, and
+    # a warning about a missing font or plugin is exactly what this run is
+    # for.
+    lines = []
+    qInstallMessageHandler(lambda _mode, _context, text: lines.append(text))
+
+    def finish(code, line):
+        lines.append(line)
+        if target.lower().endswith(".png"):
+            try:
+                with open(target + ".log", "w", encoding="utf-8") as log:
+                    log.write("\n".join(lines) + "\n")
+            except OSError:
+                pass
+        print(line, flush=True)
+        app.exit(code)
+
+    if step:
+        name, *arguments = step.split(":")
+        slot = getattr(bridge, name, None)
+        if name.startswith("_") or not callable(slot):
+            QTimer.singleShot(0, lambda: finish(
+                2, f"{SMOKE_DO_ENV}: no such action {name!r}."))
+            return
+        QTimer.singleShot(200, lambda: slot(*arguments))
+
+    def report():
+        image = window.grabWindow()
+        if target.lower().endswith(".png"):
+            image.save(target)
+        finish(0 if image.width() > 0 else 4,
+               f"shambles window ok {image.width()}x{image.height()} "
+               f"qt {qVersion()} on {app.platformName()}, "
+               f"font {app.font().family()}")
+
+    def gave_up():
+        finish(3, "The window drew no frame.")
+
+    QTimer.singleShot(1800 if step else 600, report)
+    QTimer.singleShot(SMOKE_TIMEOUT_MS, gave_up)
+
+
 def run_window(service, *, motion=True, argv=None) -> int:
     """Open the window and run until it closes. Returns the exit status."""
     os.environ.update(environment(os.environ))
@@ -190,6 +249,11 @@ def run_window(service, *, motion=True, argv=None) -> int:
     pump = QTimer()
     pump.timeout.connect(lambda: None)
     pump.start(SIGNAL_POLL_MS)
+
+    smoke = os.environ.get(SMOKE_ENV)
+    if smoke:
+        _smoke(app, engine.rootObjects()[0], smoke, bridge,
+               os.environ.get(SMOKE_DO_ENV, ""))
 
     try:
         return app.exec()

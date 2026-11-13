@@ -72,9 +72,30 @@ Notable changes per release. Dates are the tag date.
     held back until you save it. The classic window let the click through
     and relied on the core to refuse.
 
-  It needs PySide6, which is an optional extra: `pip install 'shambles[gui]'`.
-  The release binaries do not carry it yet, and plain `shambles gui` still
-  opens the classic window.
+  Plain `shambles gui` still opens the classic window.
+
+- **The installers fetch the new window as its own download.** It carries
+  Qt (a 36 to 82 MB download, depending on the platform), so it ships beside
+  the `shambles` binary instead of inside it: every other command stays as
+  fast as it was. `install.sh` unpacks it to `~/.local/share/shambles/window`
+  and `install.ps1` to `%LOCALAPPDATA%\Shambles\window`, and
+  `shambles gui --new` opens it from there. There is a build for every
+  platform the binary ships for, Windows on Arm included.
+
+  It is checked against the release's `SHA256SUMS` like the binary, and
+  swapped in only once it has arrived whole. A download that fails or does
+  not match leaves the window you had, and never undoes the binary, which is
+  installed first. Set `SHAMBLES_NO_WINDOW=1` to skip it. From pip or pipx it
+  is an optional extra instead: `pip install 'shambles[gui]'`.
+
+  The archive has a `licenses` folder: Qt and PySide6 are LGPL-3.0, so it
+  carries that text, the GPL-3.0 it incorporates, and a notice saying where
+  Qt's source is. Qt stays as separate, unmodified shared libraries that you
+  can replace.
+
+  The Linux window needs glibc 2.35, the same as the binary. It brings its
+  own copy of the few system libraries Qt needs, so it starts on a bare
+  Linux or WSL install with nothing to `apt install`.
 
 - **`shambles list --json` says more about each account.** Every group now
   carries `can_sign_in` and `cli` (whether the vendor's command is there to
