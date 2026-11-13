@@ -82,6 +82,10 @@ ADD_DUPLICATE = (
     "window, then press Sign in on '{name}'."
 )
 RELOGIN_STILL_LAPSED = "'{name}' still needs a login.\n\n{tail}"
+#: The same ending for a login that still works: signed in again early,
+#: before its deadline, and the sign-in did not happen.
+RELOGIN_NOT_RENEWED = ("'{name}' was not signed in again. Its login still "
+                       "works as it did.\n\n{tail}")
 RELOGIN_BACK = "You are back on '{previous}', nothing was lost."
 
 #: DD-1 keeps durations off a card's face but says the raw timestamps stay
@@ -242,6 +246,12 @@ def group_heading(provider, current, warn: str = "⚠") -> str:
                              live_email=current.live_email or "unknown",
                              expected_email=current.expected_email or "unknown")
     return f"{provider.display_name} · {detail}"
+
+
+def _short_date(profile) -> str:
+    """When the profile's login ends, briefly, for a sentence."""
+    when = _local_time(profile.liveness.expires_at_ms)
+    return f"on {when.strftime('%a %d %b, %H:%M')}" if when else "soon"
 
 
 def _local_time(ms):
@@ -1359,7 +1369,11 @@ class ShamblesApp(tk.Tk):
         # very login this button runs. Offered only when the vendor's CLI is
         # there to run; without it the card keeps Switch, and the banner above
         # the group says why.
-        renew = vendor_ready and profiles.needs_login(profile)
+        lapsed = profiles.needs_login(profile)
+        # A Claude login near its deadline still works, but only a new
+        # sign-in moves the date: offered beside Switch, before it lapses.
+        due = profiles.sign_in_due(profile)
+        renew = vendor_ready and (lapsed or due)
 
         if not profile.active:
             # Inactive profiles only. The active one has no remove control at
@@ -1379,9 +1393,13 @@ class ShamblesApp(tk.Tk):
                 top, text="Sign in", style="Switch.TButton",
                 command=lambda p=profile: self.on_relogin(provider, p))
             sign_in.pack(side="right", padx=gap)
-            Tooltip(sign_in, SIGN_IN_TOOLTIP.format(
-                who=profile.email or f"'{profile.name}'"), t)
-        elif not profile.active:
+            tip = SIGN_IN_TOOLTIP.format(
+                who=profile.email or f"'{profile.name}'")
+            if due and not lapsed:
+                tip = (f"{profiles.sign_in_reason(provider.id, provider.display_name)}"
+                       f" This one ends {_short_date(profile)}. {tip}")
+            Tooltip(sign_in, tip, t)
+        if not profile.active and not (renew and lapsed):
             ttk.Button(top, text="Switch", style="Switch.TButton",
                        command=lambda p=profile: self.on_switch(provider, p.name)
                        ).pack(side="right", padx=gap)
@@ -1564,12 +1582,15 @@ class ShamblesApp(tk.Tk):
                         or "a different account"),
                     parent=self)
             else:
-                tail = (RELOGIN_BACK.format(previous=previous)
-                        if outcome.restored else provider.login_hint())
-                messagebox.showwarning(
-                    WINDOW_TITLE,
-                    RELOGIN_STILL_LAPSED.format(name=name, tail=tail),
-                    parent=self)
+                if outcome.still_works:
+                    tail = (RELOGIN_BACK.format(previous=previous)
+                            if outcome.restored else "Nothing was lost.")
+                    text = RELOGIN_NOT_RENEWED.format(name=name, tail=tail)
+                else:
+                    tail = (RELOGIN_BACK.format(previous=previous)
+                            if outcome.restored else provider.login_hint())
+                    text = RELOGIN_STILL_LAPSED.format(name=name, tail=tail)
+                messagebox.showwarning(WINDOW_TITLE, text, parent=self)
         finally:
             self.refresh()
 

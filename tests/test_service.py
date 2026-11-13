@@ -1210,3 +1210,64 @@ def test_an_unknown_window_theme_is_refused_and_nothing_is_written(paths):
     assert not result.ok and result.error.code == "invalid_setting"
     assert svc.window_theme() == "system"
     assert not paths.settings_path.exists()
+
+
+# --- Signing in again before a Claude login's deadline ----------------------
+#
+# The window and the terminal UI now offer Sign in on a Claude account that
+# still works but is near the date only a new sign-in moves. The same
+# primitives run it; these hold them to "a saved login is never lost or
+# altered" for an account that is not lapsed, and to copy that does not call
+# a working login broken.
+
+def seed_closing_work(paths):
+    """Work is live and works, but its sign-in ends in two days."""
+    make_profile(paths, "claude", "Work", email="work@example.test",
+                 active=True, refresh_expires_ms=NOW + 2 * 86_400_000)
+    make_profile(paths, "claude", "Home", email="home@example.test")
+    make_claude_json(paths, email="work@example.test")
+    live = paths.claude_dir / ".credentials.json"
+    live.parent.mkdir(parents=True, exist_ok=True)
+    live.write_bytes(paths.credentials("claude", "Work").read_bytes())
+    return live
+
+
+@pytest.mark.parametrize("ending", ["cancel", "fail", "nothing written"])
+def test_an_early_sign_in_that_comes_to_nothing_changes_nothing(
+        paths, deferred_login, ending):
+    live = seed_closing_work(paths)
+    before = live.read_bytes()
+    done = []
+    handle = service(paths).start_login("claude", "Work", lambda line: None,
+                                        done.append)
+    if ending == "cancel":
+        handle.cancel()
+    else:
+        deferred_login[0].finish(1 if ending == "fail" else 0)
+
+    assert handle.wait(timeout=1)
+    assert done[0].ok is False
+    assert state.read_active(paths, "claude") == "Work"
+    assert live.read_bytes() == before
+    assert paths.credentials("claude", "Work").read_bytes() == before
+    recovery = done[0].error.recovery
+    assert "still works" in recovery
+    assert "needs a sign-in" not in recovery
+
+
+def test_an_early_sign_in_files_the_new_login_and_keeps_the_old(
+        paths, deferred_login):
+    live = seed_closing_work(paths)
+    before = live.read_bytes()
+    done = []
+    handle = service(paths).start_login("claude", "Work", lambda line: None,
+                                        done.append)
+    fresh_login(paths, "claude", "work@example.test")
+    deferred_login[0].finish(0)
+
+    assert handle.wait(timeout=1)
+    assert done[0].ok, done[0]
+    assert paths.credentials("claude", "Work").read_bytes() == live.read_bytes()
+    assert live.read_bytes() != before
+    previous = paths.profile_dir("claude", "Work") / "credentials.json.previous"
+    assert previous.read_bytes() == before
