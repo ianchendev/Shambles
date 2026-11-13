@@ -158,15 +158,18 @@ replaced, renamed or deleted. A switch performs exactly three writes:
 3.  ~/.claude-profiles/active            <- marker updated
 ```
 
-Each credential write is a same-directory temp file followed by `os.replace`:
+Each credential write, and each write of the identity files beside one, goes
+through `shambles.stores.file.replace_file`: a temp file of its own in the same
+directory, then `os.replace`:
 
 ```python
-def once():
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".shambles-tmp")
-    shutil.copyfile(source, tmp)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, dest)
+def replace_file(path, payload, *, mode=0o600):
+    tmp = path.with_name(f".{path.name}.{token_hex(8)}.shambles-tmp")
+    fd = os.open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, mode)
+    # fchmod(fd, mode); write until every byte is written; fsync(fd); close
+    # on any failure or interrupt before the rename: unlink(tmp), re-raise
+    os.replace(tmp, path)        # not retried: see §2.2
+    # fsync the directory; sweep this file's temps older than 5 minutes
 ```
 
 `os.replace` is atomic on POSIX (`rename(2)`) and on Windows (`MoveFileEx` with
@@ -174,10 +177,20 @@ def once():
 
 - **No partial credential file is ever observable.** A reader sees the old
   complete file or the new complete file.
+- **Two writers never mix.** Each write creates its own temp file with
+  `O_EXCL`, so two processes saving the same login at once (the window and the
+  terminal UI both re-stash it) each rename a complete file. Up to 2.1.2 every
+  writer shared one temp name, `<file>.shambles-tmp`, and two at once could
+  install a mixture of both or fail outright.
 - **No window where the file is absent.** Unlike the old symlink path, which had
   to unlink before creating on Windows.
-- **The mode is set on the temp file before the rename**, so the file is never
-  briefly world-readable at its final path.
+- **Private from the first byte.** The temp file is created with its final
+  mode, and `O_EXCL` means it is always created, never an old file reopened at
+  an old mode. The file is never briefly world-readable at either name.
+- **Nothing outlives a failed write.** A temp file is removed when the write
+  fails or is interrupted. One left by a process killed outright is
+  owner-only, read by nothing, and removed by the next write or delete of the
+  same file once it is five minutes old; a delete removes all of them.
 - **A running process is unaffected** — see §4.3.
 
 `~/.claude.json` is deliberately *never* replaced wholesale. Claude Code owns
@@ -509,8 +522,9 @@ def _copy_secret(source: Path, dest: Path, *, sleep=time.sleep) -> None:
     once()
 ```
 
-The temp file lives in the destination directory so the rename never crosses a
-filesystem boundary.
+(This is the v1.0 code. Today every such write goes through `replace_file`,
+§1.4, with a temp file of its own.) The temp file lives in the destination
+directory so the rename never crosses a filesystem boundary.
 
 ### 2.4 Single-guard invariant
 

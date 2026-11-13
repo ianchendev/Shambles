@@ -24,6 +24,7 @@ from pathlib import Path
 
 from .. import configjson
 from ..stores import CredmanStore, FallbackStore, FileStore, KeychainStore
+from ..stores import file as filemod
 from ..stores.base import StoreUnavailableError
 from . import spec as specmod
 from .base import (ABSENT, CLOSED, CLOSING, LIVE, SIGNED_OUT, UNKNOWN,
@@ -507,20 +508,8 @@ def _write_json(path: Path, data: dict) -> None:
     path = Path(path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".shambles-tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            # A leftover *.shambles-tmp from a crashed run is opened, not
-            # created, so O_CREAT's mode argument does not apply to it --
-            # fchmod fixes the descriptor itself before the first byte lands.
-            # No os.fchmod on Windows; the trailing os.chmod covers that
-            # platform and is a harmless no-op elsewhere.
-            if hasattr(os, "fchmod"):
-                os.fchmod(fd, 0o600)
-            os.write(fd, (json.dumps(data, indent=2) + "\n").encode("utf-8"))
-        finally:
-            os.close(fd)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
+        filemod.replace_file(
+            path, (json.dumps(data, indent=2) + "\n").encode("utf-8"),
+            mode=0o600)
     except OSError as exc:
         raise StoreUnavailableError(f"Could not write {path}:\n{exc}") from exc

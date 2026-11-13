@@ -244,16 +244,16 @@ def test_an_account_added_mid_migration_does_not_strand_the_old_store(
     ~/.shambles/claude while this window is still copying into staging."""
     make_v1_profile(paths, "Alpha", email="alpha@example.test", active=True)
     make_v1_profile(paths, "Beta", email="beta@example.test")
-    real = shutil.copy2
+    real = migrate._copy_private
     calls = {"n": 0}
 
-    def copy(src, dst, **kwargs):
+    def copy(src, dst):
         calls["n"] += 1
         if calls["n"] == 2:
             make_profile(paths, "claude", "New", email="new@example.test")
-        return real(src, dst, **kwargs)
+        return real(src, dst)
 
-    monkeypatch.setattr(shutil, "copy2", copy)
+    monkeypatch.setattr(migrate, "_copy_private", copy)
     try:
         migrate.migrate_store(paths)
     except ShamblesError:
