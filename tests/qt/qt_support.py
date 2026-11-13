@@ -9,8 +9,16 @@ extra, and the rest of the suite must not depend on it.
 """
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+# tests/helpers.py, which builds synthetic homes. On sys.path already when
+# the whole suite runs; not when this directory runs on its own.
+_TESTS = str(Path(__file__).resolve().parents[1])
+if _TESTS not in sys.path:
+    sys.path.insert(0, _TESTS)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")

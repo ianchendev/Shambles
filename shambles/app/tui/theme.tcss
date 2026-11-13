@@ -28,6 +28,14 @@ Dashboard {
     color: #d9a441;
 }
 
+#switch-status {
+    width: 100%;
+    height: auto;
+    padding: 0 2;
+    color: #d9a441;
+    text-style: bold;
+}
+
 #shortcut-footer {
     width: 100%;
     height: 1;

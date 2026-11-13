@@ -26,6 +26,7 @@ from .. import settings
 from ..paths import Paths
 from . import snapshot as snapshot_mod
 from .launch import LaunchRequest, replace_process
+from . import service as service_mod
 from .service import ShamblesService
 
 EXIT_OK = 0
@@ -167,32 +168,36 @@ def _window_entry():
     return run_window
 
 
-def cmd_window(args) -> int:
-    """The Qt window. A preview beside the Tk one until it replaces it."""
+def _window_options(args) -> list:
+    """The options an installed window bundle is started with."""
+    passed = []
+    if getattr(args, "home", None):
+        passed += ["--home", args.home]
+    if getattr(args, "no_motion", False):
+        passed.append("--no-motion")
+    return passed
+
+
+def _open_window(args):
+    """Open the Qt window if this install can. Returns ``(status, reason)``.
+
+    ``status`` is the exit status when the window ran, else None with the
+    reason it could not. A release binary has no Qt of its own and hands
+    over to the installed bundle, which does not return.
+    """
     try:
         run_window = _window_entry()
     except ImportError as exc:
-        # The release binary carries no Qt; the window is its own download.
         from . import launch
         bundle = launch.window_bundle()
         if bundle is not None:
-            passed = []
-            if getattr(args, "home", None):
-                passed += ["--home", args.home]
-            if getattr(args, "no_motion", False):
-                passed.append("--no-motion")
-            launch.replace_with_window(bundle, passed)
-        from shambles.__main__ import QT_MISSING
-        sys.stderr.write(QT_MISSING.format(reason=exc))
-        return EXIT_FAILED
+            launch.replace_with_window(bundle, _window_options(args))
+        return None, exc
     return run_window(_service(args),
-                      motion=not getattr(args, "no_motion", False))
+                      motion=not getattr(args, "no_motion", False)), None
 
 
-def cmd_gui(args) -> int:
-    if getattr(args, "new", False):
-        return cmd_window(args)
-
+def _classic_window(args) -> int:
     try:
         import tkinter  # noqa: F401
     except ModuleNotFoundError:
@@ -202,6 +207,32 @@ def cmd_gui(args) -> int:
 
     from ..gui import run
     return run(paths=_paths(args))
+
+
+def cmd_gui(args) -> int:
+    """The window: the Qt one where it can open, else the classic one.
+
+    ``--classic`` asks for the Tk window outright. ``--new`` asks for the Qt
+    one and nothing else, so a missing Qt is explained instead of papered
+    over. With neither, the Qt window is the default and the Tk window is
+    the fallback, kept for an install with no Qt and no window bundle --
+    a bare ``pip install`` -- until it is removed in a later release.
+    """
+    if getattr(args, "classic", False):
+        return _classic_window(args)
+
+    status, reason = _open_window(args)
+    if reason is None:
+        return status
+
+    if getattr(args, "new", False):
+        from shambles.__main__ import QT_MISSING
+        sys.stderr.write(QT_MISSING.format(reason=reason))
+        return EXIT_FAILED
+
+    from shambles.__main__ import CLASSIC_FALLBACK
+    sys.stderr.write(CLASSIC_FALLBACK)
+    return _classic_window(args)
 
 
 def cmd_list(args) -> int:
@@ -246,9 +277,15 @@ def cmd_list(args) -> int:
     return EXIT_OK
 
 
+def _say_waiting() -> None:
+    # stderr, so --json output on stdout stays one parseable line.
+    print(service_mod.waiting_for_refresh(), file=sys.stderr, flush=True)
+
+
 def cmd_switch(args) -> int:
     try:
-        result = _ready_service(args).switch(args.provider, args.account)
+        result = _ready_service(args).switch(
+            args.provider, args.account, on_wait=_say_waiting)
     except KeyError:
         known = ", ".join(registry.ids())
         return _fail(args, "unknown_provider",
@@ -390,8 +427,10 @@ def build_parser() -> argparse.ArgumentParser:
     graphical = sub.add_parser("gui", parents=[common],
                                help="open the graphical interface")
     graphical.add_argument("--new", action="store_true",
-                           help="open the new window (preview; needs the "
-                                "'gui' extra)")
+                           help="open the new window, and say why if it "
+                                "cannot")
+    graphical.add_argument("--classic", action="store_true",
+                           help="open the classic Tk window instead")
     graphical.set_defaults(func=cmd_gui)
 
     listing = sub.add_parser("list", parents=[common],

@@ -65,10 +65,14 @@ packages = ["shambles", "shambles.app", "shambles.app.tui", "shambles.app.qt", "
 "shambles.app.tui" = ["*.tcss"]
 # The window's QML and typeface are read from disk at runtime, like the TUI's
 # stylesheet, so they need declaring or an installed copy opens nothing.
-"shambles.app.qt" = ["qml/*.qml", "fonts/*.ttf", "fonts/OFL.txt"]
+"shambles.app.qt" = ["qml/*.qml", "fonts/*.ttf", "fonts/OFL.txt", "icons/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
 asyncio_mode = "auto"
+# A test stuck longer than this dumps every thread's stack, so a hang leaves
+# evidence instead of an idle process (one did, for 80 minutes, on a shared
+# WSLg display).
+faulthandler_timeout = 300

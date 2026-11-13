@@ -160,6 +160,90 @@ param(
         Write-Host "Checksum verified for $Name."
     }
 
+    function Save-Shortcut($Link, $Target, $Folder, $Note) {
+        # WScript.Shell first: it is quick and it is everywhere. It is also
+        # an ANSI interface, and a path with a character outside the system
+        # code page -- a user name in Chinese, say -- makes it refuse with
+        # "Value does not fall within the expected range". IShellLinkW, the
+        # Unicode interface underneath it, takes any path. It is reached
+        # through C# compiled by Add-Type, which is done in a child
+        # PowerShell so no type is left loaded in the caller's session, and
+        # the paths go to the child through its own environment so nothing
+        # has to survive quoting.
+        try {
+            $s = (New-Object -ComObject WScript.Shell).CreateShortcut($Link)
+            $s.TargetPath = $Target
+            $s.WorkingDirectory = $Folder
+            $s.IconLocation = "$Target,0"
+            $s.Description = $Note
+            $s.Save()
+            return
+        } catch { }
+        $code = @'
+Add-Type -TypeDefinition @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+public static class ShamblesShortcut {
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+    class ShellLink { }
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown),
+     Guid("000214F9-0000-0000-C000-000000000046")]
+    interface IShellLinkW {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder f, int n, IntPtr d, int flags);
+        void GetIDList(out IntPtr p);
+        void SetIDList(IntPtr p);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string s);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string s);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string s);
+        void GetHotkey(out short k);
+        void SetHotkey(short k);
+        void GetShowCmd(out int c);
+        void SetShowCmd(int c);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n, out int i);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string s, int i);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string s, int r);
+        void Resolve(IntPtr hwnd, int flags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string s);
+    }
+    public static void Save(string link, string target, string folder, string note) {
+        IShellLinkW s = (IShellLinkW)new ShellLink();
+        s.SetPath(target);
+        s.SetWorkingDirectory(folder);
+        s.SetIconLocation(target, 0);
+        s.SetDescription(note);
+        ((IPersistFile)s).Save(link, true);
+    }
+}
+"@
+[ShamblesShortcut]::Save($env:SHAMBLES_LNK, $env:SHAMBLES_LNK_TARGET, $env:SHAMBLES_LNK_DIR, $env:SHAMBLES_LNK_NOTE)
+'@
+        $start = New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName = (Get-Process -Id $PID).Path
+        $start.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' +
+            [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
+        $start.UseShellExecute = $false
+        $start.RedirectStandardError = $true
+        $start.CreateNoWindow = $true
+        $start.EnvironmentVariables['SHAMBLES_LNK'] = $Link
+        $start.EnvironmentVariables['SHAMBLES_LNK_TARGET'] = $Target
+        $start.EnvironmentVariables['SHAMBLES_LNK_DIR'] = $Folder
+        $start.EnvironmentVariables['SHAMBLES_LNK_NOTE'] = $Note
+        $child = [System.Diagnostics.Process]::Start($start)
+        $said = $child.StandardError.ReadToEnd()
+        if (-not $child.WaitForExit(120000)) {
+            try { $child.Kill() } catch { }
+            throw 'writing the shortcut took too long'
+        }
+        if ($child.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Link)) {
+            throw ("the shortcut could not be written: " + $said.Trim())
+        }
+    }
+
     $Asset = $null
     $Windowed = $null
     $Tmp = New-TempName
@@ -280,6 +364,23 @@ param(
                 Remove-Item -Recurse -Force -LiteralPath $Aside -ErrorAction SilentlyContinue
                 Write-Host "Installed the window to $WindowDir"
                 Write-Host '  shambles gui    opens it'
+
+                # A Start menu shortcut, so the window can be found without a
+                # terminal. Per-user, so no admin. Rewritten on every install
+                # because it names the window by path. A shortcut that cannot
+                # be written is not a reason to fail the install.
+                # $env:SHAMBLES_NO_DESKTOP = '1' skips it.
+                if ($env:SHAMBLES_NO_DESKTOP -ne '1') {
+                    $LinkPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Shambles.lnk'
+                    $WindowExe = Join-Path $WindowDir 'shambles-window.exe'
+                    $LinkNote = 'Switch between Claude Code and Codex accounts'
+                    try {
+                        Save-Shortcut $LinkPath $WindowExe $WindowDir $LinkNote
+                        Write-Host 'Added Shambles to your Start menu.'
+                    } catch {
+                        Write-Host "Could not add a Start menu shortcut ($($_.Exception.Message)); the window is still installed."
+                    }
+                }
             }
         } catch {
             Write-Warning "The window was not installed: $($_.Exception.Message) Shambles itself is installed."

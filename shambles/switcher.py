@@ -230,12 +230,17 @@ def _write_credential(paths, provider, name, blob: bytes, *, sleep) -> None:
 
 
 def switch(paths, provider, target_name: str, *, platform=sys.platform,
-           now_ms_fn=now_ms, sleep=time.sleep):
+           now_ms_fn=now_ms, sleep=time.sleep, on_wait=None):
     """Make ``target_name`` the logged-in account for one provider.
 
     Stashes the outgoing login, restores the incoming one, and writes the
     matching identity into the provider's companion file if it has one.
     Nothing outside the credential moves.
+
+    ``on_wait`` is called once, with no arguments, if the switch has to wait
+    for the vendor to finish a refresh (see :func:`_hold_refresh_locks`), so
+    a frontend can say why nothing has happened yet. It runs on the caller's
+    thread, and anything it raises is ignored.
     """
     if provider.id == "claude":
         _refuse_legacy_layout(paths)
@@ -265,7 +270,7 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     # read until the incoming one is in place. A refresh already in flight
     # lands first, so the token stashed is the one it was given rather than
     # the one it just spent. See _hold_refresh_locks.
-    held = _hold_refresh_locks(provider, paths)
+    held = _hold_refresh_locks(provider, paths, on_wait=on_wait)
 
     # Everything touching the filesystem lives inside one guard, so no path
     # out of here raises a bare OSError. The GUI renders ShamblesError only;
@@ -374,7 +379,7 @@ class _HeldLock:
                 pass
 
 
-def _hold_refresh_locks(provider, paths) -> list:
+def _hold_refresh_locks(provider, paths, *, on_wait=None) -> list:
     """Take the lock the vendor refreshes under, waiting for it if held.
 
     Claude Code posts its refresh token, the server spends it at once, and
@@ -394,6 +399,7 @@ def _hold_refresh_locks(provider, paths) -> list:
     stale_s = block.get("stale_ms", 60_000) / 1000
     held = []
     deadline = time.monotonic() + REFRESH_LOCK_WAIT_S
+    told = on_wait is None
     try:
         for lock in provider.refresh_locks(home=paths.home):
             while True:
@@ -408,6 +414,12 @@ def _hold_refresh_locks(provider, paths) -> list:
                     break                 # its directory is gone: no client
                 if time.monotonic() >= deadline:
                     raise SwitchFailedError(REFRESH_IN_PROGRESS)
+                if not told:
+                    told = True
+                    try:
+                        on_wait()
+                    except Exception:
+                        pass          # a message, never a reason to stop
                 time.sleep(0.05)
     except BaseException:
         _release(held)

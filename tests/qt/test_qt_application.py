@@ -155,8 +155,50 @@ def test_every_sheet_and_both_themes_draw_without_a_qml_warning(window, pump):
         shown()
         ui.dismiss()
         ui.switchTo("claude", "Personal")
+        assert pump(lambda: not ui.busy, timeout=5)
         root.setProperty("expandedId", "claude/Old")
         shown()
+
+    assert messages == []
+
+
+def test_the_settle_card_draws_and_settles_without_a_qml_warning(window,
+                                                                pump):
+    from qt_fakes import saved_elsewhere
+
+    engine, ui, service, messages = window(FakeService(saved_elsewhere()))
+    root = engine.rootObjects()[0]
+    pump(timeout=0.05)
+    root.grabWindow()
+    ui.settle("claude")
+    assert pump(lambda: not ui.busy, timeout=5)
+
+    assert service.named("switch") == [("switch", "claude", "Home")]
+    assert messages == []
+
+
+def test_the_busy_strip_and_a_due_sign_in_draw_without_a_qml_warning(
+        window, pump):
+    """R10 and R11 in the real QML: the strip that explains a switch waiting
+    on Claude Code's refresh, and Sign in beside Switch on a due account."""
+    import threading
+
+    from qt_fakes import due
+
+    service = FakeService(due())
+    service.hold = threading.Event()
+    engine, ui, _service, messages = window(service)
+    root = engine.rootObjects()[0]
+    root.setProperty("expandedId", "claude/Spare")
+    pump(timeout=0.05)
+    root.grabWindow()
+
+    ui.switchTo("claude", "Spare")
+    assert pump(lambda: "renewing its login" in ui.busyText, timeout=5)
+    root.grabWindow()
+    service.hold.set()
+    assert pump(lambda: not ui.busy, timeout=5)
+    root.grabWindow()
 
     assert messages == []
 
@@ -191,3 +233,15 @@ def test_a_sign_in_finishing_as_the_window_closes_does_not_touch_dead_qml(
     pump(timeout=0.05)
 
     assert messages == []
+
+
+def test_the_window_has_an_icon(window):
+    """Without one the title bar and taskbar show the toolkit's blank
+    default."""
+    engine, _ui, _service, _messages = window()
+    from PySide6.QtGui import QGuiApplication
+
+    icon = QGuiApplication.instance().windowIcon()
+
+    assert not icon.isNull()
+    assert icon.pixmap(64, 64).width() == 64
