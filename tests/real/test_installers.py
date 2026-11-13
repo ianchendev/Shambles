@@ -87,6 +87,7 @@ def release(tmp_path):
     shutil.copy(SCRIPTS / "install.sh", root / "install.sh")
     with serve(root) as base:
         publish.base = base
+        publish.root = root
         yield publish
 
 
@@ -376,3 +377,80 @@ def test_the_published_windows_release_installs_and_starts_here(tmp_path):
                              capture_output=True, text=True, timeout=120)
     print("published binary says:", version.stdout.strip(), version.stderr.strip())
     assert version.returncode == 0 and version.stdout.startswith("shambles ")
+
+
+
+# -- the window ----------------------------------------------------------------
+
+
+def window_zip(folder: Path) -> bytes:
+    """A window archive shaped like the real one. The executable is this
+    job's own binary under the window's name: the installer only needs a
+    real file there, and the Start menu needs a real program to point at."""
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.write(BINARY, "shambles-window/shambles-window.exe")
+        archive.writestr("shambles-window/shambles.png", b"png")
+        archive.writestr("shambles-window/_internal/marker", b"new")
+    return buffer.getvalue()
+
+
+def publish_window(release, name):
+    folder = Path(release.root) / "latest" / "download"
+    data = window_zip(folder)
+    (folder / name).write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    with open(folder / "SHA256SUMS", "a", encoding="utf-8") as sums:
+        sums.write(f"{digest}  {name}\n")
+
+
+@windows_only
+@pytest.mark.parametrize("shell", SHELLS)
+def test_install_ps1_installs_the_window(
+        release, tmp_path, shell):
+    """Unpacking the zip and swapping it in, under Windows PowerShell 5.1
+    and PowerShell 7, into a folder with spaces and non-ASCII characters."""
+    local = tmp_path / "Lôcal App Data 家"
+    local.mkdir()
+    release()
+    asset = this_asset()
+    window = asset.replace("shambles-windows-", "shambles-window-windows-") \
+                  .replace(".exe", ".zip")
+    assert window in release_assets.WINDOW_ARTIFACTS
+    publish_window(release, window)
+
+    done = run_ps(shell, f"irm {release.base}/install.ps1 | iex",
+                  windows_env(local, release.base, SHAMBLES_NO_PATH="1"))
+
+    assert done.returncode == 0
+    installed_window = local / "Shambles" / "window" / "shambles-window.exe"
+    assert installed_window.is_file()
+    assert done.stdout.count("Checksum verified") >= 2, \
+        "the window was not checked against SHA256SUMS"
+    leftovers = [p.name for p in (local / "Shambles").iterdir()
+                 if p.name not in ("shambles.exe", "shamblesw.exe", "window")]
+    assert leftovers == [], f"left behind: {leftovers}"
+
+
+@windows_only
+def test_a_window_that_fails_its_checksum_leaves_shambles_installed(
+        release, tmp_path):
+    release()
+    window = this_asset().replace("shambles-windows-",
+                                  "shambles-window-windows-") \
+                         .replace(".exe", ".zip")
+    folder = Path(release.root) / "latest" / "download"
+    (folder / window).write_bytes(window_zip(folder))
+    with open(folder / "SHA256SUMS", "a", encoding="utf-8") as sums:
+        sums.write(f"{'0' * 64}  {window}\n")
+
+    done = run_ps(SHELLS[0], f"irm {release.base}/install.ps1 | iex",
+                  windows_env(tmp_path, release.base, SHAMBLES_NO_PATH="1"))
+
+    assert done.returncode == 0
+    assert (tmp_path / "Shambles" / "shambles.exe").is_file()
+    assert not (tmp_path / "Shambles" / "window").exists()
+    assert "does not match" in done.stdout + done.stderr

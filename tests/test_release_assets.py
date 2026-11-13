@@ -63,3 +63,48 @@ def test_install_ps1_puts_shambles_on_path_for_the_current_terminal():
     text = Path("scripts/install.ps1").read_text(encoding="utf-8")
     assert "$env:Path" in text, "must update PATH for the running session"
     assert "new terminal" in text.lower()
+
+
+def test_every_binary_has_a_window_archive_to_go_with_it():
+    from shambles.release_assets import WINDOW_ARTIFACTS, window_asset
+
+    assert window_asset(sys_platform="linux", machine="aarch64") == \
+        "shambles-window-linux-arm64.tar.gz"
+    assert window_asset(sys_platform="win32", machine="AMD64") == \
+        "shambles-window-windows-x64.zip"
+    assert window_asset(sys_platform="win32", machine="ARM64") == \
+        "shambles-window-windows-arm64.zip"
+    assert len(WINDOW_ARTIFACTS) == 6
+
+
+def test_install_sh_fetches_every_unix_window_archive():
+    from shambles.release_assets import WINDOW_ARTIFACTS
+
+    text = Path("scripts/install.sh").read_text(encoding="utf-8")
+    for name in WINDOW_ARTIFACTS:
+        if name.endswith(".zip"):
+            continue
+        assert name in text, f"install.sh missing {name}"
+
+
+def test_install_ps1_fetches_the_windows_window_archive():
+    text = Path("scripts/install.ps1").read_text(encoding="utf-8")
+    assert "shambles-window-windows-x64.zip" in text
+
+
+def test_the_release_workflow_builds_every_window_archive():
+    from shambles.release_assets import WINDOW_ARTIFACTS
+
+    text = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    for name in WINDOW_ARTIFACTS:
+        assert name in text, f"release.yml does not build {name}"
+
+
+def test_the_small_binary_is_built_without_qt():
+    """Qt inside the one-file binary would slow every command by most of a
+    second, which is the reason the window is a separate download. Every
+    one-file binary is built by the shared action."""
+    text = Path(".github/actions/build-binary/action.yml").read_text(
+        encoding="utf-8")
+    assert text.count("--exclude-module PySide6 --exclude-module shiboken6") == 3, \
+        "each of the three one-file builds must exclude Qt"

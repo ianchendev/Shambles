@@ -423,7 +423,7 @@ Each card shows a state chip only when something needs you:
 | Chip | Meaning |
 |---|---|
 | *(nothing)* | Healthy, or an expiry it cannot read |
-| `soon` (amber) | The refresh window closes within a day (Claude) or two (Codex) |
+| `soon` (amber) | Fewer than four days left (Claude) or three (Codex). For Claude, using the account does not push the date back: sign in again before it |
 | `needs login` (red) | The window closed, or this profile has no credential yet. Press **Sign in** |
 | `signed out` (red) | The login was cleared. The profile survives, the token is empty |
 
@@ -437,17 +437,42 @@ runs on its own are in [docs/how-it-works.md](docs/how-it-works.md).
 **A redesigned window is in preview.** `shambles gui --new` opens it. It does
 everything above in one resizable window with no separate dialogs, adds light
 and dark themes, and can be driven from the keyboard (`1` to `9` switch,
-`/` filters, `Ctrl+N` adds). It is built on Qt, which is an optional extra
-and not in the release binaries yet:
+`/` filters, `Ctrl+N` adds).
+
+It is built on Qt, a 36 to 82 MB download depending on the platform, so it
+ships as its own archive beside the `shambles` binary instead of inside it.
+The install scripts fetch it for you into `~/.local/share/shambles/window`
+(or `%LOCALAPPDATA%\Shambles\window`), check it against the release's
+`SHA256SUMS` like the binary, and leave the window you had if the download
+fails. Set `SHAMBLES_NO_WINDOW=1` first to skip it. It carries the system
+libraries Qt needs, so there is nothing to `apt install`.
+
+From pip or pipx it is an optional extra instead:
 
 ```bash
 pip install 'shambles[gui]'      # or: pipx inject shambles PySide6-Essentials
 shambles gui --new
 ```
 
-On a bare Linux or WSL install Qt also needs three system libraries, and
-says so if they are missing: `sudo apt install libegl1 libxcb-cursor0
-libxkbcommon-x11-0`.
+Installed that way on a bare Linux or WSL machine, Qt needs three system
+libraries and says so if they are missing: `sudo apt install libegl1
+libxcb-cursor0 libxkbcommon-x11-0`.
+
+**Licences in the window.** The window archive contains Qt and Qt for
+Python (PySide6), which are LGPL-3.0, alongside Shambles' own MIT code. Qt
+is kept as separate shared libraries inside the folder, unmodified, so you
+can replace it with your own build. The archive's `licenses` folder holds
+the LGPL-3.0 and GPL-3.0 texts, a notice saying where Qt's source is, the
+SIL Open Font License for the bundled Inter typeface, and Shambles' MIT
+licence. Python (PSF), Textual and Rich (MIT) and the PyInstaller bootloader
+(GPL with a bundling exception) are listed there too. The small `shambles`
+binary contains no Qt.
+
+Because the window's QML engine is linked against Qt's own C++ network
+library, that library is inside the window archive. Nothing in Shambles
+calls it: the window loads only files that ship with it, and the rule that
+no Python module in the package imports a network module is still enforced
+by `tests/test_login.py`.
 
 ### The terminal dashboard
 

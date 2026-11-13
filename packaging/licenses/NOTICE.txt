@@ -1,0 +1,50 @@
+Shambles window: third-party software
+=====================================
+
+This folder is the Shambles window. Shambles itself is MIT licensed (see
+LICENSE-Shambles.txt). The window also contains the software below, each
+under its own licence. None of it has been modified.
+
+Qt 6, and Qt for Python (PySide6 and Shiboken6)
+    Copyright (C) The Qt Company Ltd and other contributors.
+    Used under the GNU Lesser General Public License version 3: see
+    LGPL-3.0.txt, and GPL-3.0.txt, which the LGPL incorporates.
+
+    Qt is shipped as separate shared libraries, in the _internal/PySide6
+    folder beside this one, exactly as published in the PySide6-Essentials
+    packages on PyPI. You may replace those libraries with your own build of
+    the same Qt version and the window will use it.
+
+    Source code:   https://download.qt.io/official_releases/
+                   https://code.qt.io/
+    How this folder is built: packaging/window.spec in
+                   https://github.com/ianchendev/Shambles
+
+    Qt includes third-party components of its own (ICU, HarfBuzz, FreeType,
+    libpng, zlib, PCRE2 and others). They are listed, with their licences,
+    at https://doc.qt.io/qt-6/licenses-used-in-qt.html
+
+Inter typeface
+    Copyright (c) The Inter Project Authors.
+    SIL Open Font License 1.1: see OFL-Inter.txt.
+
+Python
+    Copyright (c) Python Software Foundation.
+    PSF License Agreement: https://docs.python.org/3/license.html
+
+Textual and Rich, and the libraries they depend on
+    MIT License for Textual, Rich, markdown-it-py, mdit-py-plugins, mdurl,
+    linkify-it-py and platformdirs; BSD 2-Clause for Pygments; PSF License
+    for typing-extensions. Each project's own repository carries the full
+    text.
+
+PyInstaller bootloader
+    GPL-2.0-or-later with a special exception that allows a bundled
+    application to be distributed under any licence:
+    https://pyinstaller.org/en/stable/license.html
+
+On Linux only
+    libEGL and libGLdispatch from libglvnd (an MIT-style licence), and the
+    X11, xcb, fontconfig, FreeType, GLib and D-Bus libraries PyInstaller
+    copies from the machine the window was built on, each under the licence
+    of its own project.

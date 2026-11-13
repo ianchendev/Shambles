@@ -310,9 +310,68 @@ class ClaudeProvider:
 
     # -- what the bytes mean ----------------------------------------------
 
+    def config_file(self, *, home) -> Path:
+        """Where Claude Code keeps its global config: identity, projects, MCP.
+
+        Not always ``~/.claude.json``. With ``CLAUDE_CONFIG_DIR`` set it is in
+        that directory; a custom OAuth endpoint adds a suffix to the name; and
+        a legacy ``.config.json`` inside the config directory wins when Claude
+        Code would still read it. Shambles reads and splices whichever file
+        Claude Code itself is using, or it shows and files the identity of
+        whoever last used another one.
+        """
+        block = self.spec.get("config_file") or {}
+        directory = specmod.config_dir(self.spec, home=home, env=self.env)
+        suffix = (block.get("suffix_when_set", "")
+                  if self.env.get(block.get("suffix_env", ""), "") else "")
+        override = self.env.get(
+            (self.spec.get("config_dir") or {}).get("env", ""), "")
+        base = Path(override).expanduser() if override else Path(home)
+        current = base / block.get("name", ".claude{suffix}.json").format(
+            suffix=suffix)
+        legacy = block.get("legacy")
+        if legacy:
+            candidate = Path(directory) / legacy
+            try:
+                if candidate.is_file():
+                    info = candidate.stat()
+                    if info.st_size > 0 or (info.st_mode & 0o222
+                                            and not current.exists()):
+                        return candidate
+            except OSError:
+                pass
+        return current
+
+    def companion_path(self, *, home) -> Path:
+        return self.config_file(home=home)
+
+    def refresh_locks(self, *, home) -> list:
+        """The lock directories Claude Code holds while it refreshes, in the
+        order it takes them."""
+        block = self.spec.get("refresh_lock")
+        if not block:
+            return []
+        dir_env = block.get("dir_env", "")
+        if dir_env in self.env:
+            directory = Path(self.env[dir_env] or Path(home) / ".claude")
+        else:
+            directory = specmod.config_dir(self.spec, home=home, env=self.env)
+        if not Path(directory).is_dir():
+            return []    # no client has run here: nothing to coordinate with
+        try:
+            legacy = Path(os.path.realpath(directory))
+        except OSError:
+            legacy = Path(directory)
+        return [Path(directory) / block["name"],
+                legacy.with_name(legacy.name + block.get("legacy_suffix",
+                                                         ".lock"))]
+
     def has_login(self, blob: bytes | None) -> bool:
         token = specmod.pointer(_parse(blob), self.spec["token"]["pointer"])
         return isinstance(token, str) and bool(token.strip())
+
+    def same_login(self, older: bytes | None, newer: bytes | None) -> bool:
+        return specmod.same_lineage(self.spec, _parse(older), _parse(newer))
 
     def liveness(self, blob: bytes | None, *, now_ms: int) -> Liveness:
         if not blob:
@@ -362,7 +421,7 @@ class ClaudeProvider:
         """
         block = self.spec["identity"]
         if active or profile_dir is None:
-            data = _read_json(specmod.expand(block["path"], home=home))
+            data = _read_json(self.config_file(home=home))
         else:
             data = _read_json(Path(profile_dir) / "account.json")
         return Identity(
@@ -370,13 +429,14 @@ class ClaudeProvider:
             display_name=specmod.pointer(data, block["display_name"]),
             org=specmod.pointer(data, block["org"]),
             plan=specmod.pointer(data, block["plan"]),
+            account=specmod.pointer(data, block.get("account", "")),
         )
 
     # -- what else has to move --------------------------------------------
 
     def companion_read(self, *, home) -> dict:
         block = self.spec["companion"]
-        data = _read_json(specmod.expand(block["path"], home=home))
+        data = _read_json(self.config_file(home=home))
         return {key: data[key] for key in block["keys"] if key in data}
 
     def companion_write(self, data: dict, *, home) -> None:
@@ -387,7 +447,7 @@ class ClaudeProvider:
         email after a switch. Claude Code re-fetches them on next start.
         """
         block = self.spec["companion"]
-        path = specmod.expand(block["path"], home=home)
+        path = self.config_file(home=home)
         # load_for_write, not _read_json. _read_json answers {} for anything
         # unusable -- right when reading a credential for display, fatal here:
         # splicing two identity keys onto {} and writing it back replaces

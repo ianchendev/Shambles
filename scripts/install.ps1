@@ -225,6 +225,71 @@ param(
     }
     if (-not $SkipSmoke) { Write-Host $said }
 
+    # The window, unless $env:SHAMBLES_NO_WINDOW = '1'. It is its own archive
+    # because it carries Qt, which is far larger than everything else, so it
+    # is kept out of the binary every command starts. Optional: shambles.exe
+    # is installed above and works without it, so nothing here can undo that.
+    #
+    # The archive that matches the binary chosen above, so a Windows on Arm
+    # machine that fell back to the x64 binary gets the x64 window too.
+    # Checked against the same SHA256SUMS, unpacked beside its final place,
+    # and swapped in by renaming, so a failed or mismatched download leaves
+    # the window that was there. A release from before the window existed has
+    # no such archive, which is reported and is not an error.
+    $WindowFor = @{
+        'shambles-windows-x64.exe'   = 'shambles-window-windows-x64.zip'
+        'shambles-windows-arm64.exe' = 'shambles-window-windows-arm64.zip'
+    }
+    $WindowAsset = $WindowFor[$Asset]
+    $WindowDir = Join-Path $DestDir 'window'
+    Get-ChildItem -LiteralPath $DestDir -Directory -Filter '.window-*' -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    if ($WindowAsset -and $env:SHAMBLES_NO_WINDOW -ne '1') {
+        $WindowTmp = Join-Path $DestDir ('.window-download-' + [Guid]::NewGuid().ToString('N'))
+        try {
+            New-Item -ItemType Directory -Force -Path $WindowTmp | Out-Null
+            $Zip = Join-Path $WindowTmp 'window.zip'
+            Write-Host "Downloading $WindowAsset..."
+            $fetched = $false
+            try {
+                Get-Verified $WindowAsset $Zip
+                $fetched = $true
+            } catch {
+                if ("$_" -match 'does not match the release checksum') {
+                    Write-Warning "The window download does not match the release checksum, so it was not installed. Shambles itself is installed. Run the installer again to retry the window."
+                } else {
+                    Write-Host "This release has no window to download; 'shambles gui' opens the classic one."
+                }
+            }
+            if ($fetched) {
+                Expand-Archive -LiteralPath $Zip -DestinationPath $WindowTmp -Force
+                $Unpacked = Join-Path $WindowTmp 'shambles-window'
+                if (-not (Test-Path -LiteralPath (Join-Path $Unpacked 'shambles-window.exe'))) {
+                    throw 'The window archive did not hold a window.'
+                }
+                $Aside = Join-Path $DestDir '.window-old'
+                if (Test-Path -LiteralPath $Aside) { Remove-Item -Recurse -Force -LiteralPath $Aside }
+                if (Test-Path -LiteralPath $WindowDir) {
+                    try {
+                        Move-Item -LiteralPath $WindowDir -Destination $Aside
+                    } catch {
+                        throw 'The window is running. Close it and run the installer again to update it.'
+                    }
+                }
+                Move-Item -LiteralPath $Unpacked -Destination $WindowDir
+                Remove-Item -Recurse -Force -LiteralPath $Aside -ErrorAction SilentlyContinue
+                Write-Host "Installed the window to $WindowDir"
+                Write-Host '  shambles gui    opens it'
+            }
+        } catch {
+            Write-Warning "The window was not installed: $($_.Exception.Message) Shambles itself is installed."
+        } finally {
+            if (Test-Path -LiteralPath $WindowTmp) {
+                Remove-Item -Recurse -Force -LiteralPath $WindowTmp -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     # The user's PATH, read and written without expanding it. The obvious
     # call, [Environment]::GetEnvironmentVariable('Path', 'User'), returns
     # entries such as %USERPROFILE%\bin already expanded, and writing that

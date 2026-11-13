@@ -144,6 +144,38 @@ def mode_of(block: dict, default: int = 0o600) -> int:
     return int(raw, 8) if isinstance(raw, str) else default
 
 
+def lineage(spec: dict, parsed):
+    """The value the spec names as surviving a refresh, or ``None``.
+
+    Only a nonempty string or a finite number counts: anything else would
+    let two damaged credentials compare equal.
+    """
+    block = spec.get("lineage")
+    if not block:
+        return None
+    value = pointer(parsed, block["pointer"])
+    if isinstance(value, str):
+        return value or None
+    return value if finite(value) and not isinstance(value, bool) else None
+
+
+def same_lineage(spec: dict, older, newer) -> bool:
+    """Whether two parsed credentials are one login, the newer refreshed.
+
+    Strings must match exactly. Numbers may differ by the spec's
+    ``tolerance_ms``: a deadline recomputed at every refresh from "now plus
+    the seconds left" wobbles by rounding and network delay while the real
+    deadline holds still. ``False`` whenever either side has no lineage.
+    """
+    a, b = lineage(spec, older), lineage(spec, newer)
+    if a is None or b is None or isinstance(a, str) != isinstance(b, str):
+        return False
+    if isinstance(a, str):
+        return a == b
+    tolerance = (spec.get("lineage") or {}).get("tolerance_ms", 0)
+    return abs(a - b) <= tolerance
+
+
 _MISSING = object()
 
 

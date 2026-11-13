@@ -1,0 +1,106 @@
+name: window
+
+# Builds the window bundle on every platform it ships for and proves each one
+# can draw. Runs when a change touches the window or how it is packaged.
+#
+# The release workflow does the same build, but only on a tag, and behind the
+# whole test suite. That is the right gate for a release and the wrong place
+# to find out that a QML file or a Qt plugin went missing from the macOS or
+# Windows bundle, which nobody on the project can check by hand.
+
+on:
+  pull_request:
+    paths:
+      - "shambles/app/qt/**"
+      - "packaging/**"
+      - "pyproject.toml"
+      - ".github/workflows/window.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        # The same runners as release.yml, so what passes here is what ships.
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15-intel, macos-15, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Qt's system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y binutils libegl1
+             libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4
+             libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xkb1
+             libdbus-1-3 libfontconfig1
+
+      - name: Build the window
+        shell: bash
+        run: |
+          pip install ".[gui]" pyinstaller
+          python -c "import PySide6; print('PySide6', PySide6.__version__)"
+          pyinstaller --noconfirm packaging/window.spec
+
+      - name: Linux window must run on more than this runner
+        if: runner.os == 'Linux'
+        run: python scripts/check_glibc.py dist/shambles-window 2.35
+
+      # The real window, against an empty home, offscreen. The frame it
+      # draws and everything Qt said while drawing it are kept below.
+      - name: The window opens and draws
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SHAMBLES_WINDOW_SMOKE: frame-${{ matrix.os }}.png
+        run: |
+          home="$(mktemp -d)"
+          ./dist/shambles-window/shambles-window --home "$home" || status=$?
+          cat "frame-${{ matrix.os }}.png.log" || true
+          test "${status:-0}" = 0
+          test -s "frame-${{ matrix.os }}.png"
+
+      # A sheet is its own QML component, loaded only when it opens.
+      - name: The add-account sheet opens and draws
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SHAMBLES_WINDOW_SMOKE: sheet-${{ matrix.os }}.png
+          SHAMBLES_WINDOW_SMOKE_DO: "openAdd:claude"
+        run: |
+          home="$(mktemp -d)"
+          ./dist/shambles-window/shambles-window --home "$home" || status=$?
+          cat "sheet-${{ matrix.os }}.png.log" || true
+          test "${status:-0}" = 0
+          test -s "sheet-${{ matrix.os }}.png"
+
+      # Qt is LGPL. A download without the licence texts is one the project
+      # may not distribute, so their absence fails the build.
+      - name: The licences are in the folder
+        shell: bash
+        run: |
+          ls dist/shambles-window/licenses
+          for f in LGPL-3.0.txt GPL-3.0.txt NOTICE.txt OFL-Inter.txt LICENSE-Shambles.txt; do
+            test -s "dist/shambles-window/licenses/$f"
+          done
+
+      - name: Size
+        shell: bash
+        run: |
+          du -sh dist/shambles-window || true
+          cd dist && tar -czf window.tar.gz shambles-window && ls -l window.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: window-frames-${{ matrix.os }}
+          path: |
+            frame-${{ matrix.os }}.png*
+            sheet-${{ matrix.os }}.png*

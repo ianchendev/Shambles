@@ -99,6 +99,20 @@ def _service(args):
                            platform=sys.platform)
 
 
+def _ready_service(args):
+    """A service whose store has been brought up to date first.
+
+    The same two migrations every window runs at startup. Without them a
+    1.0 store listed no accounts here, and the pre-1.0 layout refused every
+    Claude switch with an instruction no command could carry out. What they
+    did goes to stderr, so the JSON contract on stdout is untouched.
+    """
+    service = _service(args)
+    for notice in service.run_migrations():
+        sys.stderr.write(notice.message.rstrip() + "\n")
+    return service
+
+
 def _tui_entry():
     """``run_tui``, imported through a function so its absence is catchable.
 
@@ -155,6 +169,16 @@ def cmd_window(args) -> int:
     try:
         run_window = _window_entry()
     except ImportError as exc:
+        # The release binary carries no Qt; the window is its own download.
+        from . import launch
+        bundle = launch.window_bundle()
+        if bundle is not None:
+            passed = []
+            if getattr(args, "home", None):
+                passed += ["--home", args.home]
+            if getattr(args, "no_motion", False):
+                passed.append("--no-motion")
+            launch.replace_with_window(bundle, passed)
         from shambles.__main__ import QT_MISSING
         sys.stderr.write(QT_MISSING.format(reason=exc))
         return EXIT_FAILED
@@ -178,7 +202,7 @@ def cmd_gui(args) -> int:
 
 
 def cmd_list(args) -> int:
-    snap = _service(args).snapshot()
+    snap = _ready_service(args).snapshot()
     payload = snapshot_mod.to_dict(snap)
 
     if args.json:
@@ -217,7 +241,7 @@ def cmd_list(args) -> int:
 
 def cmd_switch(args) -> int:
     try:
-        result = _service(args).switch(args.provider, args.account)
+        result = _ready_service(args).switch(args.provider, args.account)
     except KeyError:
         known = ", ".join(registry.ids())
         return _fail(args, "unknown_provider",

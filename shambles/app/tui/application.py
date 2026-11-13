@@ -309,6 +309,9 @@ class ShamblesTUI(App[str | None]):
     ):
         super().__init__()
         self.service = service
+        # Before the first snapshot, so an old store is read after it has
+        # been brought across. Shown once the screen is up (on_mount).
+        self._migration_notices = _run_migrations(service)
         self.snapshot = service.snapshot()
         self.motion = (
             motion
@@ -388,6 +391,11 @@ class ShamblesTUI(App[str | None]):
         be in flight when somebody quits, and the overwhelmingly common case
         is a user who never turned this on.
         """
+        if self._migration_notices:
+            status = self.query_one("#refresh-status", Static)
+            status.update("\n".join(n.message for n in self._migration_notices))
+            status.set_class(True, "visible")
+
         paths = getattr(self.service, "paths", None)
         if paths is None or not settings.update_check_enabled(paths):
             return
@@ -801,6 +809,22 @@ class ShamblesTUI(App[str | None]):
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
+
+
+def _run_migrations(service) -> tuple:
+    """Bring an old store up to date, as every window does at startup.
+
+    A test double that only hands over snapshots has nothing to migrate, and
+    a migration that cannot run is a notice, never a reason to refuse the
+    interface: the service says so in the notices it returns.
+    """
+    run = getattr(service, "run_migrations", None)
+    if run is None:
+        return ()
+    try:
+        return tuple(run())
+    except Exception:
+        return ()
 
 
 def run_tui(

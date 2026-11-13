@@ -19,6 +19,23 @@ posix_modes_only = pytest.mark.skipif(
 )
 
 
+#: Environment variables that move a vendor's live login. Exported in the
+#: shell that runs the suite, they would point any provider built from the
+#: process environment at that person's real credential.
+VENDOR_LOCATIONS = ("CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+                    "CODEX_HOME")
+
+
+@pytest.fixture(autouse=True)
+def no_real_vendor_location(monkeypatch):
+    """Never let a developer's vendor locations reach a test.
+
+    Tests that want one set it themselves, on the provider's own ``env``.
+    """
+    for name in VENDOR_LOCATIONS:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def predictable_motion(monkeypatch):
     """Pin animation on, whatever the developer's shell says.
