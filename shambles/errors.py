@@ -5,19 +5,8 @@ must read well to someone who has never seen the source. Tracebacks never reach
 the user.
 """
 
-WINDOWS_SYMLINK_HELP = (
-    "Windows blocked symlink creation.\n\n"
-    "Enable Developer Mode (Settings → System → For developers), "
-    "or run Shambles as Administrator."
-)
-
-
 class ShamblesError(Exception):
     """Base for every error Shambles shows the user."""
-
-
-class SymlinkPermissionError(ShamblesError):
-    """The OS refused to create a symlink. On Windows this is WinError 1314."""
 
 
 class ProfileNameError(ShamblesError):

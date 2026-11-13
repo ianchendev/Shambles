@@ -218,7 +218,6 @@ A profile is roughly **500 bytes**. Under the previous design it was 208 MB.
 | `configjson.py` | 145 | Parse, splice and back up `~/.claude.json` |
 | `profiles.py` | 172 | Discovery, token state, expiry arithmetic, name validation |
 | `migrate.py` | 219 | One-way conversion from the pre-1.0 layout |
-| `retry.py` | 36 | Transient-lock retry |
 | `errors.py` | 46 | Typed exceptions carrying user-facing text |
 | `gui.py` | 430 | Tkinter window |
 | `theme.py` | 131 | Palette, fonts, DPI scaling |
@@ -486,41 +485,16 @@ processes writing to overlapping paths:
 Contention is therefore expected, not exceptional, and must be survivable rather
 than prevented.
 
-### 2.2 `retry.py`
+### 2.2 No retry
 
-```python
-RETRIES = 3
-DELAY = 0.5                 # seconds
-WINDOWS_SYMLINK_DENIED = 1314
-
-def with_retry(action, what, *, retries=RETRIES, delay=DELAY, sleep=time.sleep):
-    last = None
-    for attempt in range(retries):
-        try:
-            return action()
-        except OSError as exc:
-            if getattr(exc, "winerror", None) == WINDOWS_SYMLINK_DENIED:
-                raise SymlinkPermissionError(WINDOWS_SYMLINK_HELP) from exc
-            last = exc
-            if attempt < retries - 1:
-                sleep(delay)
-    raise SwitchFailedError(
-        f"Could not {what} after {retries} attempts:\n{last}\n\n"
-        "Close any running Claude Code sessions and try again."
-    ) from last
-```
-
-Design notes:
-
-- **`OSError` is the catch, not `PermissionError`.** Windows surfaces sharing
-  violations under several errnos; the base class covers them.
-- **`ERROR_PRIVILEGE_NOT_HELD` (1314) fails immediately.** No amount of waiting
-  grants an account the right to create symlinks. Reached only via the legacy
-  migration path.
-- **Exhaustion raises `SwitchFailedError`**, a `ShamblesError` subclass. This is
-  load-bearing — see §2.4.
-- **`sleep` is injected** so the suite never actually waits.
-- Worst case latency: 3 attempts, 2 sleeps, ~1.0 s.
+There was a `retry.py` here that tried a failed write three times, half a
+second apart. It was removed in November 2026 (review decision D5). From 2.1.0
+on it retried nothing a store did, because stores raise `StoreUnavailableError`
+and the wrapper caught `OSError`. Making it work showed why it should not
+exist: a retried write waits out whatever held the file and then overwrites
+what that program wrote, from a copy taken before the wait. If the program was
+the vendor rotating its token, the rotated token is gone. A step that fails now
+fails the switch at once, before anything after it has moved, and says so.
 
 ### 2.3 `_copy_secret`
 
@@ -532,13 +506,11 @@ def _copy_secret(source: Path, dest: Path, *, sleep=time.sleep) -> None:
         shutil.copyfile(source, tmp)
         os.chmod(tmp, 0o600)
         os.replace(tmp, dest)
-    retry.with_retry(once, f"write {dest.name}", sleep=sleep)
+    once()
 ```
 
-The whole operation retries, not just the copy. If `os.replace` loses to a
-concurrent writer, the next attempt rebuilds the temp file from scratch — no
-stale intermediate is reused. The temp file lives in the destination directory
-so the rename never crosses a filesystem boundary.
+The temp file lives in the destination directory so the rename never crosses a
+filesystem boundary.
 
 ### 2.4 Single-guard invariant
 
@@ -546,7 +518,7 @@ Every filesystem operation in `switch()` is inside one `try`:
 
 ```python
 try:
-    retry.with_retry(lambda: configjson.backup(...), "back up ~/.claude.json", sleep=sleep)
+    configjson.backup(...)
     if current.profile and paths.profile_dir(current.profile).is_dir():
         stash_live_login(paths, current.profile, now_ms_fn=lambda: stamp, sleep=sleep)
     paths.claude_dir.mkdir(parents=True, exist_ok=True)
@@ -883,13 +855,11 @@ parametrisation in `test_profiles.py` and `test_shutdown.py`.
 | `test_gui_import.py` | 7 | Header text per state, full widget-tree render |
 | `test_paths.py` | 7 | Path derivation, store permissions |
 | `test_packaging.py` | 6 | Entry points, packaged-binary imports |
-| `test_retry.py` | 4 | Retry, exhaustion, Windows privilege short-circuit |
 | `test_shutdown.py` | 4 | Signal handling, tooltip teardown |
 
 The suite uses no mocks for filesystem behaviour. Every test builds a real
 directory tree under `tmp_path`, with `Paths.for_home()` redirecting the entire
-application. Clocks are injected (`NOW = 1_785_000_000_000`); `sleep` is injected
-so retry tests do not wait.
+application. Clocks are injected (`NOW = 1_785_000_000_000`).
 
 ### 5.1 QA test plan results
 
@@ -948,7 +918,7 @@ permission failures on a `0600` credentials file.
 | Migration offered as an opt-in button | Broken layout persists until noticed | `5a060e6` |
 | `plugins/` and `history.jsonl` not merged | Second-account plugins and prompt history stranded | `33ece4e` |
 | Bare `OSError` escaping `switch()` | Lock failures invisible to the user | `c851a2b` |
-| No retry on credential writes | Transient locks failed the switch | `c851a2b` |
+| No retry on credential writes | Transient locks failed the switch | `c851a2b`, then removed (§2.2) |
 | umask-dependent directory modes | Token directories `0755` | `c851a2b` |
 
 ### 5.3 Coverage limitations

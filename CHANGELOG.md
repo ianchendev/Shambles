@@ -107,6 +107,12 @@ Notable changes per release. Dates are the tag date.
   it", and the documentation said an account in daily use never needs signing
   in again. Both are corrected, and a Claude card now turns `soon` with fewer
   than four days left instead of one, a day before Claude Code's own warning.
+- **A switch no longer waits and tries again when a file is busy.** It did
+  that only for the `~/.claude.json` backup, and doing it for the login
+  itself would have been worse: a write that waits out whatever is holding
+  the file then overwrites what that program wrote, which could be a token
+  Codex or Claude Code had just replaced. A switch that meets a busy file now
+  stops before anything has moved and says so; try it again.
 - **A cancelled or failed sign-in in the terminal UI puts you back where you
   were.** Pressing `l` and then Esc, or a sign-in that wrote nothing, left the
   expired account live and the working one signed out, with "The vendor
