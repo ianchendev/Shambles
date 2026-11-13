@@ -111,6 +111,9 @@ class Provider(Protocol):
         inside the token.
         """
 
+    def refresh_locks(self, *, home) -> list:
+        """Lock directories the vendor holds while refreshing, or ``[]``."""
+
     def has_login(self, blob: bytes | None) -> bool:
         """Whether the credential contains the provider's nonempty login token."""
         ...

@@ -9,10 +9,13 @@ them -- verify, back up, stash outgoing, restore incoming, splice, record --
 and only its steps differ, which is exactly the split DD-4 describes.
 """
 
+import os
 import shutil
+import stat
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import configjson, migrate, profiles, state
 from .errors import (AlreadyManagedError, DriftedLoginError,
@@ -258,11 +261,24 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
     stamp = now_ms_fn()
     store = _store(paths, provider, platform)
 
+    # The vendor's own refresh lock, held from before the outgoing login is
+    # read until the incoming one is in place. A refresh already in flight
+    # lands first, so the token stashed is the one it was given rather than
+    # the one it just spent. See _hold_refresh_locks.
+    held = _hold_refresh_locks(provider, paths)
+
     # Everything touching the filesystem lives inside one guard, so no path
     # out of here raises a bare OSError. The GUI renders ShamblesError only;
     # anything else reaches the user as a stderr traceback and looks like the
     # switch silently did nothing.
     try:
+        # Decided again now the lock is held. A refresh that landed while
+        # this waited changed the live bytes, and the answer made before
+        # (whose login is live, where it goes) was about the old ones.
+        current = state.inspect(paths, provider, platform=platform)
+        outgoing = _outgoing_profile(paths, provider, current,
+                                     platform=platform, target=target_name)
+
         if companion_path is not None:
             configjson.backup(companion_path, paths.backup_dir, stamp)
 
@@ -273,10 +289,13 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
         # beside them: when the marker is wrong that address usually is too.
         # A profile whose login this *continues* (refreshed since it was
         # saved) does need the copy -- its own stash is now a spent token.
+        _touch(held)
         exact = state.profiles_holding(paths, provider.id, store.read())
         if outgoing and (outgoing == current.profile or outgoing not in exact):
             stash_live_login(paths, provider, outgoing, platform=platform,
                              now_ms_fn=lambda: stamp, sleep=sleep)
+
+        _touch(held)
 
         incoming = paths.credentials(provider.id, target_name)
         if incoming.exists():
@@ -302,11 +321,129 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
         raise SwitchFailedError(
             f"Could not update the login in {store.describe()}:\n{exc}\n\n"
             "Close any running sessions and try again.") from exc
+    finally:
+        _release(held)
 
     provider.companion_write(
         configjson.read_sidecar(paths.account(provider.id, target_name)),
         home=paths.home)
     return state.inspect(paths, provider, platform=platform)
+
+
+#: How long a switch waits for the vendor to finish a refresh in flight.
+#: Claude Code gives up on its own request after 30 seconds.
+REFRESH_LOCK_WAIT_S = 15.0
+
+REFRESH_IN_PROGRESS = (
+    "Claude Code is renewing this login right now.\n\n"
+    "Try again in a moment. Nothing was changed."
+)
+
+
+class _HeldLock:
+    """One lock directory this switch created, and the timestamp it left.
+
+    Claude Code treats a lock untouched for its stale interval as abandoned
+    and takes it over by removing and recreating it. Removing "our" lock on
+    release after that would remove Claude Code's. So the lock is touched as
+    the switch works, and removed only if it still carries the last touch.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.stamp = self._read()
+
+    def _read(self):
+        try:
+            return self.path.lstat().st_mtime_ns
+        except OSError:
+            return None
+
+    def touch(self) -> None:
+        try:
+            os.utime(self.path)
+        except OSError:
+            return
+        self.stamp = self._read()
+
+    def release(self) -> None:
+        if self.stamp is not None and self._read() == self.stamp:
+            try:
+                self.path.rmdir()
+            except OSError:
+                pass
+
+
+def _hold_refresh_locks(provider, paths) -> list:
+    """Take the lock the vendor refreshes under, waiting for it if held.
+
+    Claude Code posts its refresh token, the server spends it at once, and
+    the new one is saved only if the stored token is still the one posted.
+    A switch landing in between stashed the spent token and replaced the
+    stored one, so the save was refused and the new token was lost with the
+    process. Holding the same lock makes a refresh in flight land first.
+
+    A lock directory not touched for the vendor's stale interval belongs to a
+    client that died; it is removed, as the vendor itself would. Anything
+    else in the way -- a live lock, or something that is not a directory and
+    cannot be removed -- is waited on, and still there after
+    ``REFRESH_LOCK_WAIT_S`` it refuses the switch before anything has moved.
+    No config directory means no client to coordinate with, and no lock.
+    """
+    block = provider.spec.get("refresh_lock") or {}
+    stale_s = block.get("stale_ms", 60_000) / 1000
+    held = []
+    deadline = time.monotonic() + REFRESH_LOCK_WAIT_S
+    try:
+        for lock in provider.refresh_locks(home=paths.home):
+            while True:
+                try:
+                    lock.mkdir()
+                    held.append(_HeldLock(lock))
+                    break
+                except FileExistsError:
+                    if _remove_if_abandoned(lock, stale_s):
+                        continue
+                except FileNotFoundError:
+                    break                 # its directory is gone: no client
+                if time.monotonic() >= deadline:
+                    raise SwitchFailedError(REFRESH_IN_PROGRESS)
+                time.sleep(0.05)
+    except BaseException:
+        _release(held)
+        raise
+    return held
+
+
+def _remove_if_abandoned(lock: Path, stale_s: float) -> bool:
+    """Remove a lock directory nobody has touched for ``stale_s``.
+
+    True only when it was removed. A symlink or a file in its place is
+    never removed: it is not a lock this protocol made.
+    """
+    try:
+        info = lock.lstat()
+    except FileNotFoundError:
+        return True                       # released while we looked
+    except OSError:
+        return False
+    if not stat.S_ISDIR(info.st_mode) or time.time() - info.st_mtime <= stale_s:
+        return False
+    try:
+        lock.rmdir()
+    except OSError:
+        return False
+    return True
+
+
+def _touch(held) -> None:
+    for lock in held:
+        lock.touch()
+
+
+def _release(held) -> None:
+    for lock in reversed(held):
+        lock.release()
 
 
 def _outgoing_profile(paths, provider, current, *, platform,

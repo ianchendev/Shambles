@@ -114,6 +114,13 @@
     "warn_days": 3,
     "warn_days_note": "the deadline is fixed at sign-in (about 30 days) and does not move with use, so it has to be met by signing in again: 'soon' starts with fewer than four days left, a day before Claude Code's own three-day banner. The earlier value of 1 assumed a four-day window that rolled forward on every refresh; that was a misreading of a deadline measured near its end."
   },
+  "refresh_lock": {
+    "dir_env": "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "name": ".oauth_refresh.lock",
+    "legacy_suffix": ".lock",
+    "stale_ms": 60000,
+    "note": "Claude Code 2.1.300 refreshes under a lock: a directory created at <dir>/.oauth_refresh.lock and at <dir realpath>.lock, where <dir> is $CLAUDE_SECURESTORAGE_CONFIG_DIR if set, else the config dir. The holder touches it every 5 s; one 60 s old is abandoned. Shambles takes the same lock while it replaces the live login, so a refresh in flight lands first and its new token is the one stashed."
+  },
   "login": {
     "binary": "claude",
     "command": [
