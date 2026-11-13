@@ -247,7 +247,10 @@ Notable changes per release. Dates are the tag date.
   landed while a renewal was on its way back saved the old token, and Claude
   Code then threw the new one away because the file had changed under it:
   the account needed signing in again. Shambles now waits for a renewal in
-  progress to finish, using Claude Code's own lock, before it switches.
+  progress to finish, using Claude Code's own lock, before it switches. A
+  switch held up for most of a minute (a Keychain prompt left open, say)
+  stops before it replaces the login and asks you to try again, since Claude
+  Code may have started a renewal of its own by then.
 - **The terminal interface and `shambles list` / `shambles switch` now bring
   an old setup up to date themselves**, as the windows always did. Upgrading
   from 1.0 and using only the terminal used to show no accounts at all, and on

@@ -241,38 +241,320 @@ def test_an_unremovable_stale_lock_does_not_hang_the_switch(paths, monkeypatch,
         "holding .oauth_refresh.lock the whole time")
 
 
-# -- no heartbeat, unconditional release -------------------------------------
+# -- removed only while provably its own; never touched ---------------------
 
-def test_a_lock_claude_code_took_over_is_not_removed(paths, monkeypatch):
-    """Shambles never touches its lock's mtime. If its hold outlasts the
-    60 s stale interval (simulated: aged inside the critical section),
-    Claude Code clears it and takes it as its own; Shambles' finally then
-    rmdirs Claude Code's live lock."""
-    make_profile(paths, "claude", "Work", email="w@example.test", active=True)
-    make_profile(paths, "claude", "Other", email="o@example.test")
-    write_json(paths.claude_dir / ".credentials.json",
-               json.loads(paths.credentials("claude", "Work").read_text()))
-    write_json(paths.claude_json, {"oauthAccount": account("w@example.test")})
+class FakeClock:
+    """switcher's view of elapsed time, moved forward by the test."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    fake = FakeClock()
+    monkeypatch.setattr(switcher, "_clock", fake)
+    return fake
+
+
+def _claude_code_takes_it_over(lock, clock):
+    """What Claude Code does to a lock untouched for 60 s: remove it and
+    make its own. It can do nothing sooner: its other takeover needs an
+    owner record of its own, which Shambles never writes."""
+    clock.now += 61
+    long_ago = time.time() - 61
+    os.utime(lock, (long_ago, long_ago))
+    lock.rmdir()
+    lock.mkdir()
+
+
+def _during_first(monkeypatch, method, act):
+    """Run ``act`` once, the first time the live store's ``method`` is
+    called while the switch holds the lock."""
+    real = getattr(FileStore, method)
+    done = []
+
+    def slow(store, *args):
+        if not done and store.path.parent.joinpath(
+                ".oauth_refresh.lock").exists():
+            done.append(True)
+            act()
+        return real(store, *args)
+
+    monkeypatch.setattr(FileStore, method, slow)
+    return done
+
+
+class _SameInode:
+    """A stat result reporting one fixed inode number."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return 4242 if name == "st_ino" else getattr(self._real, name)
+
+
+def _same_inode_when_remade(monkeypatch, lock):
+    real_lstat = type(lock).lstat
+
+    def lstat(path):
+        info = real_lstat(path)
+        return _SameInode(info) if path == lock else info
+
+    monkeypatch.setattr(type(lock), "lstat", lstat)
+
+
+def _switch_to_other(paths):
+    """The switch, and what it refused with if it did."""
+    try:
+        switcher.switch(paths, claude(), "Other", platform="linux",
+                        sleep=lambda _: None)
+    except ShamblesError as error:
+        return error
+    return None
+
+
+def test_a_lock_claude_code_took_over_is_not_removed(
+        work_live, clock, monkeypatch):
+    """Reading the live login under the lock is slow (a Keychain prompt,
+    say) and Claude Code takes the lock over meanwhile. The switch used to
+    touch the lock before its next step -- touching Claude Code's lock and
+    taking it as its own -- then file the live login and replace it while
+    Claude Code was refreshing it, and remove Claude Code's lock on the way
+    out."""
+    paths = work_live
     lock = paths.claude_dir / ".oauth_refresh.lock"
-    real_write = FileStore.write
+    live = paths.claude_dir / ".credentials.json"
+    before = live.read_bytes()
+    taken = _during_first(monkeypatch, "read",
+                          lambda: _claude_code_takes_it_over(lock, clock))
+    stashed = []
+    real_stash = switcher.stash_live_login
+    monkeypatch.setattr(
+        switcher, "stash_live_login",
+        lambda *a, **k: stashed.append(True) or real_stash(*a, **k))
 
-    def slow_write(self, payload):
-        if lock.exists():
-            long_ago = time.time() - 61
-            os.utime(lock, (long_ago, long_ago))
-            # Claude Code: stale, so remove and take it.
-            lock.rmdir()
-            lock.mkdir()
-        return real_write(self, payload)
+    refused = _switch_to_other(paths)
 
-    monkeypatch.setattr(FileStore, "write", slow_write)
-    switcher.switch(paths, claude(), "Other", platform="linux",
-                    sleep=lambda _: None)
+    assert taken
+    assert lock.exists(), "removed the lock Claude Code now holds"
+    assert live.read_bytes() == before, (
+        "replaced the live login without holding the lock")
+    assert not stashed, (
+        "filed the live login while Claude Code may be spending its token")
+    assert refused is not None
 
+
+def test_a_takeover_in_the_same_clock_tick_is_still_not_removed(
+        work_live, clock, monkeypatch):
+    """Windows keeps file times in coarse ticks, so the lock Claude Code
+    makes can carry the very time Shambles' own lock had. The switch took
+    "the same time as I left it" to mean "mine" and removed Claude Code's
+    lock: the intermittent Windows CI failure. Here the takeover lands
+    during the live write and the new lock gets the old one's time
+    exactly, as it does whenever both fall in one tick."""
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+
+    def same_tick_takeover():
+        times = lock.lstat()
+        _claude_code_takes_it_over(lock, clock)
+        os.utime(lock, ns=(times.st_atime_ns, times.st_mtime_ns))
+
+    taken = _during_first(monkeypatch, "write", same_tick_takeover)
+
+    _switch_to_other(paths)
+
+    assert taken
     assert lock.exists(), "removed the lock Claude Code now holds"
 
 
-# -- "no config directory: no lock is taken" ---------------------------------
+def test_a_lock_replaced_by_anyone_else_is_not_removed(
+        work_live, clock, monkeypatch):
+    """Inside the time nothing that follows the protocol may take it, the
+    lock was replaced anyway (deleted by hand, then made again by someone
+    else). The switch cannot prove it is its own, so it stops and leaves
+    it."""
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+    live = paths.claude_dir / ".credentials.json"
+    before = live.read_bytes()
+
+    def replaced():
+        made = lock.lstat().st_mtime_ns
+        lock.rmdir()
+        lock.mkdir()
+        later = made + 5_000_000_000
+        os.utime(lock, ns=(later, later))
+
+    taken = _during_first(monkeypatch, "read", replaced)
+
+    refused = _switch_to_other(paths)
+
+    assert taken
+    assert lock.exists(), "removed a lock it could not prove was its own"
+    assert live.read_bytes() == before
+    assert refused is not None
+
+
+def test_a_hold_too_long_to_vouch_for_leaves_the_lock_and_refuses(
+        work_live, clock, monkeypatch):
+    """Nobody took it over, but after 50 s Shambles can no longer prove
+    nobody did. It stops before the live login moves, and leaves the lock
+    for the stale rule to clear rather than risk removing someone else's."""
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+    live = paths.claude_dir / ".credentials.json"
+    before = live.read_bytes()
+
+    def slow_prompt():
+        clock.now += 55
+
+    taken = _during_first(monkeypatch, "read", slow_prompt)
+
+    refused = _switch_to_other(paths)
+
+    assert taken
+    assert refused is not None
+    assert live.read_bytes() == before
+    assert lock.exists()
+
+
+def test_a_machine_asleep_during_the_hold_leaves_the_lock_and_refuses(
+        work_live, clock, monkeypatch):
+    """The lid closed while a Keychain prompt was open. On macOS the
+    monotonic clock stands still while the machine sleeps; the wall clock,
+    which Claude Code judges a lock's age by, does not. An hour on, Claude
+    Code may already have taken the lock as stale, so the switch cannot
+    vouch for it however little time its own clock saw pass."""
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+    live = paths.claude_dir / ".credentials.json"
+    before = live.read_bytes()
+
+    def lid_closed_for_an_hour():
+        an_hour_on = time.time() + 3600
+        monkeypatch.setattr(switcher, "_wall", lambda: an_hour_on)
+
+    taken = _during_first(monkeypatch, "read", lid_closed_for_an_hour)
+
+    refused = _switch_to_other(paths)
+
+    assert taken
+    assert refused is not None
+    assert live.read_bytes() == before
+    assert lock.exists()
+
+
+def test_a_takeover_while_stashing_stops_the_switch_before_the_live_write(
+        work_live, clock, monkeypatch):
+    """Claude Code takes the lock over while the outgoing login is being
+    stashed (its Keychain read held up by a dialog). The check made before
+    the stash passed; the one before the live write must not."""
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+    live = paths.claude_dir / ".credentials.json"
+    before = live.read_bytes()
+    real_stash = switcher.stash_live_login
+    taken = []
+
+    def slow_stash(*args, **kwargs):
+        taken.append(True)
+        _claude_code_takes_it_over(lock, clock)
+        return real_stash(*args, **kwargs)
+
+    monkeypatch.setattr(switcher, "stash_live_login", slow_stash)
+
+    refused = _switch_to_other(paths)
+
+    assert taken
+    assert refused is not None
+    assert live.read_bytes() == before, (
+        "replaced the live login without holding the lock")
+    assert lock.exists(), "removed the lock Claude Code now holds"
+
+
+def test_a_takeover_just_before_the_last_renewal_is_not_adopted(
+        work_live, clock, monkeypatch):
+    """Both locks are proved the switch's own before the live write. The
+    process then stalls before its touch of the last one lands, Claude Code
+    takes that lock over, and the touch lands on Claude Code's lock. Nothing
+    is checked after it, so the renewal itself must see that the touch can
+    no longer be vouched for, and stop the switch. The new lock gets the old
+    one's inode number, as ext4 commonly gives a directory remade at once,
+    so only the lock's age can tell."""
+    paths = work_live
+    last = paths.home / ".claude.lock"
+    live = paths.claude_dir / ".credentials.json"
+    before = live.read_bytes()
+    real_stash = switcher.stash_live_login
+    real_utime = os.utime
+    stashed, taken = [], []
+
+    def stash(*args, **kwargs):
+        stashed.append(True)
+        return real_stash(*args, **kwargs)
+
+    def stalled_utime(path, *args, **kwargs):
+        if stashed and not taken and os.fspath(path) == os.fspath(last):
+            taken.append(True)
+            _claude_code_takes_it_over(last, clock)
+        return real_utime(path, *args, **kwargs)
+
+    monkeypatch.setattr(switcher, "stash_live_login", stash)
+    monkeypatch.setattr(os, "utime", stalled_utime)
+    _same_inode_when_remade(monkeypatch, last)
+
+    refused = _switch_to_other(paths)
+
+    assert taken
+    assert refused is not None
+    assert live.read_bytes() == before, (
+        "replaced the live login without holding the lock")
+    assert last.exists(), "removed the lock Claude Code now holds"
+
+
+def test_the_live_write_starts_with_the_lock_fresh(work_live, clock,
+                                                   monkeypatch):
+    """A slow read under the lock (a Keychain dialog, 40 s) used up most of
+    the time nobody may take the lock in. Once the switch has proved the
+    lock is still its own it renews it, so the live write -- itself a
+    Keychain call that can sit behind a dialog -- starts with the whole
+    stale interval in hand, as Claude Code reckons it, not 20 s of it."""
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+    ahead = [0.0]
+    monkeypatch.setattr(switcher, "_wall", lambda: time.time() + ahead[0])
+
+    def slow_dialog():
+        clock.now += 40
+        ahead[0] += 40
+
+    seen = []
+
+    def age_as_claude_code_sees_it():
+        seen.append(switcher._wall() - lock.lstat().st_mtime)
+
+    _during_first(monkeypatch, "read", slow_dialog)
+    _during_first(monkeypatch, "write", age_as_claude_code_sees_it)
+
+    assert _switch_to_other(paths) is None
+    assert seen and seen[0] < 5, f"the lock was {seen} s old at the write"
+
+
+def test_a_quick_switch_still_removes_its_own_lock(work_live, clock):
+    paths = work_live
+
+    switcher.switch(paths, claude(), "Other", platform="linux",
+                    sleep=lambda _: None)
+
+    assert not (paths.claude_dir / ".oauth_refresh.lock").exists()
+    assert not (paths.home / ".claude.lock").exists()
+
 
 def test_no_config_directory_takes_no_lock(paths, monkeypatch):
     """No ~/.claude at all (nothing signed in, nothing installed). The PR

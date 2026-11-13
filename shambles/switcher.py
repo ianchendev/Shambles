@@ -294,13 +294,13 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
         # beside them: when the marker is wrong that address usually is too.
         # A profile whose login this *continues* (refreshed since it was
         # saved) does need the copy -- its own stash is now a spent token.
-        _touch(held)
+        _vouch(held)
         exact = state.profiles_holding(paths, provider.id, store.read())
         if outgoing and (outgoing == current.profile or outgoing not in exact):
             stash_live_login(paths, provider, outgoing, platform=platform,
                              now_ms_fn=lambda: stamp, sleep=sleep)
 
-        _touch(held)
+        _vouch(held)
 
         incoming = paths.credentials(provider.id, target_name)
         if incoming.exists():
@@ -344,35 +344,103 @@ REFRESH_IN_PROGRESS = (
     "Try again in a moment. Nothing was changed."
 )
 
+LOCK_NOT_PROVABLY_HELD = (
+    "This switch took too long to be sure Claude Code was not renewing "
+    "the login meanwhile.\n\n"
+    "Try again. The login in use was not changed."
+)
+
+#: The clocks a held lock's age is read from. Tests move them forward.
+_clock = time.monotonic
+_wall = time.time
+
+#: How much sooner than the vendor's stale interval a switch stops vouching
+#: for a lock it made. Room for the wall clock the vendor judges staleness by
+#: to run ahead of this one, and for the moment between a check and the step
+#: it guards.
+LOCK_PROOF_MARGIN_S = 10.0
+
 
 class _HeldLock:
-    """One lock directory this switch created, and the timestamp it left.
+    """One lock directory this switch made, and how to tell it still is.
 
-    Claude Code treats a lock untouched for its stale interval as abandoned
-    and takes it over by removing and recreating it. Removing "our" lock on
-    release after that would remove Claude Code's. So the lock is touched as
-    the switch works, and removed only if it still carries the last touch.
+    Nothing that follows the protocol takes a lock sooner than its stale
+    interval after it was last touched: Claude Code's only other takeover
+    needs an owner record of its own, which Shambles never writes. So a lock
+    made less than that long ago, and unchanged since, can only be this
+    switch's. Past that it may be Claude Code's, made in the same place --
+    on Windows, whose file times move in coarse ticks, possibly with the very
+    same time -- so it is left for the stale rule to clear, never removed.
+
+    It is touched only once proved its own, and the touch counts only if,
+    when it is done, the lock as it was would still be too young for anyone
+    to have taken. A touch changes whatever directory is at the path: a
+    switch that touched without that proof adopted a lock Claude Code had
+    taken over, and removed it.
     """
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, made_at: float, trusted_for: float):
         self.path = path
-        self.stamp = self._read()
+        self.made_at = made_at
+        self.trusted_for = trusted_for
+        info = self._stat()
+        self.stamp = None if info is None else self._identity(info)
 
-    def _read(self):
+    def _stat(self):
         try:
-            return self.path.lstat().st_mtime_ns
+            info = self.path.lstat()
         except OSError:
             return None
+        return info if stat.S_ISDIR(info.st_mode) else None
 
-    def touch(self) -> None:
+    @staticmethod
+    def _identity(info):
+        return (info.st_dev, info.st_ino, info.st_mtime_ns)
+
+    def _young(self, made_at: float, mtime: float) -> bool:
+        # Its age as Claude Code reckons it -- the wall clock against the
+        # lock's mtime, which counts time the machine slept and the
+        # monotonic clock on macOS does not -- or as this process saw it
+        # pass, should the wall clock have been set back. The greater.
+        age = max(_clock() - made_at, _wall() - mtime)
+        return age < self.trusted_for
+
+    def _proof(self):
+        """The lock's stat while it is provably this switch's, else None."""
+        info = self._stat()
+        if (info is None or self.stamp is None
+                or self._identity(info) != self.stamp
+                or not self._young(self.made_at, info.st_mtime)):
+            return None
+        return info
+
+    def still_ours(self) -> bool:
+        return self._proof() is not None
+
+    def renew(self) -> bool:
+        """Touch the lock if it is provably this switch's. False, and never
+        trusted again, when the touch cannot be shown to have landed on it."""
+        info = self._proof()
+        if info is None:
+            return False
+        started = _clock()
+        now = _wall()
         try:
-            os.utime(self.path)
+            os.utime(self.path, (now, now))
         except OSError:
-            return
-        self.stamp = self._read()
+            return self.still_ours()      # not touched: the proof stands
+        after = self._stat()
+        if (after is None
+                or (after.st_dev, after.st_ino) != (info.st_dev, info.st_ino)
+                or not self._young(self.made_at, info.st_mtime)):
+            self.stamp = None
+            return False
+        self.made_at = started
+        self.stamp = self._identity(after)
+        return True
 
     def release(self) -> None:
-        if self.stamp is not None and self._read() == self.stamp:
+        if self.still_ours():
             try:
                 self.path.rmdir()
             except OSError:
@@ -397,6 +465,7 @@ def _hold_refresh_locks(provider, paths, *, on_wait=None) -> list:
     """
     block = provider.spec.get("refresh_lock") or {}
     stale_s = block.get("stale_ms", 60_000) / 1000
+    trusted_for = max(0.0, stale_s - LOCK_PROOF_MARGIN_S)
     held = []
     deadline = time.monotonic() + REFRESH_LOCK_WAIT_S
     told = on_wait is None
@@ -404,8 +473,9 @@ def _hold_refresh_locks(provider, paths, *, on_wait=None) -> list:
         for lock in provider.refresh_locks(home=paths.home):
             while True:
                 try:
+                    made_at = _clock()    # before, so the age errs high
                     lock.mkdir()
-                    held.append(_HeldLock(lock))
+                    held.append(_HeldLock(lock, made_at, trusted_for))
                     break
                 except FileExistsError:
                     if _remove_if_abandoned(lock, stale_s):
@@ -448,9 +518,11 @@ def _remove_if_abandoned(lock: Path, stale_s: float) -> bool:
     return True
 
 
-def _touch(held) -> None:
-    for lock in held:
-        lock.touch()
+def _vouch(held) -> None:
+    """Refuse the switch unless every lock is still provably its own, and
+    renew each, so the step that follows has the whole stale interval."""
+    if not all(lock.renew() for lock in held):
+        raise SwitchFailedError(LOCK_NOT_PROVABLY_HELD)
 
 
 def _release(held) -> None:
