@@ -9,15 +9,18 @@ name: release-install
 # run. Only this one proves that the release on GitHub, as published, reaches
 # someone who runs the command.
 
+# release.yml starts this once it has published a release: a release that a
+# workflow publishes with its own token raises no "published" event for other
+# workflows, so that trigger only fires for a release a person publishes.
 on:
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       previous:
-        description: "Release to update from"
+        description: "Release to update from (empty: the one before the latest)"
         required: false
-        default: "v2.2.0"
+        default: ""
 
 permissions:
   contents: read
@@ -25,7 +28,7 @@ permissions:
 env:
   SH_URL: https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh
   PS_URL: https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1
-  PREVIOUS: ${{ inputs.previous || 'v2.2.0' }}
+  PREVIOUS: ${{ inputs.previous }}
   GH_TOKEN: ${{ github.token }}
 
 jobs:
@@ -45,6 +48,11 @@ jobs:
           tag="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
           echo "EXPECT=${tag#v}" >> "$GITHUB_ENV"
           echo "latest release: $tag"
+          if [ -z "$PREVIOUS" ]; then
+            PREVIOUS="$(gh release list -R "$GITHUB_REPOSITORY" --exclude-pre-releases -L 2 --json tagName -q '.[1].tagName')"
+            echo "PREVIOUS=$PREVIOUS" >> "$GITHUB_ENV"
+          fi
+          echo "updating from: $PREVIOUS"
 
       - name: Install the previous release
         run: |
@@ -90,6 +98,12 @@ jobs:
           $tag = gh release view -R $env:GITHUB_REPOSITORY --json tagName -q .tagName
           "EXPECT=$($tag.TrimStart('v'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "latest release: $tag"
+          $previous = $env:PREVIOUS
+          if (-not $previous) {
+            $previous = gh release list -R $env:GITHUB_REPOSITORY --exclude-pre-releases -L 2 --json tagName -q '.[1].tagName'
+            "PREVIOUS=$previous" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          }
+          "updating from: $previous"
 
       # 2.1.2 shipped no Arm build, so when updating from it the Arm machines
       # start from nothing.

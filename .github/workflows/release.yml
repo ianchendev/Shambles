@@ -217,6 +217,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      # To start release-install below.
+      actions: write
     steps:
       # shambles-* only: the window-frame-* artifacts are the smoke test's
       # pictures, kept for review and not part of the release.
@@ -342,3 +346,13 @@ jobs:
             **WSL users:** run the Linux build *inside* WSL. A Windows `.exe`
             manages `C:\Users\<you>\.claude`, which is a different Claude
             Code installation from the one in your WSL home directory.
+
+      # Install what was just published, with the README's commands, on real
+      # machines (release-install.yml). Started here because a release this
+      # workflow publishes raises no event other workflows can trigger on.
+      # A pre-release is not what the unpinned command installs, so skip it.
+      - name: Check the install command on real machines
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release-install.yml --ref main -R "$GITHUB_REPOSITORY"
