@@ -8,7 +8,7 @@ set -euo pipefail
 BASE="${SHAMBLES_RELEASE_BASE:-https://github.com/ianchendev/Shambles/releases}"
 TAG="${1:-}"
 SKIP_SMOKE="${SHAMBLES_SKIP_SMOKE:-0}"
-PIPX_HINT="pipx install git+https://github.com/ianchendev/Shambles"
+PIPX_HINT="pipx install 'shambles[gui] @ git+https://github.com/ianchendev/Shambles'"
 
 # The oldest glibc the Linux binaries start on. Held by scripts/check_glibc.py
 # in the release workflow; keep the two in step.

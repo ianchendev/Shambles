@@ -2,6 +2,19 @@
 
 Notable changes per release. Dates are the tag date.
 
+## Unreleased
+
+### Fixed
+
+- **pipx installs now get the new window.** The README, the release notes
+  and the install script's advice all said
+  `pipx install git+https://github.com/ianchendev/Shambles`, which leaves out
+  PySide6, so `shambles gui` quietly opened the classic window for everyone
+  who installed that way. They now say
+  `pipx install 'shambles[gui] @ git+https://github.com/ianchendev/Shambles'`,
+  and name the three system libraries Qt needs on a bare Linux or WSL
+  install.
+
 ## 2.2.1 - 2026-11-15
 
 ### Fixed

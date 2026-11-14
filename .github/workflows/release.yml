@@ -266,8 +266,12 @@ jobs:
             install with pipx, which needs no matching system libraries:
 
             ```bash
-            pipx install git+https://github.com/ianchendev/Shambles
+            pipx install 'shambles[gui] @ git+https://github.com/ianchendev/Shambles'
             ```
+
+            `[gui]` brings the window; leave it out for the terminal only.
+            On a bare Linux or WSL install the window also needs
+            `sudo apt install libegl1 libxcb-cursor0 libxkbcommon-x11-0`.
 
             The scripts also fetch **the window**, a separate archive of
             36 to 82 MB depending on the platform, named `shambles-window-…`
