@@ -2,6 +2,34 @@
 
 Notable changes per release. Dates are the tag date.
 
+## 2.2.1 - 2026-11-15
+
+### Fixed
+
+- **The classic window no longer switches accounts by itself.** A card fades
+  in a moment after the list is drawn. When the list was redrawn within that
+  moment, the fade's timer outlived its card, and tkinter could give a
+  button on the new card the same internal name as that timer. The timer
+  then pressed the button: Switch, Remove or Sign in, on an account nobody
+  clicked. Every delayed action in the window is now cancelled with the
+  widget it belongs to. Only `shambles gui --classic` was affected; the
+  default window is a different program.
+- **The classic window's sign-in dialog no longer touches the window from
+  the thread that reads the vendor's output.** That thread now only hands
+  each line over, and the window collects it on its own thread. Tk is not
+  safe to call from another thread, and doing so could freeze the dialog.
+- **Card animations in the classic window on Python 3.10 and 3.11.** When
+  one animation on a card finished, it removed the other animations' watch
+  for the card being closed, so their timers could outlive it (and so press
+  a button, as above). This affected installs that run on those Python
+  versions, such as pipx; the downloaded programs use a newer Python.
+
+### Changed
+
+- **Tests are no longer retried on Windows.** The retries hid the first bug
+  above. Each test now waits for what it checks, and any test job stops
+  after 30 minutes instead of six hours.
+
 ## 2.2.0 - 2026-11-14
 
 ### Changed
