@@ -106,7 +106,7 @@ it in `~/.local/bin`. No sudo, nothing to build.
 curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash
 
 # or pin a release
-curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.2.0
+curl -fsSL https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.sh | bash -s v2.2.1
 ```
 
 **Windows PowerShell** installs `shambles.exe` and its windowed twin
@@ -124,7 +124,7 @@ execution policy. From `cmd.exe`, wrap it:
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ianchendev/Shambles/main/scripts/install.ps1 | iex"
 ```
 
-To pin a release, set `$env:SHAMBLES_VERSION = 'v2.2.0'` before the line.
+To pin a release, set `$env:SHAMBLES_VERSION = 'v2.2.1'` before the line.
 
 Three things to know first:
 
