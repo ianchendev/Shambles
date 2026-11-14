@@ -175,10 +175,16 @@ older, install with pipx below, which needs no matching system libraries.
 **pipx.** No unsigned binary, and it works the same on Linux and inside WSL:
 
 ```bash
-sudo apt install python3-tk                              # only for the window
-pipx install git+https://github.com/ianchendev/Shambles
+pipx install 'shambles[gui] @ git+https://github.com/ianchendev/Shambles'
 shambles
 ```
+
+`[gui]` adds the window (Qt, through PySide6). Leave it out, as
+`pipx install git+https://github.com/ianchendev/Shambles`, for the terminal
+only. On a bare Linux or WSL install Qt also needs three system libraries:
+`sudo apt install libegl1 libxcb-cursor0 libxkbcommon-x11-0`. Until it has
+them, `shambles gui` opens the classic window instead, which needs
+`python3-tk`, and `shambles gui --new` says what is missing.
 
 **A binary from [Releases](https://github.com/ianchendev/Shambles/releases).**
 One file, nothing to install. Same unsigned caveat.
@@ -224,7 +230,8 @@ The new version is checked against the release's `SHA256SUMS` and run once
 before it replaces the old one, so a bad download leaves your working copy
 as it was. On Windows it can update while Shambles is open; the new version
 takes over the next time you start it. Installed with pipx instead:
-`pipx install --force git+https://github.com/ianchendev/Shambles`.
+`pipx install --force 'shambles[gui] @ git+https://github.com/ianchendev/Shambles'` (drop `[gui]` if you
+installed without the window).
 
 Check with `shambles --version`, then run `shambles doctor`. It says whether
 switching works on this machine and points at anything the update could not
@@ -507,7 +514,7 @@ Launchpad.
 From pip or pipx it is an optional extra instead:
 
 ```bash
-pip install 'shambles[gui]'      # or: pipx inject shambles PySide6-Essentials
+pip install 'shambles[gui]'      # or: pipx inject shambles 'PySide6-Essentials>=6.8,<6.10'
 ```
 
 Installed that way on a bare Linux or WSL machine, Qt needs three system
