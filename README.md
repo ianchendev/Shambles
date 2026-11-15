@@ -181,10 +181,22 @@ shambles
 
 `[gui]` adds the window (Qt, through PySide6). Leave it out, as
 `pipx install git+https://github.com/ianchendev/Shambles`, for the terminal
-only. On a bare Linux or WSL install Qt also needs three system libraries:
-`sudo apt install libegl1 libxcb-cursor0 libxkbcommon-x11-0`. Until it has
-them, `shambles gui` opens the classic window instead, which needs
-`python3-tk`, and `shambles gui --new` says what is missing.
+only. On a bare Linux or WSL install Qt also needs system libraries that a
+desktop install already has. This installs all of them, and apt skips any
+you have:
+
+```bash
+sudo apt install libegl1 libgl1 libfontconfig1 libfreetype6 \
+  libglib2.0-0 libdbus-1-3 libgssapi-krb5-2 libx11-6 libx11-xcb1 \
+  libxkbcommon0 libxkbcommon-x11-0 libxcb1 libxcb-cursor0 libxcb-glx0 \
+  libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+  libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 \
+  libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
+```
+
+Until it has them, `shambles gui` opens the classic window instead, which
+needs `python3-tk`, and names the missing libraries. `shambles gui --new`
+prints the whole fix.
 
 **A binary from [Releases](https://github.com/ianchendev/Shambles/releases).**
 One file, nothing to install. Same unsigned caveat.
@@ -514,12 +526,23 @@ Launchpad.
 From pip or pipx it is an optional extra instead:
 
 ```bash
-pip install 'shambles[gui]'      # or: pipx inject shambles 'PySide6-Essentials>=6.8,<6.10'
+pipx install --force 'shambles[gui] @ git+https://github.com/ianchendev/Shambles'
+# or, with pip, into the environment Shambles is installed in:
+python -m pip install 'PySide6-Essentials>=6.8,<6.10'
 ```
 
-Installed that way on a bare Linux or WSL machine, Qt needs three system
-libraries and says so if they are missing: `sudo apt install libegl1
-libxcb-cursor0 libxkbcommon-x11-0`.
+Shambles is not on PyPI, so `pip install shambles` fetches nothing of
+ours. Installed either way on a bare Linux or WSL machine, Qt needs these
+system libraries, and `shambles gui --new` names any that are missing:
+
+```bash
+sudo apt install libegl1 libgl1 libfontconfig1 libfreetype6 \
+  libglib2.0-0 libdbus-1-3 libgssapi-krb5-2 libx11-6 libx11-xcb1 \
+  libxkbcommon0 libxkbcommon-x11-0 libxcb1 libxcb-cursor0 libxcb-glx0 \
+  libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+  libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 \
+  libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
+```
 
 **Licences in the window.** The window archive contains Qt and Qt for
 Python (PySide6), which are LGPL-3.0, alongside Shambles' own MIT code. Qt

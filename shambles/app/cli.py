@@ -157,15 +157,52 @@ def cmd_tui(args) -> int:
 
 
 def _window_entry():
-    """``run_window``, imported through a function so its absence is catchable.
+    """``run_window``, if this install can open the Qt window.
 
-    Importing it imports PySide6, which is an optional extra and, on a bare
-    Linux install, can be present and still fail to load for want of a system
-    library. Both arrive here as an ``ImportError``.
+    Raises ``ImportError`` when it cannot, for any of three reasons. PySide6
+    is an optional extra, so it may be absent. On a bare Linux install it
+    can be present and fail to import for want of a system library. And it
+    can import and still be unable to open a window, because Qt's platform
+    plugin needs libraries of its own. Qt answers that last one with
+    ``abort()``, so :mod:`.window_check` asks a child process first, and
+    reports it as :class:`~.window_check.QtCannotStart`.
     """
     from .qt.application import run_window
 
+    from . import window_check
+    if window_check.needs_probe():
+        problem = window_check.start_failure()
+        if problem is not None:
+            raise problem
     return run_window
+
+
+def _window_help(problem) -> str:
+    """What `shambles gui --new` prints when the window cannot open."""
+    from shambles.__main__ import (QT_BROKEN, QT_FIX_LIBRARIES,
+                                   QT_FIX_REINSTALL, QT_MISSING)
+
+    from . import window_check
+    if window_check.not_installed(problem):
+        return QT_MISSING.format(install=window_check.install_command())
+    if sys.platform.startswith("linux"):
+        names_library = (getattr(problem, "missing", None)
+                         or "shared object file" in str(problem))
+        fix = (QT_FIX_LIBRARIES.format(apt=window_check.apt_command())
+               if names_library else "")
+    else:
+        fix = QT_FIX_REINSTALL.format(install=window_check.install_command())
+    return QT_BROKEN.format(reason=problem, fix=fix)
+
+
+def _fallback_note(problem) -> str:
+    """The line `shambles gui` prints on its way to the classic window."""
+    from shambles.__main__ import CLASSIC_FALLBACK, CLASSIC_FALLBACK_BROKEN
+
+    from . import window_check
+    if window_check.not_installed(problem):
+        return CLASSIC_FALLBACK
+    return CLASSIC_FALLBACK_BROKEN.format(reason=problem)
 
 
 def _window_options(args) -> list:
@@ -226,12 +263,10 @@ def cmd_gui(args) -> int:
         return status
 
     if getattr(args, "new", False):
-        from shambles.__main__ import QT_MISSING
-        sys.stderr.write(QT_MISSING.format(reason=reason))
+        sys.stderr.write(_window_help(reason))
         return EXIT_FAILED
 
-    from shambles.__main__ import CLASSIC_FALLBACK
-    sys.stderr.write(CLASSIC_FALLBACK)
+    sys.stderr.write(_fallback_note(reason))
     return _classic_window(args)
 
 

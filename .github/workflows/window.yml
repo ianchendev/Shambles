@@ -1,7 +1,9 @@
 name: window
 
 # Builds the window bundle on every platform it ships for and proves each one
-# can draw. Runs when a change touches the window or how it is packaged.
+# can draw, and proves the window installed from pip opens on a bare Ubuntu
+# with the system libraries the README lists. Runs when a change touches the
+# window, how it is packaged, or how `shambles gui` decides it can open.
 #
 # The release workflow does the same build, but only on a tag, and behind the
 # whole test suite. That is the right gate for a release and the wrong place
@@ -14,6 +16,9 @@ on:
       - "shambles/app/qt/**"
       - "packaging/**"
       - "pyproject.toml"
+      - "shambles/app/window_check.py"
+      - "shambles/app/cli.py"
+      - "scripts/check_bare_linux_window.sh"
       - ".github/workflows/window.yml"
   workflow_dispatch:
 
@@ -104,3 +109,40 @@ jobs:
           path: |
             frame-${{ matrix.os }}.png*
             sheet-${{ matrix.os }}.png*
+
+  # PySide6 from pip brings Qt but not the system libraries Qt's X11 plugin
+  # links against. A bare container has none of them, so it is the honest
+  # test of the list in shambles/app/window_check.py (and the README), and
+  # of `shambles gui` explaining, rather than aborting, when some are
+  # missing. The X server runs on the runner so that installing it cannot
+  # bring any of those libraries into the container.
+  pip-on-bare-ubuntu:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:24.04"]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: X server on the runner
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb
+          Xvfb :99 -ac -screen 0 1280x800x24 -nolisten tcp &
+          for i in $(seq 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
+          test -S /tmp/.X11-unix/X99
+
+      - name: The window from pip, in a bare ${{ matrix.image }}
+        run: |
+          mkdir -p out
+          docker run --rm --ipc=host \
+            -v "$PWD:/src:ro" -v "$PWD/out:/out" \
+            -v /tmp/.X11-unix:/tmp/.X11-unix -e DISPLAY=:99 \
+            "${{ matrix.image }}" bash /src/scripts/check_bare_linux_window.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bare-${{ strategy.job-index }}
+          path: out/
