@@ -2,7 +2,7 @@
 
 Notable changes per release. Dates are the tag date.
 
-## Unreleased
+## 2.2.2 - 2026-11-15
 
 ### Fixed
 
@@ -12,8 +12,7 @@ Notable changes per release. Dates are the tag date.
   PySide6, so `shambles gui` quietly opened the classic window for everyone
   who installed that way. They now say
   `pipx install 'shambles[gui] @ git+https://github.com/ianchendev/Shambles'`,
-  and name the three system libraries Qt needs on a bare Linux or WSL
-  install.
+  and name the system libraries Qt needs on a bare Linux or WSL install.
 - **`shambles gui` no longer dumps core where Qt cannot start.** With
   PySide6 installed but a system library missing, Qt aborts the whole
   process the moment it looks for a display ("no Qt platform plugin could
@@ -25,8 +24,8 @@ Notable changes per release. Dates are the tag date.
 - **Three system libraries were not enough.** Qt's X11 plugin and the Qt
   modules the window uses link against libraries from 26 Debian/Ubuntu
   packages. On a WSL Ubuntu with the three that were listed,
-  `libxcb-icccm4` and `libxcb-keysyms1` were still missing. The full list is in the README, the release notes and
-  `shambles gui --new`. CI installs exactly that list in bare Ubuntu 22.04
+  `libxcb-icccm4` and `libxcb-keysyms1` were still missing. The full list
+  is in the README, the release notes and `shambles gui --new`. CI installs exactly that list in bare Ubuntu 22.04
   and 24.04 containers and opens the window.
 - **The advice for installing Qt names a command that works.** It said
   `pip install 'shambles[gui]'`, but Shambles is not on PyPI, so that
