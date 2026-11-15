@@ -95,7 +95,7 @@ def test_handing_over_marks_the_new_process_and_passes_the_options():
 
 
 def no_qt():
-    raise ImportError("No module named 'PySide6'")
+    raise ModuleNotFoundError("No module named 'PySide6'", name="PySide6")
 
 
 @pytest.mark.parametrize("flag", [[], ["--new"]])
@@ -122,7 +122,7 @@ def test_without_qt_or_a_bundle_the_cli_explains(monkeypatch, capsys, home):
     monkeypatch.setattr(launch, "window_bundle", lambda **kw: None)
 
     assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
-    assert "shambles[gui]" in capsys.readouterr().err
+    assert "PySide6-Essentials" in capsys.readouterr().err
 
 
 # -- the bundle's own entry point --------------------------------------------

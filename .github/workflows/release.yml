@@ -270,8 +270,17 @@ jobs:
             ```
 
             `[gui]` brings the window; leave it out for the terminal only.
-            On a bare Linux or WSL install the window also needs
-            `sudo apt install libegl1 libxcb-cursor0 libxkbcommon-x11-0`.
+            On a bare Linux or WSL install the window also needs these
+            system libraries (apt skips any you have):
+
+            ```bash
+            sudo apt install libegl1 libgl1 libfontconfig1 libfreetype6 \
+              libglib2.0-0 libdbus-1-3 libgssapi-krb5-2 libx11-6 libx11-xcb1 \
+              libxkbcommon0 libxkbcommon-x11-0 libxcb1 libxcb-cursor0 libxcb-glx0 \
+              libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+              libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 \
+              libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
+            ```
 
             The scripts also fetch **the window**, a separate archive of
             36 to 82 MB depending on the platform, named `shambles-window-…`

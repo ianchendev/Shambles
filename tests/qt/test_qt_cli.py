@@ -28,22 +28,27 @@ def test_gui_new_passes_no_motion_through(monkeypatch, home):
     assert seen == {"motion": False}
 
 
-@pytest.mark.parametrize("reason", [
-    "No module named 'PySide6'",
-    "libEGL.so.1: cannot open shared object file: No such file or directory",
+@pytest.mark.parametrize("problem, advice", [
+    (ModuleNotFoundError("No module named 'PySide6'", name="PySide6"),
+     "PySide6-Essentials"),
+    (ImportError("libEGL.so.1: cannot open shared object file: No such file "
+                 "or directory"), "libegl1"),
 ])
 def test_a_window_that_cannot_load_says_why_and_what_to_do(
-        monkeypatch, capsys, home, reason):
-    """Not installed and installed-but-unloadable both arrive as ImportError."""
+        monkeypatch, capsys, home, problem, advice):
+    """Not installed and installed-but-unloadable both arrive as ImportError,
+    and each gets its own advice."""
     def missing():
-        raise ImportError(reason)
+        raise problem
 
     monkeypatch.setattr(cli, "_window_entry", missing)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
 
     assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
     err = capsys.readouterr().err
-    assert reason in err
-    assert "shambles[gui]" in err and "libegl1" in err
+    assert advice in err
+    if advice == "libegl1":
+        assert str(problem) in err
 
 
 def test_plain_gui_opens_the_new_window_when_it_can(monkeypatch, home):
@@ -98,7 +103,8 @@ def test_new_never_falls_back_so_a_missing_qt_is_explained(monkeypatch,
                         lambda paths=None: pytest.fail("fell back to Tk"))
 
     assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
-    assert "shambles[gui]" in capsys.readouterr().err
+    # The root conftest's stand-in, quoted as the reason.
+    assert "switched off under test" in capsys.readouterr().err
 
 
 def test_the_window_package_ships_its_qml_and_fonts():

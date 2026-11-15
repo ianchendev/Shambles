@@ -54,28 +54,57 @@ On Windows and macOS, Tkinter ships with Python — if you see this there,
 reinstall Python from python.org rather than using the Store build.
 """
 
+#: `shambles gui --new` where PySide6 is not installed at all.
 QT_MISSING = """\
-The new Shambles window needs PySide6 (Qt), which could not be loaded:
+The new Shambles window needs PySide6 (Qt), which is not installed here.
+Add it:
+
+  {install}
+
+Until then, `shambles gui` opens the classic window and `shambles` the
+terminal dashboard.
+"""
+
+#: `shambles gui --new` where PySide6 is installed and Qt still cannot open
+#: a window. {fix} is one of the two below, or empty when the reason says
+#: it all ("could not connect to display").
+QT_BROKEN = """\
+The new Shambles window could not start:
 
   {reason}
 
-If PySide6 is not installed, add it:
+{fix}Until this works, `shambles gui` opens the classic window and
+`shambles` the terminal dashboard.
+"""
 
-  pip install 'shambles[gui]'
+QT_FIX_LIBRARIES = """\
+Qt needs system libraries that a desktop install has and a bare Linux or
+WSL install may not. This installs every one of them, Debian and Ubuntu
+names; apt skips any you already have:
 
-If it is installed and the message names a missing library, that library is
-part of a normal desktop but absent from a bare Linux or WSL install:
+  {apt}
 
-  Debian/Ubuntu   sudo apt install libegl1 libxcb-cursor0 libxkbcommon-x11-0
+Other distributions carry the same libraries under their own names. The
+window that the install scripts download brings them with it.
 
-The released window bundle carries those libraries itself. Until this
-works, `shambles gui` opens the classic window and `shambles` the terminal
-dashboard.
+"""
+
+QT_FIX_REINSTALL = """\
+Reinstalling PySide6 may fix it:
+
+  {install}
+
 """
 
 CLASSIC_FALLBACK = """\
 Opening the classic window: the new one is not installed here.
   shambles gui --new    says what it needs.
+"""
+
+CLASSIC_FALLBACK_BROKEN = """\
+Opening the classic window: the new one could not start here.
+  {reason}
+  shambles gui --new    says how to fix it.
 """
 
 TEXTUAL_MISSING = """\
