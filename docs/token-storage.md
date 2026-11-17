@@ -134,7 +134,15 @@ does not. A copy of that login saved elsewhere is dead after a logout.
 (2026-02-13). `claude auth status` prints JSON, exits 0 when signed in and 1
 when not, and from 2.1.268 includes `configDirectory`. `claude auth login`
 accepts a pasted code when the browser cannot reach localhost (WSL2, SSH,
-containers) from 2.1.126.
+containers) from 2.1.126. [SRC, 2026-11] In 2.1.270, 2.1.289 and 2.1.300 it
+prints `If the browser didn't open, visit: <url>`, where `<url>` is the
+manual link (`code=true`, redirect `/oauth/code/callback`): that page always
+ends by showing `<code>#<state>`. It reads the code with a line reader on
+`process.stdin` and no terminal check, splits it at `#`, and answers a line
+without both halves with `Invalid code` on stderr. Only the cloud-sessions
+sign-in checks `isTTY`. With stdout a terminal, the link is wrapped in OSC 8
+hyperlink escapes and colour; `auth` is also not among the subcommands that
+skip its raw-mode early-input capture.
 
 **What outranks the stored login** [DOC], in order: the Bedrock, Vertex and
 Foundry switches, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,

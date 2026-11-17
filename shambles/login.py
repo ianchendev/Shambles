@@ -6,8 +6,10 @@ DD-2 concluded that login must not be implemented inside this tool, and that
 conclusion still holds completely: **no OAuth code lives here**. Both vendors
 ship a one-shot command that opens the browser itself and runs its own
 callback server, so this module starts that command, streams what it prints,
-and waits. The credential still appears on disk written by the vendor, and
-Shambles still only ever finds it there.
+and waits. The one thing it ever passes back is the code a sign-in page shows
+when the browser cannot reach this machine, typed into the vendor's own
+prompt exactly as a person at a terminal would. The credential still appears
+on disk written by the vendor, and Shambles still only ever finds it there.
 
 What DD-2 also said was that the tool "never opens a browser". That line is
 crossed deliberately -- see the design doc -- and the thing it was protecting,
@@ -245,6 +247,79 @@ def command(provider, *, email: str | None = None) -> list[str]:
     return argv
 
 
+class CodeRejectedError(ShamblesError):
+    """A pasted sign-in code that Shambles will not pass to the vendor.
+
+    The message is always one of the fixed sentences below. It never holds
+    what was pasted: until it is used, the code from the sign-in page is as
+    good as a password.
+    """
+
+
+#: Far longer than any real code. Claude's is an authorization code and its
+#: state, around a hundred characters together. The cap also keeps a write
+#: well inside a pipe's buffer, so sending can never block the window.
+MAX_CODE_LENGTH = 1024
+
+CODE_EMPTY = "Paste the code from the browser page first."
+CODE_HIDDEN_CHARACTERS = ("That code has a line break or a hidden character "
+                          "in it. Copy it again from the browser page.")
+CODE_INCOMPLETE = ("That is only part of the code. Copy all of it from the "
+                   "browser page.")
+CODE_TOO_LONG = ("That is longer than a sign-in code. Copy only the code "
+                 "from the browser page.")
+CODE_NOT_TAKEN = ("{binary} does not take a pasted code. Finish signing in "
+                  "in the browser.")
+
+#: What an OAuth code or state may contain: visible ASCII and the space
+#: (RFC 6749, appendix A, VSCHAR). Nothing that ends a line, moves a cursor
+#: or hides itself on a web page gets through to the vendor's input.
+_ONE_LINE = re.compile(r"[\x20-\x7e]+")
+
+
+def _paste_rules(provider) -> dict | None:
+    rules = provider.spec.get("login", {}).get("paste_code")
+    return rules if isinstance(rules, dict) else None
+
+
+def accepts_code(provider) -> bool:
+    """Whether this provider's sign-in reads a code pasted from the browser.
+
+    From the spec rather than assumed: ``claude auth login`` does, and
+    ``codex login`` finishes through its own callback server and never asks.
+    """
+    return _paste_rules(provider) is not None
+
+
+def clean_code(provider, pasted) -> str:
+    """The code to send, or :class:`CodeRejectedError` saying why not.
+
+    Surrounding whitespace goes, since a copy from a web page often brings a
+    line break with it. Anything else that is not one line of visible
+    characters is refused rather than repaired: a code with a character
+    missing is a code that fails at the vendor with a message Shambles
+    cannot show.
+    """
+    rules = _paste_rules(provider)
+    if rules is None:
+        raise CodeRejectedError(CODE_NOT_TAKEN.format(binary=binary(provider)))
+    text = (pasted or "").strip()
+    if not text:
+        raise CodeRejectedError(CODE_EMPTY)
+    if len(text) > MAX_CODE_LENGTH:
+        raise CodeRejectedError(CODE_TOO_LONG)
+    if not _ONE_LINE.fullmatch(text):
+        raise CodeRejectedError(CODE_HIDDEN_CHARACTERS)
+    separator = rules.get("separator")
+    if separator:
+        # The vendor's own rule: both halves present, or it prints "Invalid
+        # code" where only it can see it and goes on waiting.
+        head, found, tail = text.partition(separator)
+        if not (head and found and tail):
+            raise CodeRejectedError(CODE_INCOMPLETE)
+    return text
+
+
 def environment(provider, *, home, platform) -> dict[str, str]:
     """Give the child the same home and configuration as its provider store.
 
@@ -318,15 +393,25 @@ class LoginProcess:
     thread (``LoginDialog`` puts it on a ``queue.Queue`` that the window
     polls). A blocking wait on the main thread instead freezes the window and
     stops the signal pump that makes Ctrl+C work.
+
+    ``takes_input`` gives the vendor a pipe on its standard input instead of
+    an empty one, for :meth:`send_line`. Only a provider that reads a pasted
+    code asks for it (:func:`accepts_code`). For every other vendor nothing
+    changes: its input is at end of file from the start, as it always was.
     """
 
-    def __init__(self, argv, *, env=None, popen=subprocess.Popen):
+    def __init__(self, argv, *, env=None, popen=subprocess.Popen,
+                 takes_input=False):
         self._argv = list(argv)
         self._env = dict(env) if env is not None else None
         self._popen = popen
         self._process = None
         self._thread = None
         self._cancelled = False
+        self._takes_input = bool(takes_input)
+        #: Held while writing to or closing the vendor's input, so a send
+        #: racing the vendor's exit either lands whole or reports False.
+        self._input_lock = threading.Lock()
 
     @property
     def running(self) -> bool:
@@ -350,7 +435,13 @@ class LoginProcess:
                 argv,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
+                # A pipe, not a pseudo-terminal. Claude Code reads a pasted
+                # code from a pipe as readily as from a terminal, and a
+                # terminal would change what it prints: the sign-in link
+                # comes wrapped in hyperlink escapes and colour, and it
+                # starts reading keystrokes in raw mode.
+                stdin=(subprocess.PIPE if self._takes_input
+                       else subprocess.DEVNULL),
                 text=True,
                 bufsize=1,
                 env=self._env,
@@ -373,7 +464,51 @@ class LoginProcess:
             # here. The exit code below is the real answer either way.
             pass
         code = self._process.wait()
+        self._close_input()
         on_exit(code)
+
+    def send_line(self, text) -> bool:
+        """Write ``text`` and a line break to the vendor's standard input.
+
+        Returns whether it was written. False, never an exception, when this
+        process takes no input, has not started, has exited, or its vendor
+        closed its end. ``text`` is a sign-in code, so it is never logged and
+        never part of an error; the caller reports a fixed sentence.
+
+        Only one line of visible characters is written: a line break inside
+        would be a second answer nobody typed. :func:`clean_code` refuses
+        such text with a reason first; this is the backstop.
+        """
+        if not self._takes_input or not _ONE_LINE.fullmatch(text or ""):
+            return False
+        with self._input_lock:
+            process = self._process
+            if process is None or process.poll() is not None:
+                return False
+            stream = process.stdin
+            if stream is None or stream.closed:
+                return False
+            try:
+                stream.write(text + "\n")
+                stream.flush()
+            except (OSError, ValueError):
+                # Its reader is gone. What the exception says is not passed
+                # on: it is about the pipe, and the caller has a sentence.
+                return False
+        return True
+
+    def _close_input(self) -> None:
+        """Close the vendor's input once it has exited. Never raises."""
+        with self._input_lock:
+            stream = getattr(self._process, "stdin", None)
+            if stream is None or stream.closed:
+                return
+            try:
+                stream.close()
+            except OSError:
+                # A flush into a pipe whose reader has exited. The stream is
+                # closed all the same.
+                pass
 
     def cancel(self, *, grace: float = 5.0) -> None:
         """Stop the vendor process.

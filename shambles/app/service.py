@@ -96,11 +96,53 @@ class MigrationNotice:
     ok: bool = True
 
 
+#: Why a pasted code was not passed on, for the codes :meth:`LoginHandle.
+#: send_code` can return. Fixed sentences: none of them repeats the code.
+LOGIN_NOT_RUNNING = ("This sign-in has ended, so the code was not used. Sign "
+                     "in again for a new one.")
+
+
+def _code_refused(code, message):
+    return ActionResult(False, "send_code",
+                        error=ActionError(code, message))
+
+
 class LoginHandle:
-    def __init__(self, process, completed, cancelled=None):
+    def __init__(self, process, completed, cancelled=None, *, provider=None):
         self._process = process
         self._completed = completed
         self._cancelled = cancelled or threading.Event()
+        self._provider = provider
+
+    @property
+    def accepts_code(self):
+        """Whether this sign-in reads the code its browser page shows."""
+        return self._provider is not None and login.accepts_code(self._provider)
+
+    def send_code(self, code):
+        """Pass the code from the sign-in page to the vendor.
+
+        Returns an :class:`ActionResult` with no snapshot: the sign-in's own
+        result still arrives through ``on_done``. The code is treated as a
+        credential. It is never in the result, an error or a progress line,
+        and nothing that is not one whole code reaches the vendor.
+        """
+        if not self.accepts_code:
+            binary = (login.binary(self._provider) if self._provider
+                      else "This sign-in")
+            return _code_refused("code_not_accepted",
+                                 login.CODE_NOT_TAKEN.format(binary=binary))
+        if (self._process is None or self._completed.is_set()
+                or self._cancelled.is_set() or not self._process.running):
+            return _code_refused("login_not_running", LOGIN_NOT_RUNNING)
+        try:
+            cleaned = login.clean_code(self._provider, code)
+        except login.CodeRejectedError as exc:
+            return _code_refused("code_invalid", str(exc))
+        if not self._process.send_line(cleaned):
+            # It ended between the check above and the write.
+            return _code_refused("login_not_running", LOGIN_NOT_RUNNING)
+        return ActionResult(True, "send_code", "Code sent.")
 
     def cancel(self):
         # Set first: the vendor's exit is reported from its own thread, and a
@@ -402,7 +444,7 @@ class ShamblesService:
                     f"Shambles signs you in by running {binary}. Install it, "
                     "then try again. Switching between saved accounts still "
                     "works without it.")))
-                return LoginHandle(None, completed)
+                return LoginHandle(None, completed, provider=provider)
             if adding:
                 prepared["previous"] = self._live_profile(provider)
                 prepared["account"] = switcher.add_empty_account(
@@ -413,8 +455,9 @@ class ShamblesService:
                     self.paths, provider, account, platform=self.platform)
                 prepared["account"] = account
                 email = state.profile_email(self.paths, provider, account)
-            process = login.LoginProcess(login.command(provider, email=email),
-                                         env=env)
+            process = login.LoginProcess(
+                login.command(provider, email=email), env=env,
+                takes_input=login.accepts_code(provider))
             process.start(on_line=progress, on_exit=finish)
         except ShamblesError as exc:
             self._unwind(prepared, settle)
@@ -425,7 +468,7 @@ class ShamblesService:
                 False, action, error=ActionError(
                     "login_failed", "Could not prepare the vendor login.",
                     "Check the login configuration and retry.")))
-        return LoginHandle(process, completed, cancelled)
+        return LoginHandle(process, completed, cancelled, provider=provider)
 
     @staticmethod
     def _unwind(prepared, settle):
