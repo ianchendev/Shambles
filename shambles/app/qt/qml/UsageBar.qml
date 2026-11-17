@@ -1,5 +1,8 @@
 // One usage window: label, percentage, a bar, and when it resets.
+// window.state is "current", "old" or "reset"; window.text is "85%" or
+// "reset"; window.tip says the rest (the old figure, the exact date, its age).
 import QtQuick
+import QtQuick.Controls.Basic
 
 Column {
     id: root
@@ -21,8 +24,9 @@ Column {
         }
         Text {
             anchors.right: parent.right
-            text: (root.window.percent || 0) + "%"
-            color: root.window.tone === "dim" ? ui.theme.muted : ui.theme.text
+            text: root.window.text || ((root.window.percent || 0) + "%")
+            color: root.window.tone === "dim" || root.window.state === "reset"
+                   ? ui.theme.muted : ui.theme.text
             font.pixelSize: 13
             font.weight: Font.DemiBold
         }
@@ -49,4 +53,9 @@ Column {
         color: ui.theme.muted
         font.pixelSize: 12
     }
+
+    HoverHandler { id: hover }
+    ToolTip.visible: hover.hovered && (root.window.tip || "") !== ""
+    ToolTip.text: root.window.tip || ""
+    ToolTip.delay: 500
 }

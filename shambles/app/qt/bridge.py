@@ -14,9 +14,10 @@ back from it. Those callbacks only ever emit a signal, which Qt queues onto
 the GUI thread; no state is touched off that thread.
 """
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 import threading
+import time
 
 from ... import __version__
 from ..service import ActionError, ActionResult, waiting_for_refresh
@@ -29,6 +30,11 @@ SIGNED_IN = "{name} is signed in and live. Start a new session to pick it up."
 NO_BROWSER = ("No browser could be launched from here, which is usual under "
               "WSL and over SSH. The link is on your clipboard.")
 UNREADABLE = "Could not read your accounts. Press Refresh to try again."
+
+#: How often the window redraws what it already holds, so a countdown ("in
+#: 1h 52m") stays true and a limit shows as reset when its time comes. Reads
+#: nothing; a redraw is the presenter run again at the new time.
+REDRAW_MS = 30_000
 
 
 class Bridge(QObject):
@@ -50,8 +56,13 @@ class Bridge(QObject):
     _switchFinished = Signal(object)
 
     def __init__(self, service, *, clipboard=None, system_dark=None,
-                 motion=True, runner=None, parent=None):
+                 motion=True, runner=None, clock_ms=None, parent=None):
         super().__init__(parent)
+        #: The time the window draws at. A test passes its own.
+        self._clock_ms = clock_ms or (lambda: int(time.time() * 1000))
+        self._clock = QTimer(self)
+        self._clock.setInterval(REDRAW_MS)
+        self._clock.timeout.connect(self.tick)
         #: How a switch is run off the window's thread. A test passes one
         #: that runs it inline; the window uses a thread of its own.
         self._runner = runner or self._in_thread
@@ -149,7 +160,8 @@ class Bridge(QObject):
     def _rebuild(self):
         if self._snapshot is None:
             return
-        model = presenter.view(self._snapshot, filter_text=self._filter)
+        model = presenter.view(self._snapshot, filter_text=self._filter,
+                               now_ms=self._clock_ms())
         for group in model["groups"]:
             if group["save"] is not None:
                 group["save"]["error"] = self._save_errors.get(
@@ -199,6 +211,12 @@ class Bridge(QObject):
         self.refresh()
         if notices:
             self._set_sheet(presenter.notice_sheet(notices))
+        self._clock.start()
+
+    @Slot()
+    def tick(self):
+        """Redraw at the current time. Reads nothing from disk."""
+        self._rebuild()
 
     @Slot()
     def refresh(self):
@@ -574,6 +592,7 @@ class Bridge(QObject):
     def shutdown(self):
         """Stop a vendor login the window would otherwise orphan, and let a
         switch that is under way finish rather than exit under it."""
+        self._clock.stop()
         handle, self._handle = self._handle, None
         if handle is not None:
             handle.cancel()

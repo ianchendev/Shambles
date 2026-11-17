@@ -203,6 +203,25 @@ def test_the_busy_strip_and_a_due_sign_in_draw_without_a_qml_warning(
     assert messages == []
 
 
+def test_reset_old_and_running_limits_draw_without_a_qml_warning(window, pump):
+    """U1 in the real QML: a bar that reset, one that is old, one running,
+    on the live card and in an opened parked row."""
+    import time
+
+    from qt_fakes import with_usage
+
+    engine, ui, _service, messages = window(
+        FakeService(with_usage(int(time.time() * 1000))))
+    root = engine.rootObjects()[0]
+    root.setProperty("expandedId", "claude/Dev")
+    pump(timeout=0.05)
+    root.grabWindow()
+
+    dev = next(a for a in ui.view["groups"][0]["others"] if a["name"] == "Dev")
+    assert [b["state"] for b in dev["usage"]] == ["reset", "old"]
+    assert messages == []
+
+
 def test_the_unsaved_login_and_empty_states_draw_without_a_qml_warning(
         window, pump):
     engine, ui, service, messages = window(FakeService(unsaved()))

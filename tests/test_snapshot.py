@@ -203,7 +203,7 @@ def test_the_contract_exposes_every_field_a_shell_renders(paths):
         "expires_label"}
     assert set(group["accounts"][0]["usage"][0]) == {
         "label", "used_percent", "resets_at_ms", "resets_label",
-        "age_label", "stale", "severity"}
+        "age_label", "stale", "severity", "fetched_at_ms", "reset"}
 
 
 def test_the_panel_and_the_window_agree_about_disk(paths):
@@ -603,6 +603,36 @@ def test_usage_windows_carry_a_severity_and_when_they_reset(paths):
     assert (session.severity, week.severity) == ("ok", "gone")
     assert session.resets_at_ms == 1_788_256_800_000
     assert week.resets_at_ms is None
+
+
+def test_a_window_says_when_it_was_read_and_whether_it_has_since_reset(paths):
+    """U1. A stashed 100% whose reset time has passed is not a full limit.
+    Every frontend gets the verdict from here, not from its own clock maths."""
+    from helpers import account, write_json
+
+    make_profile(paths, "claude", "Parked", email="p@example.test")
+    write_json(paths.account("claude", "Parked"), {
+        "oauthAccount": account("p@example.test", uuid="uuid-p"),
+        "usage": {
+            "accountUuid": "uuid-p",
+            "fetchedAtMs": NOW - 7 * 3_600_000,
+            "utilization": {"limits": [
+                {"kind": "session", "percent": 100, "severity": "normal",
+                 "resets_at": "2026-09-01T10:00:00+00:00"},
+                {"kind": "weekly_all", "percent": 85, "severity": "normal",
+                 "resets_at": "2026-09-05T10:00:00+00:00"},
+            ]},
+        },
+    })
+    between = 1_788_256_800_000 + 60_000
+
+    session, week = group_of(paths, "claude", now_ms=between).accounts[0].usage
+
+    assert session.reset is True and week.reset is False
+    assert session.fetched_at_ms == week.fetched_at_ms == NOW - 7 * 3_600_000
+    wire = snap.to_dict(build(paths, now_ms=between))
+    first = wire["groups"][0]["accounts"][0]["usage"][0]
+    assert (first["reset"], first["fetched_at_ms"]) == (True, NOW - 7 * 3_600_000)
 
 
 @posix_only
