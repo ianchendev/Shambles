@@ -2,6 +2,32 @@
 
 Notable changes per release. Dates are the tag date.
 
+## Unreleased
+
+### Changed
+
+- **Move the window by its own header, and resize it from the corner.**
+  Under WSL on a 4K screen the title bar Windows draws is tiny. Drag
+  anywhere in the window's header that is not a button to move it,
+  double-click it to maximise, and drag the grip in the bottom-right
+  corner to resize. The window opens where it was left last time, at the
+  same size; if that place is on a monitor that is no longer there, it
+  opens in the centre. The smallest size goes from 520x420 to 420x360,
+  and at narrow widths rows leave out the address line.
+- **Messages no longer cover the list.** What an action did, and the line
+  shown while a switch waits, now slide in under the header and push the
+  list down instead of sitting over its last row. An error stays until you
+  close it with its ×. The wait for Claude Code is one line, "Waiting for
+  Claude Code to finish renewing", with the reason behind its ⓘ.
+
+### Fixed
+
+- **Small windows kept buttons out of reach.** At the smallest size the
+  sign-in sheet hid Cancel and the eject sheet hid both its buttons, with
+  nothing to say there was more. A sheet's buttons now stay at its bottom
+  and its text scrolls above them, with a scroll bar on show. Opening an
+  account near the bottom of the list scrolls its details into view.
+
 ## 2.2.2 - 2026-11-15
 
 ### Fixed

@@ -568,14 +568,18 @@ def test_a_switch_does_not_hold_the_window_while_it_waits(make, pump):
     ui.switchTo("claude", "Personal")
 
     assert ui.busy is True, "the click did not return before the switch did"
-    assert pump(lambda: "renewing its login" in ui.busyText), \
+    assert pump(lambda: "renewing" in ui.busyText), \
         "never said why nothing has happened yet"
+    # D10: one line on show; the reason and the time limit behind its i.
+    assert ui.busyText == "Waiting for Claude Code to finish renewing"
+    assert "renewing its login" in ui.busyDetail
+    assert "15 s" in ui.busyDetail
     assert seen == []
 
     service.hold.set()
     assert pump(lambda: not ui.busy, timeout=5)
     assert seen == ["claude/Personal"]
-    assert ui.busyText == ""
+    assert ui.busyText == "" and ui.busyDetail == ""
     assert "Switched to Personal" in ui.toast["text"]
 
 
@@ -662,3 +666,76 @@ def test_a_due_sign_in_can_be_started_from_its_notice_and_its_row(make):
 
     ui.signIn("claude", "Spare")
     assert service.named("start_login")[-1] == ("start_login", "claude", "Spare")
+
+
+# -- D5: the window opens where it was left ----------------------------------------
+
+LAPTOP = (0, 0, 1920, 1040)
+
+
+def test_the_window_opens_where_it_was_left(make):
+    service = FakeService()
+    service.place = {"x": 300, "y": 200, "width": 640, "height": 500,
+                     "maximized": True}
+
+    ui, _, _ = make(service, screens=lambda: ([LAPTOP], LAPTOP))
+
+    assert ui.place == service.place
+
+
+def test_a_place_on_a_screen_that_has_gone_opens_in_the_centre(make):
+    service = FakeService()
+    service.place = {"x": 2400, "y": 200, "width": 640, "height": 500,
+                     "maximized": False}
+
+    ui, _, _ = make(service, screens=lambda: ([LAPTOP], LAPTOP))
+
+    assert (ui.place["x"], ui.place["y"]) == (640, 270)
+
+
+def test_where_the_window_is_left_is_handed_to_the_service(make):
+    ui, service, _ = make()
+
+    ui.rememberPlace(10, 20, 700, 600, False)
+
+    assert service.named("set_window_place") == [
+        ("set_window_place", 10, 20, 700, 600, False)]
+
+
+def test_a_place_that_cannot_be_saved_says_nothing(make):
+    """Moving a window is not worth an error message; the next run opens
+    where the window manager puts it."""
+    ui, service, _ = make()
+    service.fail["set_window_place"] = failure(
+        "set_window_place", "unwritable", "Could not save.")
+    toast = dict(ui.toast)
+
+    ui.rememberPlace(10, 20, 700, 600, True)
+
+    assert ui.toast == toast
+
+
+# -- D10: messages -------------------------------------------------------------------
+
+
+def test_a_message_can_offer_one_next_step_and_it_runs_once(make):
+    ui, _service, _ = make()
+    ran = []
+
+    ui._say("Admin renewed.", action=("Use Admin", lambda: ran.append(1)))
+    assert ui.toast["actionLabel"] == "Use Admin"
+    ui.toastAction()
+    ui.toastAction()
+
+    assert ran == [1]
+
+
+def test_a_later_message_takes_the_earlier_ones_action_with_it(make):
+    ui, _service, _ = make()
+    ran = []
+    ui._say("Admin renewed.", action=("Use Admin", lambda: ran.append(1)))
+
+    ui._say("Switched to Personal.")
+    ui.toastAction()
+
+    assert ui.toast["actionLabel"] == "" and ran == []
