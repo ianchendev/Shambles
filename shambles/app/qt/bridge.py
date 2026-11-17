@@ -157,7 +157,14 @@ class Bridge(QObject):
                        "serial": self._toast["serial"] + 1}
         self.toastChanged.emit()
 
-    def _rebuild(self):
+    def _rebuild(self, *, only_if_changed=False):
+        """Work the view out again from the snapshot held.
+
+        ``only_if_changed`` is for redraws nobody asked for. The QML feeds
+        its Repeaters plain arrays, so every ``viewChanged`` recreates every
+        card: an open menu closes, focus and tooltips go. A timer must not
+        do that to a window nobody is touching when nothing on it moved.
+        """
         if self._snapshot is None:
             return
         model = presenter.view(self._snapshot, filter_text=self._filter,
@@ -166,6 +173,8 @@ class Bridge(QObject):
             if group["save"] is not None:
                 group["save"]["error"] = self._save_errors.get(
                     group["provider"], "")
+        if only_if_changed and model == self._view:
+            return
         self._view = model
         self.viewChanged.emit()
 
@@ -215,8 +224,9 @@ class Bridge(QObject):
 
     @Slot()
     def tick(self):
-        """Redraw at the current time. Reads nothing from disk."""
-        self._rebuild()
+        """Redraw at the current time if that changes anything. Reads
+        nothing from disk; most ticks do nothing at all."""
+        self._rebuild(only_if_changed=True)
 
     @Slot()
     def refresh(self):

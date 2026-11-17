@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from shambles.app.qt import presenter
 from shambles.app.service import ActionError, ActionResult
 from shambles.app.snapshot import (Account, Group, Notice, Snapshot, Surface,
-                                   Window)
+                                   Window, moment_label)
 
 HOUR = 3_600_000
 
@@ -275,10 +275,6 @@ MINUTE = 60_000
 NOW = 1_790_000_000_000
 
 
-def at(ms):
-    return presenter.local_time(ms)
-
-
 def bars(*windows, live=False, now_ms=NOW):
     shown = only(view(group(account("Work", active=True),
                             account("Dev", active=False, usage=windows))
@@ -303,8 +299,8 @@ def test_a_limit_past_its_reset_time_reads_reset_not_its_old_figure():
     assert bar["resets"] == ""
     assert bar["percent"] == 100
     assert bar["tip"] == (f"5-hour limit: 100% when last read at "
-                          f"{presenter.moment(NOW - 7 * HOUR, NOW)}. It reset "
-                          f"at {presenter.moment(NOW - 2 * HOUR, NOW)}.")
+                          f"{moment_label(NOW - 7 * HOUR, NOW)}. It reset "
+                          f"at {moment_label(NOW - 2 * HOUR, NOW)}.")
 
 
 def test_a_limit_resets_on_screen_when_its_time_comes_without_a_re_read():

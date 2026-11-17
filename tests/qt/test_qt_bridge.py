@@ -693,3 +693,23 @@ def test_the_redraw_tick_runs_every_half_minute_once_started(make):
 
     assert ui._clock.isActive()
     assert ui._clock.interval() == bridge_mod.REDRAW_MS == 30_000
+
+
+def test_a_tick_that_changes_nothing_does_not_redraw(make):
+    """Every viewChanged recreates every card in today's QML, closing an
+    open menu and dropping focus. A timer nobody asked for must not."""
+    from qt_fakes import with_usage
+
+    now = [1_790_000_000_000]
+    ui, _service, _ = make(FakeService(with_usage(now[0])),
+                           clock_ms=lambda: now[0])
+    redraws = []
+    ui.viewChanged.connect(lambda: redraws.append(now[0]))
+
+    now[0] += 10_000          # "in 2h" still reads "in 2h"
+    ui.tick()
+    assert redraws == []
+
+    now[0] += 60_000          # now "in 1h 59m"
+    ui.tick()
+    assert len(redraws) == 1

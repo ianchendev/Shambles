@@ -360,11 +360,6 @@ def _window(window, *, live: bool, now_ms: int) -> dict:
     }
 
 
-def moment(ms, now_ms) -> str:
-    """A moment in local time, ``14:00`` today or with its day otherwise."""
-    return timing.moment_label(ms, now_ms)
-
-
 def plan_label(plan) -> str:
     """``max_5x`` as ``Max 5x``. The vendor's word, made readable."""
     if not plan:
