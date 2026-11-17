@@ -2,6 +2,22 @@
 
 Notable changes per release. Dates are the tag date.
 
+## Unreleased
+
+### Fixed
+
+- **The sign-in link shows again when the browser does not open.** Shambles
+  offers a link from the vendor's output only when it is a real sign-in
+  request, so the window never offers an arbitrary address. Its list was
+  out of date. Every link current Claude Code prints was thrown away: they
+  come from `claude.com` or `platform.claude.com`, carry `code=true` and
+  return to `platform.claude.com/oauth/code/callback`. Codex links for a
+  fixed workspace were thrown away too. Claude Code also wraps its link in
+  a terminal hyperlink when it runs inside Windows Terminal, VS Code or
+  JetBrains, even when its output goes to Shambles rather than a terminal,
+  and that link was lost as well. The sign-in sheet now shows Open sign-in
+  page and Copy link for both vendors.
+
 ## 2.2.2 - 2026-11-15
 
 ### Fixed
