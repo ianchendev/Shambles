@@ -60,11 +60,7 @@ ADD_FAILED = ("Sign-in did not complete. The profile was created but has no "
               "login yet.")
 RELOGIN_FAILED = "Sign-in did not complete. '{name}' still needs a login."
 
-RELOGIN_DONE = (
-    "'{name}' is signed in again and active.\n\n"
-    "Start a new session to pick it up. A running one keeps the token it "
-    "loaded at startup."
-)
+RELOGIN_DONE = "'{name}' is signed in again and active."
 #: The browser was already signed in to the vendor as somebody else, which
 #: is the usual way this goes wrong: the vendor's page reuses that session.
 RELOGIN_OTHER_ACCOUNT = (
@@ -1675,9 +1671,7 @@ class ShamblesApp(tk.Tk):
         if outcome.kind == switcher.RENEWED:
             messagebox.showinfo(
                 WINDOW_TITLE,
-                f"'{created}' is signed in and active.\n\n"
-                "Start a new session to pick it up — a running one keeps the "
-                "token it loaded at startup.",
+                f"'{created}' is signed in and active.",
                 parent=self)
         elif outcome.kind == switcher.DUPLICATE:
             messagebox.showwarning(

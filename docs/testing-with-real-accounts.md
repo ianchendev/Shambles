@@ -20,8 +20,8 @@ an account needs a fresh sign-in, with its verification email.
   that is currently stored, and the copy Shambles saved dies with it. Every
   sign-in in this checklist goes through Shambles.
 - **Quit Claude Code and Codex before each switch**, including the VS Code
-  extension (run *Developer: Reload Window* afterwards). A running session
-  keeps the account it started with.
+  extension (run *Developer: Reload Window* afterwards), so every step starts
+  from a known account.
 - **Write down only what the steps ask for.** See [What to send
   back](#what-to-send-back). Never send a token, the contents of
   `.credentials.json`, `auth.json` or `~/.shambles`, an email address, or a

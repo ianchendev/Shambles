@@ -248,8 +248,8 @@ back.
    **Open sign-in page** and **Copy link** light up as soon as the URL
    appears. Under WSL and over SSH the link goes to your clipboard either way,
    because the browser openers there claim success while doing nothing.
-5. On success Shambles tells you the account is signed in and active. **Start
-   a new session** to pick it up.
+5. On success Shambles tells you the account is signed in and active. New
+   sessions start on it.
 
 If sign-in does not finish, Shambles switches you back to your previous
 account and says so. It **keeps** the empty profile, so you can retry without

@@ -158,11 +158,7 @@ def _context_line(account: Account, *, unicode: bool) -> str:
         if not account.active:
             parts.append("Enter to switch")
     elif account.active:
-        parts = [
-            "Already active",
-            "m for actions",
-            "running sessions keep their login",
-        ]
+        parts = ["Already active", "m for actions"]
     else:
         parts = ["Enter to switch", "m for actions"]
     return _join(parts, unicode=unicode)

@@ -198,7 +198,7 @@ def test_hero_details_use_meters_pills_and_context(snapshot):
     assert "█" in rendered
     assert "SWITCHES" in rendered
     assert "Terminal" in rendered
-    assert "Already active · m for actions · running sessions keep their login" in rendered
+    assert "Already active · m for actions" in rendered
     assert "Claude / Work" not in rendered
     assert "session: 22% used" not in rendered
 
@@ -516,7 +516,6 @@ def test_hero_context_line_ellipsizes_like_other_long_lines(snapshot):
     account = replace(group.accounts[0], email="a@b.c", display_name="A")
     rendered = table_text(render_account_details(group, account, width=18, unicode=True))
     assert "Already active" in rendered
-    assert "running sessions keep their login" not in rendered
     assert "..." in rendered
 
 
