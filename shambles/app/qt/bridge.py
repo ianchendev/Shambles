@@ -44,12 +44,25 @@ CLOSES = " Shambles closes when it is done."
 #: nothing; a redraw is the presenter run again at the new time.
 REDRAW_MS = 30_000
 
+#: U2. How often the window checks whether Claude Code or Codex wrote a file
+#: (a stat of a handful of paths), and how often it re-reads regardless.
+#: Both re-read files only; see ShamblesService.refresh_files.
+POLL_MS = 2_000
+REREAD_MS = 60_000
+#: Coming back to the window re-reads at most this often.
+FOCUS_GAP_MS = 2_000
+
+UPDATED_TIP = ("Shambles re-reads Claude Code's and Codex's files when you "
+               "return to the window, when those files change, and every "
+               "minute. Nothing goes online. Refresh reads everything now.")
+
 
 class Bridge(QObject):
     viewChanged = Signal()
     sheetChanged = Signal()
     toastChanged = Signal()
     themeChanged = Signal()
+    updatedChanged = Signal()
     filterChanged = Signal()
     #: An account just became live: ``provider/name``. The card pulses.
     confirmed = Signal(str)
@@ -73,6 +86,16 @@ class Bridge(QObject):
         self._clock = QTimer(self)
         self._clock.setInterval(REDRAW_MS)
         self._clock.timeout.connect(self.tick)
+        self._poll = QTimer(self)
+        self._poll.setInterval(POLL_MS)
+        self._poll.timeout.connect(self.poll)
+        self._minute = QTimer(self)
+        self._minute.setInterval(REREAD_MS)
+        self._minute.timeout.connect(self.reread)
+        #: When the accounts were last read, and the files' fingerprint then.
+        self._read_at = None
+        self._signature = None
+        self._updated = ""
         #: How a switch is run off the window's thread. A test passes one
         #: that runs it inline; the window uses a thread of its own.
         self._runner = runner or self._in_thread
@@ -187,6 +210,15 @@ class Bridge(QObject):
     def filter(self):
         return self._filter
 
+    @Property(str, notify=updatedChanged)
+    def updatedText(self):
+        """``Updated just now`` / ``Updated 5m ago``, for the header."""
+        return self._updated
+
+    @Property(str, constant=True)
+    def updatedTip(self):
+        return UPDATED_TIP
+
     # -- state changes ----------------------------------------------------
 
     def _set_sheet(self, sheet):
@@ -246,7 +278,28 @@ class Bridge(QObject):
                 fresh = None
         if fresh is not None:
             self._snapshot = fresh
+            self._mark_read()
         self._rebuild()
+
+    def _mark_read(self):
+        self._read_at = self._clock_ms()
+        try:
+            self._signature = self._service.watch_signature()
+        except Exception:
+            self._signature = None
+        self._say_updated()
+
+    def _say_updated(self):
+        if self._read_at is None:
+            text = ""
+        else:
+            minutes = max(0, self._clock_ms() - self._read_at) // 60_000
+            text = ("Updated just now" if minutes < 1
+                    else f"Updated {minutes}m ago" if minutes < 60
+                    else f"Updated {minutes // 60}h ago")
+        if text != self._updated:
+            self._updated = text
+            self.updatedChanged.emit()
 
     def _report(self, result, success=""):
         """Adopt a result and say how it went. Returns whether it worked."""
@@ -279,12 +332,59 @@ class Bridge(QObject):
         if notices:
             self._set_sheet(presenter.notice_sheet(notices))
         self._clock.start()
+        self._poll.start()
+        self._minute.start()
 
     @Slot()
     def tick(self):
         """Redraw at the current time if that changes anything. Reads
         nothing from disk; most ticks do nothing at all."""
         self._rebuild(only_if_changed=True)
+        self._say_updated()
+
+    # -- U2: re-reading by itself, files only --------------------------------
+
+    @Slot()
+    def reread(self):
+        """Re-read what the vendors wrote, without the Keychain.
+
+        Everything that runs without the user asking comes here, never to
+        :meth:`refresh`. Skipped while a switch or a sign-in is moving a
+        login: their own result brings the fresh state when they finish.
+        """
+        if self._occupied():
+            return
+        try:
+            result = self._service.refresh_files()
+        except Exception:
+            return
+        fresh = getattr(result, "snapshot", None)
+        if fresh is None:
+            # No answer without the Keychain. What is on screen stays.
+            return
+        self._snapshot = fresh
+        self._mark_read()
+        self._rebuild(only_if_changed=True)
+
+    @Slot()
+    def poll(self):
+        """Re-read if Claude Code or Codex wrote a file since the last read."""
+        if self._occupied():
+            return
+        try:
+            signature = self._service.watch_signature()
+        except Exception:
+            return
+        if signature != self._signature:
+            self.reread()
+
+    @Slot()
+    def windowFocused(self):
+        """The window came back to the front: worth a look, files only."""
+        if (self._read_at is not None
+                and self._clock_ms() - self._read_at < FOCUS_GAP_MS):
+            return
+        self.reread()
 
     @Slot()
     def refresh(self):
@@ -713,6 +813,8 @@ class Bridge(QObject):
         """Stop a vendor login the window would otherwise orphan, and let a
         switch that is under way finish rather than exit under it."""
         self._clock.stop()
+        self._poll.stop()
+        self._minute.stop()
         handle, self._handle = self._handle, None
         if handle is not None:
             handle.cancel()

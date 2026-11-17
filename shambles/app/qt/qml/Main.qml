@@ -131,6 +131,9 @@ ApplicationWindow {
             close.accepted = false
     }
 
+    // U2: coming back to the window re-reads files (never the Keychain).
+    onActiveChanged: if (active) ui.windowFocused()
+
     Shortcut { sequences: ["Ctrl+R", "F5"]; onActivated: ui.refresh() }
     Shortcut { sequence: "Ctrl+N"; enabled: !ui.sheetOpen; onActivated: ui.openAdd("") }
     Shortcut {
@@ -195,6 +198,22 @@ ApplicationWindow {
                 color: ui.theme.text
                 font.pixelSize: 16
                 font.weight: Font.DemiBold
+            }
+
+            Text {
+                // U2: "Updated just now". Its tooltip says what is re-read.
+                id: updated
+                anchors.left: wordmark.right
+                anchors.leftMargin: 10
+                anchors.baseline: wordmark.baseline
+                visible: text !== "" && win.width > 560
+                text: ui.updatedText
+                color: ui.theme.muted
+                font.pixelSize: 12
+                HoverHandler { id: updatedHover }
+                ToolTip.visible: updatedHover.hovered
+                ToolTip.text: ui.updatedTip
+                ToolTip.delay: 500
             }
 
             Row {

@@ -150,6 +150,16 @@ class FakeService:
     def refresh(self):
         return self._done("refresh")
 
+    #: What watch_signature() answers; a test changes it to mean "a file
+    #: was written".
+    signature = ()
+
+    def refresh_files(self):
+        return self._done("refresh_files")
+
+    def watch_signature(self):
+        return self.signature
+
     def set_window_theme(self, theme):
         self.calls.append(("set_window_theme", theme))
         self.theme = theme

@@ -13,6 +13,13 @@ Notable changes per release. Dates are the tag date.
   hover. An hour-old reading is marked by the bar's look and its tooltip
   instead of an "as of 7h ago" line. The window redraws every 30 seconds
   so a countdown stays true while it sits open; that redraw reads nothing.
+- **The window keeps itself current.** It re-reads Claude Code's and
+  Codex's files when you come back to it, when those files change (a stat
+  every 2 seconds), and every minute, and the header says "Updated just
+  now". Refresh stays as the manual way to read everything. These
+  automatic reads never touch the macOS Keychain or Windows Credential
+  Manager, which would raise password prompts: a login kept there is
+  answered from the last Refresh, switch or sign-in.
 - **No more "running sessions keep their login".** The window, the
   terminal UI, the classic window and the README said a session already
   running keeps the login it started with, and to start a new one after a

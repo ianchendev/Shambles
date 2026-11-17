@@ -861,3 +861,116 @@ def test_holding_ctrl_is_said_once_per_change(make):
     ui.set_ctrl_held(False)
 
     assert seen == [True, False]
+
+
+# -- U2: the window keeps itself current ------------------------------------------
+
+
+def test_coming_back_to_the_window_re_reads_files_only(make):
+    """Focus is not an explicit action, so it must never reach the
+    Keychain: refresh_files, not refresh."""
+    from qt_fakes import with_usage
+
+    now = [1_790_000_000_000]
+    ui, service, _ = make(clock_ms=lambda: now[0])
+    service.snap = with_usage(now[0])
+    service.calls.clear()
+
+    ui.windowFocused()          # the focus the window gets as it opens
+    assert service.named("refresh_files") == []
+
+    now[0] += bridge_mod.FOCUS_GAP_MS
+    ui.windowFocused()
+
+    assert service.named("refresh_files") == [("refresh_files",)]
+    assert service.named("refresh") == []
+    assert ui.view["groups"][0]["live"]["name"] == "Work"
+    assert ui.view["groups"][0]["others"][0]["name"] == "Dev"
+
+
+def test_a_file_written_by_the_vendor_is_picked_up_by_the_poll(make):
+    ui, service, _ = make()
+    service.calls.clear()
+
+    ui.poll()
+    assert service.named("refresh_files") == []
+
+    service.signature = (("claude.json", 2, 10),)
+    ui.poll()
+    ui.poll()
+
+    assert service.named("refresh_files") == [("refresh_files",)]
+
+
+def test_the_timers_run_once_the_window_has_started(make):
+    ui, _service, _ = make()
+
+    assert ui._poll.isActive() and ui._poll.interval() == bridge_mod.POLL_MS
+    assert ui._minute.isActive()
+    assert ui._minute.interval() == bridge_mod.REREAD_MS == 60_000
+
+
+def test_nothing_is_re_read_under_a_running_switch(make):
+    import threading
+
+    ui, service, _ = make(runner=None)
+    service.hold = threading.Event()
+    ui.switchTo("claude", "Personal")
+    assert ui.busy
+    service.calls = [c for c in service.calls if c[0] != "refresh_files"]
+
+    ui.windowFocused()
+    ui.reread()
+
+    assert service.named("refresh_files") == []
+    service.hold.set()
+    ui.shutdown()
+
+
+def test_nothing_is_re_read_under_a_running_sign_in(make):
+    ui, service, _ = make()
+    ui.signIn("claude", "Old")
+    assert ui.sheet["kind"] == "login"
+    service.calls.clear()
+
+    ui.windowFocused()
+    ui.reread()
+
+    assert service.named("refresh_files") == []
+
+
+def test_a_files_only_read_with_no_answer_leaves_the_window_as_it_was(make):
+    """No snapshot means the service could not answer without the
+    Keychain. The window keeps what it shows rather than blanking it."""
+    ui, service, _ = make()
+    before = ui.view
+    service.fail["refresh_files"] = ActionResult(True, "refresh_files")
+
+    ui.reread()
+
+    assert ui.view == before
+
+
+def test_a_re_read_that_changes_nothing_does_not_redraw(make):
+    ui, _service, _ = make()
+    redraws = []
+    ui.viewChanged.connect(lambda: redraws.append(1))
+
+    ui.reread()
+    ui.poll()
+
+    assert redraws == []
+
+
+def test_the_header_says_when_the_window_last_read(make):
+    now = [1_790_000_000_000]
+    ui, _service, _ = make(clock_ms=lambda: now[0])
+    assert ui.updatedText == "Updated just now"
+    assert "Nothing goes online" in ui.updatedTip
+
+    now[0] += 5 * 60_000
+    ui.tick()
+    assert ui.updatedText == "Updated 5m ago"
+
+    ui.reread()
+    assert ui.updatedText == "Updated just now"
