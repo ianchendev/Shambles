@@ -232,8 +232,10 @@ are never presented as things to manage, and there is no "refresh", "repair" or
   [`switcher.switch`](../shambles/switcher.py) is the right instinct and should be
   the model everywhere.
 - **Do not render `subscriptionType`.** It read `team` for a Max 5x account. If a
-  plan badge is wanted, `oauthAccount.organizationRateLimitTier` is the accurate
-  field.
+  plan badge is wanted, name it from `oauthAccount.organizationType` (plus
+  `seatTier` for Team and the rate-limit tier for Max), as Claude Code does.
+  The tier alone reads `default_claude_ai` for Pro and `default_raven` for Team;
+  see `docs/token-storage.md`.
 
 ---
 

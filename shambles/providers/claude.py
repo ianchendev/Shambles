@@ -194,6 +194,28 @@ def _system_home() -> Path | None:
         return None
 
 
+def _plan_name(data, block) -> str | None:
+    """The plan as people know it ("Pro", "Team Premium"), not a tier.
+
+    Named from the organisation type and, where the spec says a type has
+    variants, from the seat or tier that tells them apart. A type the spec
+    does not know falls back to the rate-limit tier at ``block["plan"]``,
+    the text rows showed before, so nothing goes blank; a known type with a
+    variant it does not know keeps the type's own name.
+    """
+    names = block.get("plan_names") or {}
+    kind = specmod.pointer(data, names.get("type", ""))
+    name = names.get("types", {}).get(kind) if isinstance(kind, str) else None
+    if name is None:
+        return specmod.pointer(data, block["plan"])
+    variant = names.get("variants", {}).get(kind)
+    if variant:
+        detail = specmod.pointer(data, variant["field"])
+        if isinstance(detail, str):
+            name = variant["names"].get(detail, name)
+    return name
+
+
 class ClaudeProvider:
     def __init__(self, spec=None, env=None, real_home=_system_home):
         self.spec = spec if spec is not None else specmod.load("claude")
@@ -429,7 +451,7 @@ class ClaudeProvider:
             email=specmod.pointer(data, block["email"]),
             display_name=specmod.pointer(data, block["display_name"]),
             org=specmod.pointer(data, block["org"]),
-            plan=specmod.pointer(data, block["plan"]),
+            plan=_plan_name(data, block),
             account=specmod.pointer(data, block.get("account", "")),
         )
 
