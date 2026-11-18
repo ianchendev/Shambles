@@ -44,6 +44,8 @@ USAGE_LABELS = {"session": "Session", "week": "Week"}
 LIMIT_NAMES = {"session": "5-hour limit", "week": "Weekly limit"}
 
 #: Notices the window draws as something other than a plain banner.
+#: The snapshot's state for a live login that is not the marked account's.
+DRIFTED = "drifted"
 UNSAVED = "unsaved_login"
 ELSEWHERE = "signed_in_elsewhere"
 SIGN_IN_SOON = "sign_in_soon"
@@ -134,7 +136,10 @@ def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
         # the core refuses; switching to settle_to is the answer. Its own
         # row stays switchable.
         hold = (f"Switch to {settle_to} above first. Until then this machine "
-                "is signed in to an account that is marked as another.")
+                "is signed in to an account that is marked as another."
+                if group.state == DRIFTED else
+                f"Use {settle_to} above first. Until then this machine is "
+                "signed in to an account that is not marked in use.")
     else:
         hold = ""
     accounts = [_account(group, a,
@@ -167,7 +172,11 @@ def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
                 "account": notice.account,
                 "title": notice.message,
                 "body": notice.remedy,
-                "label": f"Switch to {notice.account}",
+                # Nothing is marked to switch away from when the marked
+                # account was deleted or the marker cleared.
+                "label": (f"Switch to {notice.account}"
+                          if group.state == DRIFTED
+                          else f"Use {notice.account}"),
             }
             continue
         if notice.code == UNSAVED:

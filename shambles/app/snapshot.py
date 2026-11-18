@@ -150,18 +150,31 @@ def _group(paths, provider, *, platform: str, now_ms: int) -> Group:
                 if isinstance(s, dict)]
 
     active = state_mod.read_active(paths, provider.id)
-    found = profiles_mod.discover(paths, provider, active, now_ms,
-                                  platform=platform)
     current = state_mod.inspect(paths, provider, platform=platform)
+    # Whose row reads the live login's figures. The marked one while the
+    # marker is right; otherwise only the account the live login is proven
+    # to be, the rule stashing follows, and nobody without proof. Asked only
+    # where it is used: it reads the live store again, which on macOS is
+    # the Keychain.
+    proven = (state_mod.owner_of_live(paths, provider, platform=platform)
+              if current.kind in UNSETTLED else None)
+    found = profiles_mod.discover(
+        paths, provider, active, now_ms, platform=platform,
+        live_name=active if current.kind == state_mod.MANAGED else proven)
     unreadable = _store_error(paths, provider, platform=platform)
     live_login = unreadable is None and _has_login(paths, provider,
                                                    platform=platform)
     # Proof if there is any, else the account the address names: shown as a
     # suggestion ("switch to it to settle this"), and switching to it is how
-    # the user confirms. Never acted on here.
-    owner = ((state_mod.owner_of_live(paths, provider, platform=platform)
-              or state_mod.owner_by_address(paths, provider, platform=platform))
-             if current.kind == state_mod.DRIFTED else None)
+    # the user confirms. Never acted on here. With the marked account
+    # deleted, or none marked, proof only: switching to an account the
+    # address merely suggests would file an unproven login over its saved
+    # one, so such a login is offered for saving instead.
+    if current.kind == state_mod.DRIFTED:
+        owner = proven or state_mod.owner_by_address(paths, provider,
+                                                     platform=platform)
+    else:
+        owner = proven
     can_save = live_login and current.kind != state_mod.MANAGED and not owner
 
     accounts = []
@@ -233,6 +246,11 @@ def _has_login(paths, provider, *, platform) -> bool:
         return False
 
 
+#: States in which the live login may belong to an account other than the
+#: one marked: the marker names someone else, a deleted profile, or nobody.
+UNSETTLED = (state_mod.DRIFTED, state_mod.MISSING_PROFILE, state_mod.UNKNOWN)
+
+
 def _notices(paths, provider, current, *, owner, can_save, unreadable):
     name = provider.display_name
     notices = []
@@ -242,19 +260,32 @@ def _notices(paths, provider, current, *, owner, can_save, unreadable):
             f"Can't read the {name} login in {unreadable}.",
             "Unlock the credential store or fix the file's permissions, then "
             "refresh. Switching is unavailable until it can be read."))
-    if current.kind == state_mod.MISSING_PROFILE:
+    if current.kind == state_mod.MISSING_PROFILE and not owner:
         notices.append(Notice(
             "missing_profile",
             f"'{current.profile}' is marked active but is no longer on disk.",
             "Save the current login, or switch to a saved account.",
             account=current.profile))
-    if owner:
+    if owner and current.kind == state_mod.DRIFTED:
         notices.append(Notice(
             "signed_in_elsewhere",
             f"Signed in as {current.live_email or 'another account'}, which "
             f"is saved as '{owner}', but '{current.profile}' is marked "
             "active.",
             f"Switch to '{owner}' to settle it. Nothing is lost either way.",
+            account=owner))
+    elif owner:
+        # The marker names a deleted profile, or nobody. The login is
+        # already saved, so saving it again would only make a second
+        # account of it ("Work 2"): using the one it is saved as is the
+        # step, through the same switch the drift card makes.
+        who = current.live_email or "an account"
+        gone = (f"'{current.profile}' is no longer saved. "
+                if current.kind == state_mod.MISSING_PROFILE else "")
+        notices.append(Notice(
+            "signed_in_elsewhere",
+            f"{gone}Signed in as {who}, which is saved as '{owner}'.",
+            f"Use '{owner}' to carry on with it. Nothing is lost either way.",
             account=owner))
     if can_save:
         who = current.live_email

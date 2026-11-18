@@ -123,6 +123,20 @@ Notable changes per release. Dates are the tag date.
   vendor kept running, holding its sign-in port, and the window waited on
   "Cancelling" until it gave up by itself. Cancel now ends the vendor too,
   with Windows' own `taskkill`. Nothing else is touched.
+- **After a sign-in outside Shambles, the account marked in use no longer
+  shows the other account's usage.** Its row showed the usage, plan and
+  sign-in date of whoever was really signed in. Those figures now go to
+  the account the login is proven to be, by the same rule Shambles uses
+  before saving a login, and to no account when nothing proves whose it is.
+  A usage figure that names a different account is no longer shown for the
+  account in use either.
+- **A login that is already saved is no longer offered for saving again as
+  "Work 2".** When the account marked in use had been removed, or no
+  account was marked, Shambles offered to save the current login under a
+  new name even when it was already saved. When the login is provably the
+  saved account's own, it now offers "Use Work" instead. A login that only
+  shares the account's address is still offered for saving, since it may
+  belong to another organisation.
 
 - **Small windows kept buttons out of reach.** At the smallest size the
   sign-in sheet hid Cancel and the eject sheet hid both its buttons, with

@@ -159,11 +159,12 @@ def list_profile_names(paths, provider_id: str) -> list[str]:
     return sorted(state.profile_names(paths, provider_id), key=str.casefold)
 
 
-def resolve_usage(paths, provider, name: str, active_name: str | None):
+def resolve_usage(paths, provider, name: str, live_name: str | None):
     """Usage figures for one profile.
 
-    The active profile reads the vendor's own live cache, which it keeps
-    current. Everyone else reads what was stashed when they were last active,
+    The profile the live login belongs to reads the vendor's own live cache,
+    which it keeps current. Everyone else reads what was stashed when they
+    were last live,
     which the UI renders with its age attached -- see :mod:`shambles.usage`
     for why a stashed figure is never trusted silently.
 
@@ -172,7 +173,7 @@ def resolve_usage(paths, provider, name: str, active_name: str | None):
     returns empty, which the card treats as a supported state rather than a gap.
     """
     if provider.id == "codex":
-        if active_name is None or name != active_name:
+        if live_name is None or name != live_name:
             return usage_mod.EMPTY
         from .providers import spec as specmod
         return usage_mod.read_codex_usage(
@@ -183,18 +184,32 @@ def resolve_usage(paths, provider, name: str, active_name: str | None):
     if not companion:
         return usage_mod.EMPTY
 
-    if active_name is not None and name == active_name:
-        live = usage_mod.parse(
-            configjson.load(provider.companion_path(home=paths.home))
-            .get("cachedUsageUtilization"))
-        if live:
+    stashed = configjson.load(paths.account(provider.id, name))
+    if live_name is not None and name == live_name:
+        cache = (configjson.load(provider.companion_path(home=paths.home))
+                 .get("cachedUsageUtilization"))
+        live = usage_mod.parse(cache)
+        if live and _cache_is_theirs(cache, stashed):
             return live
 
-    stashed = configjson.load(paths.account(provider.id, name))
     # stash_live_login writes whatever companion_read returned, so the key is
     # the vendor's own rather than a name of ours.
     return usage_mod.parse(stashed.get("cachedUsageUtilization")
                            or stashed.get("usage"))
+
+
+def _cache_is_theirs(cache, sidecar) -> bool:
+    """Whether a live usage cache can be this profile's, by account id.
+
+    ``~/.claude.json`` can still hold the previous account's cache in the
+    moments after a switch, or one written by a session still running as
+    someone else; the cache names its account, as :func:`usage.capture_live`
+    checks. With either id missing there is nothing to tell them apart by.
+    """
+    account = sidecar.get("oauthAccount")
+    expected = account.get("accountUuid") if isinstance(account, dict) else None
+    found = cache.get("accountUuid") if isinstance(cache, dict) else None
+    return not (expected and found) or expected == found
 
 
 def resolve_liveness(paths, provider, name: str, blob, *, active: bool,
@@ -224,8 +239,26 @@ def resolve_liveness(paths, provider, name: str, blob, *, active: bool,
     return provider.liveness(blob, now_ms=now_ms)
 
 
+#: ``discover``'s default for ``live_name``: the marked profile.
+_MARKED = object()
+
+
 def discover(paths, provider, active_name: str | None, now_ms: int, *,
-             platform: str = sys.platform) -> list[Profile]:
+             platform: str = sys.platform,
+             live_name=_MARKED) -> list[Profile]:
+    """Every saved profile, described for display.
+
+    ``active_name`` is the profile marked in use. ``live_name`` is the one
+    the live login belongs to, and only its row reads the live identity,
+    login and usage; everyone else reads what they stashed. The two are the
+    same while the marker is right, which is the default. A caller that has
+    found they differ passes the account the live login is proven to be,
+    or ``None`` when no account can be shown to own it: the live figures
+    describe whoever is signed in, and filed under the marked name they
+    read as that account's.
+    """
+    if live_name is _MARKED:
+        live_name = active_name
     found = []
     for name in list_profile_names(paths, provider.id):
         directory = paths.profile_dir(provider.id, name)
@@ -235,8 +268,14 @@ def discover(paths, provider, active_name: str | None, now_ms: int, *,
             blob = None
 
         is_active = (name == active_name)
+        is_live = (name == live_name)
+        # The vendor's config file names whoever any running session last
+        # wrote there. Trusted for the marked row of a settled login, as
+        # before; a row that owns the live login only by proof reads its
+        # own saved identity, as state.inspect describes it.
         identity = provider.identity(blob, home=paths.home,
-                                     profile_dir=directory, active=is_active)
+                                     profile_dir=directory,
+                                     active=is_live and is_active)
         found.append(Profile(
             name=name,
             provider=provider.id,
@@ -246,9 +285,9 @@ def discover(paths, provider, active_name: str | None, now_ms: int, *,
             org=identity.org,
             plan=identity.plan,
             liveness=resolve_liveness(paths, provider, name, blob,
-                                     active=is_active, now_ms=now_ms,
+                                     active=is_live, now_ms=now_ms,
                                      platform=platform),
-            usage=resolve_usage(paths, provider, name, active_name),
+            usage=resolve_usage(paths, provider, name, live_name),
             publishes_usage=bool(provider.spec.get("companion")) or provider.id == "codex",
         ))
     return found
