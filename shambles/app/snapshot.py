@@ -20,6 +20,7 @@ from .. import login as login_mod
 from .. import profiles as profiles_mod
 from .. import state as state_mod
 from .. import switcher
+from .. import usage as usage_mod
 
 #: Bumped when the JSON shape changes incompatibly. A shell that meets an
 #: unfamiliar version must say "update Shambles" rather than guess -- the app
@@ -52,6 +53,13 @@ class Window:
     #: ``ok``, ``soon`` or ``gone``: which colour the bar is. Decided here so
     #: the 80% rule in :mod:`shambles.usage` has one implementation.
     severity: str = "ok"
+    #: When the vendor read this figure, if it said.
+    fetched_at_ms: int | None = None
+    #: The window rolled over after the figure was read, so ``used_percent``
+    #: is no longer true: render it as reset, with the old figure as history.
+    #: As of the snapshot's ``now_ms``; a shell that stays open recomputes it
+    #: with :func:`shambles.usage.has_reset`.
+    reset: bool = False
 
 
 @dataclass(frozen=True)
@@ -320,13 +328,19 @@ def _windows(profile, *, now_ms: int) -> list:
     if not usage:
         return []
     stale = usage.is_stale(now_ms)
-    return [Window(bar.label, bar.percent,
-                   resets_at_ms=_epoch_ms(bar.resets_at),
-                   resets_label=bar.resets_label(),
-                   age_label=usage.age_label(now_ms),
-                   stale=stale,
-                   severity=bar.display_severity)
-            for bar in usage.bars]
+    windows = []
+    for bar in usage.bars:
+        resets_at_ms = _epoch_ms(bar.resets_at)
+        windows.append(Window(
+            bar.label, bar.percent,
+            resets_at_ms=resets_at_ms,
+            resets_label=bar.resets_label(),
+            age_label=usage.age_label(now_ms),
+            stale=stale,
+            severity=bar.display_severity,
+            fetched_at_ms=usage.fetched_at_ms,
+            reset=usage_mod.has_reset(resets_at_ms, now_ms)))
+    return windows
 
 
 def _epoch_ms(iso) -> int | None:
@@ -343,6 +357,21 @@ def _epoch_ms(iso) -> int | None:
         return int(when.timestamp() * 1000)
     except (ValueError, OverflowError, OSError):
         return None
+
+
+# -- for a shell that stays open ---------------------------------------------
+#
+# A snapshot's verdicts are as of the moment it was built. A window left open
+# redraws later than that: a limit resets, a reading turns old. These are the
+# same rules, for the shell to apply at the moment it draws, so it never
+# writes its own clock maths. One implementation each, in shambles.usage.
+
+STALE_AFTER_MS = usage_mod.STALE_AFTER_MS
+has_reset = usage_mod.has_reset
+until_label = usage_mod.until_label
+moment_label = usage_mod.moment_label
+date_label = usage_mod.date_label
+age_words = usage_mod.age_words
 
 
 def to_dict(snapshot: Snapshot) -> dict:
@@ -388,6 +417,8 @@ def to_dict(snapshot: Snapshot) -> dict:
                                 "age_label": w.age_label,
                                 "stale": w.stale,
                                 "severity": w.severity,
+                                "fetched_at_ms": w.fetched_at_ms,
+                                "reset": w.reset,
                             }
                             for w in a.usage
                         ],

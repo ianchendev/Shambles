@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from shambles.app.qt import presenter
 from shambles.app.service import ActionError, ActionResult
 from shambles.app.snapshot import (Account, Group, Notice, Snapshot, Surface,
-                                   Window)
+                                   Window, moment_label)
 
 HOUR = 3_600_000
 
@@ -243,7 +243,6 @@ def test_stale_usage_is_dimmed_only_on_an_account_not_in_use():
 
     assert shown["live"]["usage"][0]["tone"] == "ok"
     assert shown["others"][0]["usage"][0]["tone"] == "dim"
-    assert shown["others"][0]["usageNote"] == "as of 5h ago"
 
 
 def test_missing_usage_is_explained_only_where_there_could_be_some():
@@ -265,8 +264,122 @@ def test_usage_carries_the_services_severity_and_reset_time():
     bar = only(view(group(account("Work", active=True,
                                   usage=[hot]))))["live"]["usage"][0]
 
-    assert bar == {"label": "Week", "percent": 85, "fill": 0.85,
-                   "tone": "gone", "resets": "Resets Tue 17 Nov, 15:10"}
+    assert bar["tone"] == "gone"
+    assert (bar["label"], bar["percent"], bar["fill"]) == ("Week", 85, 0.85)
+    assert bar["resets"] == "Resets Tue 17 Nov, 15:10"
+
+
+# -- U1: a limit that has reset, and reset times you can choose by -------------
+
+MINUTE = 60_000
+NOW = 1_790_000_000_000
+
+
+def bars(*windows, live=False, now_ms=NOW):
+    shown = only(view(group(account("Work", active=True),
+                            account("Dev", active=False, usage=windows))
+                      if not live else
+                      group(account("Dev", active=True, usage=windows)),
+                      now_ms=now_ms))
+    return shown["live"] if live else shown["others"][0]
+
+
+def test_a_limit_past_its_reset_time_reads_reset_not_its_old_figure():
+    """The mockup's Dev row: 100% when last read, but the 5-hour window has
+    since rolled over, so 100% is no longer true."""
+    full = Window("session", 100, resets_at_ms=NOW - 2 * HOUR,
+                  fetched_at_ms=NOW - 7 * HOUR, severity="gone", stale=True)
+
+    bar = bars(full)["usage"][0]
+
+    assert bar["state"] == "reset"
+    assert bar["text"] == "reset"
+    assert bar["fill"] == 0.0
+    assert bar["tone"] == "reset"
+    assert bar["resets"] == ""
+    assert bar["percent"] == 100
+    assert bar["tip"] == (f"5-hour limit: 100% when last read at "
+                          f"{moment_label(NOW - 7 * HOUR, NOW)}. It reset "
+                          f"at {moment_label(NOW - 2 * HOUR, NOW)}.")
+
+
+def test_a_limit_resets_on_screen_when_its_time_comes_without_a_re_read():
+    """The snapshot's own verdict is from when it was built. The window
+    redraws with the time it is drawn at."""
+    running = Window("session", 60, resets_at_ms=NOW + MINUTE,
+                     fetched_at_ms=NOW, reset=False, severity="ok")
+
+    before = bars(running, live=True, now_ms=NOW)["usage"][0]
+    after = bars(running, live=True, now_ms=NOW + 2 * MINUTE)["usage"][0]
+
+    assert (before["state"], after["state"]) == ("current", "reset")
+
+
+def test_a_reset_under_a_day_away_is_a_countdown_with_the_date_on_hover():
+    soon = Window("session", 27, resets_at_ms=NOW + HOUR + 52 * MINUTE,
+                  resets_label="Wed 18 Nov, 02:00", fetched_at_ms=NOW,
+                  severity="ok")
+
+    bar = bars(soon, live=True)["usage"][0]
+
+    assert bar["state"] == "current"
+    assert bar["text"] == "27%"
+    assert bar["resetsIn"] == "in 1h 52m"
+    assert bar["resets"] == "Resets in 1h 52m"
+    assert bar["resetsExact"] == "Wed 18 Nov, 02:00"
+    assert bar["tip"] == "5-hour limit: 27%. Resets Wed 18 Nov, 02:00."
+
+
+def test_a_reset_days_away_gives_the_date():
+    later = Window("week", 41, resets_at_ms=NOW + 3 * 24 * HOUR,
+                   resets_label="Sat 21 Nov, 02:00", fetched_at_ms=NOW,
+                   severity="ok")
+
+    bar = bars(later, live=True)["usage"][0]
+
+    assert bar["resetsIn"] == "Sat 21 Nov, 02:00"
+    assert bar["resets"] == "Resets Sat 21 Nov, 02:00"
+    assert bar["tip"] == "Weekly limit: 41%. Resets Sat 21 Nov, 02:00."
+
+
+def test_an_old_reading_is_marked_by_the_bar_not_by_a_sentence():
+    """No "as of 7h ago" line. The bar's state says old; the age is on
+    hover."""
+    week = Window("week", 85, resets_at_ms=NOW + 3 * 24 * HOUR,
+                  resets_label="Sat 21 Nov, 02:00",
+                  fetched_at_ms=NOW - 7 * HOUR, age_label="7h ago",
+                  stale=True, severity="gone")
+
+    row = bars(week)
+    bar = row["usage"][0]
+
+    assert bar["state"] == "old"
+    assert bar["tone"] == "dim"
+    assert row["usageNote"] == ""
+    assert bar["tip"] == ("Weekly limit: 85%. Resets Sat 21 Nov, 02:00. "
+                          "Read 7h ago.")
+
+
+def test_an_hour_old_reading_turns_old_while_the_window_stays_open():
+    read = Window("week", 30, fetched_at_ms=NOW, stale=False, severity="ok")
+
+    fresh = bars(read, now_ms=NOW + 59 * MINUTE)["usage"][0]
+    aged = bars(read, now_ms=NOW + 61 * MINUTE)["usage"][0]
+
+    assert (fresh["state"], aged["state"]) == ("current", "old")
+    assert aged["tip"] == "Weekly limit: 30%. Read 1h ago."
+
+
+def test_a_row_sums_its_bars_up_in_words_and_in_one_tooltip():
+    full = Window("session", 100, resets_at_ms=NOW - HOUR,
+                  fetched_at_ms=NOW - 2 * HOUR, severity="gone", stale=True)
+    week = Window("week", 85, fetched_at_ms=NOW - 2 * HOUR, stale=True,
+                  severity="gone")
+
+    row = bars(full, week)
+
+    assert row["usageSummary"] == "session reset · 85% week"
+    assert row["usageTip"] == " ".join(b["tip"] for b in row["usage"])
 
 
 def test_the_login_line_gives_the_date_and_what_to_do():

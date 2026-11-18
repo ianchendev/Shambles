@@ -118,16 +118,80 @@ class Usage:
 
     def age_label(self, now_ms: int) -> str | None:
         """Short human age, e.g. ``"17h ago"``. None when freshly fetched."""
-        age = self.age_ms(now_ms)
-        if age is None:
-            return None
-        minutes = age // 60_000
-        if minutes < 60:
-            return "just now" if minutes < 5 else f"{minutes}m ago"
-        hours = minutes // 60
-        if hours < 24:
-            return f"{hours}h ago"
-        return f"{hours // 24}d ago"
+        return age_words(self.age_ms(now_ms))
+
+
+def age_words(age_ms) -> str | None:
+    """An age in milliseconds as ``"just now"``, ``"40m ago"``, ``"17h ago"``."""
+    if age_ms is None:
+        return None
+    minutes = max(0, age_ms) // 60_000
+    if minutes < 60:
+        return "just now" if minutes < 5 else f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
+
+
+#: Under this, a reset time reads as a countdown ("in 1h 52m"), which is what
+#: someone choosing an account needs. Further off, the date says more.
+COUNTDOWN_UNDER_MS = 24 * 60 * 60 * 1000
+
+DATE_FORMAT = "%a %d %b, %H:%M"
+
+
+def has_reset(resets_at_ms, now_ms: int) -> bool:
+    """Whether a limit's window has rolled over since it was read.
+
+    The figure was true until ``resets_at_ms``; after it the limit starts
+    again from nothing, so an old 100% must not be shown as a full limit. An
+    unknown reset time has not passed: there is nothing to say it has.
+    """
+    return (isinstance(resets_at_ms, int) and not isinstance(resets_at_ms, bool)
+            and resets_at_ms <= now_ms)
+
+
+def until_label(resets_at_ms, now_ms: int) -> str | None:
+    """``"in 1h 52m"`` for a reset under a day away, else None.
+
+    Rounded up: the last seconds before a reset read "in 1m", never "in 0m"
+    beside a figure that has not reset yet.
+    """
+    if not isinstance(resets_at_ms, int) or isinstance(resets_at_ms, bool):
+        return None
+    left = resets_at_ms - now_ms
+    if left <= 0 or left >= COUNTDOWN_UNDER_MS:
+        return None
+    minutes = -(-left // 60_000)
+    hours, minutes = divmod(minutes, 60)
+    if not hours:
+        return f"in {minutes}m"
+    return f"in {hours}h {minutes}m" if minutes else f"in {hours}h"
+
+
+def date_label(ms) -> str:
+    """``ms`` as a local date and time, or ``""`` if no calendar reaches it."""
+    try:
+        return datetime.datetime.fromtimestamp(ms / 1000).strftime(DATE_FORMAT)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+
+
+def moment_label(ms, now_ms: int) -> str:
+    """A moment in local time: ``"14:00"`` if it is today, else with its day.
+
+    ``""`` for a value no calendar reaches. Both numbers are whatever the
+    vendor cached, never range-checked.
+    """
+    try:
+        when = datetime.datetime.fromtimestamp(ms / 1000)
+        today = datetime.datetime.fromtimestamp(now_ms / 1000).date()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+    if when.date() == today:
+        return when.strftime("%H:%M")
+    return when.strftime(DATE_FORMAT)
 
 
 EMPTY = Usage(bars=())

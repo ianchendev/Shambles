@@ -17,6 +17,15 @@ Notable changes per release. Dates are the tag date.
   JetBrains, even when its output goes to Shambles rather than a terminal,
   and that link was lost as well. The sign-in sheet now shows Open sign-in
   page and Copy link for both vendors.
+### Changed
+
+- **A limit that has reset says so.** A saved reading carries its reset
+  time. Once that time has passed the window shows the limit as reset
+  instead of an old 100%, with the old figure on hover. Reset times under
+  a day read as a countdown ("Resets in 1h 52m"), with the exact date on
+  hover. An hour-old reading is marked by the bar's look and its tooltip
+  instead of an "as of 7h ago" line. The window redraws every 30 seconds
+  so a countdown stays true while it sits open; that redraw reads nothing.
 
 ## 2.2.2 - 2026-11-15
 

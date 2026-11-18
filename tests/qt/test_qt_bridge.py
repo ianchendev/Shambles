@@ -662,3 +662,54 @@ def test_a_due_sign_in_can_be_started_from_its_notice_and_its_row(make):
 
     ui.signIn("claude", "Spare")
     assert service.named("start_login")[-1] == ("start_login", "claude", "Spare")
+
+
+# -- U1: the window keeps its own time --------------------------------------------
+
+
+def test_a_countdown_and_a_reset_follow_the_clock_while_the_window_sits_open(
+        make):
+    """Nothing is re-read: the tick only redraws what the bridge already
+    holds, at the time it is drawn."""
+    from qt_fakes import with_usage
+
+    now = [1_790_000_000_000]
+    ui, service, _ = make(FakeService(with_usage(now[0])),
+                          clock_ms=lambda: now[0])
+    live = ui.view["groups"][0]["live"]["usage"][0]
+    assert (live["state"], live["resetsIn"]) == ("current", "in 2h")
+    reads = len(service.calls)
+
+    now[0] += 2 * 3_600_000 + 60_000
+    ui.tick()
+
+    live = ui.view["groups"][0]["live"]["usage"][0]
+    assert live["state"] == "reset"
+    assert len(service.calls) == reads
+
+
+def test_the_redraw_tick_runs_every_half_minute_once_started(make):
+    ui, _service, _ = make()
+
+    assert ui._clock.isActive()
+    assert ui._clock.interval() == bridge_mod.REDRAW_MS == 30_000
+
+
+def test_a_tick_that_changes_nothing_does_not_redraw(make):
+    """Every viewChanged recreates every card in today's QML, closing an
+    open menu and dropping focus. A timer nobody asked for must not."""
+    from qt_fakes import with_usage
+
+    now = [1_790_000_000_000]
+    ui, _service, _ = make(FakeService(with_usage(now[0])),
+                           clock_ms=lambda: now[0])
+    redraws = []
+    ui.viewChanged.connect(lambda: redraws.append(now[0]))
+
+    now[0] += 10_000          # "in 2h" still reads "in 2h"
+    ui.tick()
+    assert redraws == []
+
+    now[0] += 60_000          # now "in 1h 59m"
+    ui.tick()
+    assert len(redraws) == 1
