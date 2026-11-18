@@ -30,6 +30,9 @@ SETTINGS_NAME = "settings.json"
 #: outside the credential, a stashed copy of it.
 CREDENTIALS_NAME = "credentials.json"
 ACCOUNT_NAME = "account.json"
+#: A profile's last usage reading, for a provider that keeps no cache of its
+#: own to stash (Codex). Shambles' file, not the vendor's.
+USAGE_NAME = "usage.json"
 
 #: Records which profile a provider's live login belongs to. One per provider.
 ACTIVE_NAME = "active"
@@ -83,6 +86,9 @@ class Paths:
 
     def account(self, provider_id: str, name: str) -> Path:
         return self.profile_dir(provider_id, name) / ACCOUNT_NAME
+
+    def usage(self, provider_id: str, name: str) -> Path:
+        return self.profile_dir(provider_id, name) / USAGE_NAME
 
     def active_marker(self, provider_id: str) -> Path:
         return self.provider_dir(provider_id) / ACTIVE_NAME

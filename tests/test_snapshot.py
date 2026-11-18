@@ -142,10 +142,20 @@ def test_no_usage_is_a_supported_state_not_a_gap(paths):
     assert group_of(paths, "codex").accounts[0].usage == []
 
 
+def in_use_since(paths, provider_id, iso):
+    """The marked account has been the one in use since ``iso``: a session
+    logged after that is its own. See usage.codex_reading_since."""
+    import datetime
+    import os
+    when = datetime.datetime.fromisoformat(iso).timestamp()
+    os.utime(paths.active_marker(provider_id), (when, when))
+
+
 def test_codex_session_logs_reach_the_contract(paths):
     from helpers import make_codex_session
 
     make_profile(paths, "codex", "Personal", active=True)
+    in_use_since(paths, "codex", "2026-09-08T11:00:00+00:00")
     make_codex_session(paths, used_5h=2.0, used_week=4.0)
     assert [(w.label, w.used_percent) for w in
             group_of(paths, "codex").accounts[0].usage] == \
@@ -157,6 +167,7 @@ def test_a_parked_codex_profile_does_not_inherit_the_live_session(paths):
 
     make_profile(paths, "codex", "Personal", active=True)
     make_profile(paths, "codex", "Work")
+    in_use_since(paths, "codex", "2026-09-08T11:00:00+00:00")
     make_codex_session(paths)
     by_name = {a.name: a for a in group_of(paths, "codex").accounts}
     assert by_name["Personal"].usage
