@@ -193,9 +193,18 @@ def test_a_proven_row_shows_its_own_address_not_the_config_files(paths):
 
 
 def test_codex_live_usage_follows_proof_too(paths):
+    """The marked row does not show the live login's figures. Nor does the
+    row that owns the live login by proof alone: Codex's session logs are
+    shared, and with the marker on someone else nothing says when this
+    login became the one in use, so the newest log may be the marked
+    account's. It shows what it kept (F6) until it is marked."""
     make_profile(paths, "codex", "Work", email="work@example.test",
                  active=True)
     make_profile(paths, "codex", "Personal", email="personal@example.test")
+    write_json(paths.usage("codex", "Personal"),
+               {"fetchedAtMs": NOW, "utilization": {"limits": [
+                   {"kind": "session", "percent": 12,
+                    "severity": "normal"}]}})
     live = paths.home / ".codex" / "auth.json"
     live.parent.mkdir(parents=True, exist_ok=True)
     live.write_bytes(paths.credentials("codex", "Personal").read_bytes())
@@ -204,7 +213,7 @@ def test_codex_live_usage_follows_proof_too(paths):
     shown = rows(paths, "codex")
 
     assert shown["Work"].usage == []
-    assert [w.used_percent for w in shown["Personal"].usage][:1] == [42]
+    assert [w.used_percent for w in shown["Personal"].usage][:1] == [12]
 
 
 @pytest.mark.parametrize("kind", ["managed", "unmanaged"])

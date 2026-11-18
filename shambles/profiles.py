@@ -173,12 +173,25 @@ def resolve_usage(paths, provider, name: str, live_name: str | None):
     returns empty, which the card treats as a supported state rather than a gap.
     """
     if provider.id == "codex":
+        # What the account kept when it was last switched away from. The
+        # account in use reads Codex's own logs, but only a reading taken
+        # since it became the account in use: the logs are shared, and an
+        # older one is the previous account's.
+        kept = usage_mod.parse(configjson.load(paths.usage(provider.id, name)))
         if live_name is None or name != live_name:
-            return usage_mod.EMPTY
+            return kept
+        # Only the marked account has a moment it became the one in use. A
+        # login that is this account's by proof alone, with the marker on
+        # someone else or nobody, cannot be dated, so the shared logs are
+        # not read as its own.
+        if name != state.read_active(paths, provider.id):
+            return kept
         from .providers import spec as specmod
-        return usage_mod.read_codex_usage(
+        live = usage_mod.codex_reading_since(
             specmod.config_dir(provider.spec, home=paths.home,
-                               env=getattr(provider, "env", None)))
+                               env=getattr(provider, "env", None)),
+            state.marked_since_ms(paths, provider.id))
+        return live or kept
 
     companion = provider.spec.get("companion")
     if not companion:

@@ -97,6 +97,20 @@ def read_active(paths, provider_id: str) -> str | None:
     return name or None
 
 
+def marked_since_ms(paths, provider_id: str) -> int | None:
+    """When the marker last changed, in epoch ms; None without one.
+
+    The moment the account it names became the one in use, as far as
+    Shambles can tell: every switch, save and adoption rewrites the marker
+    whole. Anything a vendor recorded before then was recorded for somebody
+    else.
+    """
+    try:
+        return paths.active_marker(provider_id).stat().st_mtime_ns // 1_000_000
+    except OSError:
+        return None
+
+
 def write_active(paths, provider_id: str, name: str | None) -> None:
     """Record ``name`` as the active profile, or forget it with ``None``.
 
@@ -108,8 +122,16 @@ def write_active(paths, provider_id: str, name: str | None) -> None:
     if name is None:
         paths.active_marker(provider_id).unlink(missing_ok=True)
         return
-    filemod.replace_file(paths.active_marker(provider_id),
-                         (name + "\n").encode("utf-8"), mode=0o600)
+    payload = (name + "\n").encode("utf-8")
+    # Its time is when the account became the one in use (see
+    # marked_since_ms), so a write that changes nothing is skipped.
+    try:
+        if paths.active_marker(provider_id).read_bytes() == payload:
+            return
+    except OSError:
+        pass
+    filemod.replace_file(paths.active_marker(provider_id), payload,
+                         mode=0o600)
 
 
 def profile_names(paths, provider_id: str) -> list[str]:

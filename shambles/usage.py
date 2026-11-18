@@ -328,6 +328,43 @@ def read_codex_usage(config_dir: Path) -> Usage:
     return EMPTY
 
 
+def codex_reading_since(config_dir: Path, since_ms: int | None) -> Usage:
+    """The newest Codex reading, if it was taken at or after ``since_ms``.
+
+    Codex writes its windows onto session logs that every account shares, so
+    the newest one says nothing about whose figures they are. Taken before
+    the account in use became so, it is the previous account's, and EMPTY
+    comes back instead. A reading with no time of its own cannot be placed
+    and is treated the same way. ``since_ms`` of None asks for any reading.
+    """
+    reading = read_codex_usage(config_dir)
+    if since_ms is None:
+        return reading
+    if not reading or reading.fetched_at_ms is None \
+            or reading.fetched_at_ms < since_ms:
+        return EMPTY
+    return reading
+
+
+#: Bar labels back to the cache's ``limits`` kinds. See :data:`KINDS`.
+_CACHE_KINDS = {label: kind for kind, label in KINDS.items()}
+
+
+def to_cache(usage: Usage) -> dict:
+    """``usage`` in the shape :func:`parse` reads back: Claude's cache.
+
+    One shape for every kept reading, so a parked Codex row is read exactly
+    as a parked Claude one.
+    """
+    return {
+        "fetchedAtMs": usage.fetched_at_ms,
+        "utilization": {"limits": [
+            {"kind": _CACHE_KINDS[bar.label], "percent": bar.percent,
+             "severity": bar.severity, "resets_at": bar.resets_at}
+            for bar in usage.bars if bar.label in _CACHE_KINDS]},
+    }
+
+
 def latest_codex_session(config_dir: Path) -> Path | None:
     """The newest session log under ``config_dir``, or None. Walks the tree,
     so a caller polling for changes should keep the answer, not ask again."""
