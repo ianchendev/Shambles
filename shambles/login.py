@@ -30,7 +30,16 @@ from .providers import spec as specmod
 #: Both vendors print a URL to visit when they cannot launch a browser, which
 #: is the normal case under WSL and over SSH. Pulling it out lets the window
 #: offer it as something to click or copy rather than as text to retype.
-_URL = re.compile(r"https?://[^\s<>\"'`]+")
+_URL = re.compile(r"https?://[^\s<>\"'`\x00-\x1f\x7f]+")
+
+#: Terminal escapes a vendor may wrap the URL in. Claude Code prints its link
+#: as an OSC 8 hyperlink (target, then the same URL as the visible text)
+#: whenever it decides the terminal can show one, which it judges from the
+#: environment too: Windows Terminal's WT_SESSION, inherited by WSL shells,
+#: is enough even when its output is a pipe. Removing the escapes, the
+#: hyperlink's target included, leaves the text a person would have seen.
+_ESCAPE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"   # OSC ... BEL/ST
+                     r"|\x1b\[[0-?]*[ -/]*[@-~]")             # CSI (colour)
 
 #: Trailing punctuation that belongs to the sentence, not the address.
 _TRAILING = ".,;:!?)]}>'\""
@@ -43,23 +52,47 @@ def find_url(line: str) -> str | None:
     whatever it is given, and a vendor is never going to ask for file:// or
     ftp://.
     """
-    match = _URL.search(line or "")
+    match = _URL.search(_ESCAPE.sub("", line or ""))
     if not match:
         return None
     return match.group(0).rstrip(_TRAILING)
 
 
+#: Where each vendor sends a sign-in, as its current client builds the link:
+#: Claude Code 2.1.270 to 2.1.300 (read from the binary) uses claude.com for
+#: a Claude account and platform.claude.com for the Console; the claude.ai
+#: and console.anthropic.com forms are older clients'. Codex uses
+#: auth.openai.com (codex-rs/login, ``build_authorize_url``).
 _AUTH_ENDPOINTS = frozenset({
     "https://auth.openai.com/authorize",
     "https://auth.openai.com/oauth/authorize",
+    "https://claude.com/cai/oauth/authorize",
+    "https://platform.claude.com/oauth/authorize",
     "https://claude.ai/oauth/authorize",
     "https://console.anthropic.com/oauth/authorize",
 })
 _AUTH_PARAMETERS = frozenset({
     "response_type", "client_id", "redirect_uri", "scope", "state",
     "code_challenge", "code_challenge_method", "login_hint", "prompt",
+    # Claude Code: ``code=true`` on every link, the others when set.
+    "code", "orgUUID", "login_method",
+    # Codex.
     "id_token_add_organizations", "codex_cli_simplified_flow", "originator",
+    "allowed_workspace_id", "current_workspace_id", "connection",
 })
+#: Parameters held to a narrower value than the general rule below.
+_AUTH_VALUES = {
+    # In every other OAuth message ``code`` carries an authorization code.
+    # In a Claude Code sign-in link it is only ever the literal ``true``.
+    "code": re.compile(r"true"),
+    "orgUUID": re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}"
+                          r"-[0-9a-fA-F]{12}"),
+    "redirect_uri": re.compile(
+        r"http://(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?/"
+        r"(?:auth/callback|callback)|"
+        r"https://(?:console\.anthropic\.com|platform\.claude\.com)"
+        r"/oauth/code(?:/callback)?"),
+}
 
 
 def authorization_url(line: str) -> str | None:
@@ -88,11 +121,8 @@ def authorization_url(line: str) -> str | None:
                        lambda match: chr(int(match.group(1), 16)), value)
         if not re.fullmatch(r"[A-Za-z0-9._~+ :/@,-]*", value):
             return None
-        if key == "redirect_uri" and not re.fullmatch(
-                r"http://(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?/"
-                r"(?:auth/callback|callback)|"
-                r"https://(?:console\.anthropic\.com|platform\.claude\.com)"
-                r"/oauth/code", value):
+        narrower = _AUTH_VALUES.get(key)
+        if narrower is not None and not narrower.fullmatch(value):
             return None
     return url
 
