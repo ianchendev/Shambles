@@ -544,9 +544,15 @@ class Bridge(QObject):
         name, provider = login["name"], login["provider"]
         if result.ok and result.offer is not None:
             # D11: a renewal. The service put the user back where they were
-            # and says so; nothing became live, so nothing pulses.
+            # and says so; nothing became live, so nothing pulses. Its offer
+            # ("Use Admin") is the toast's button, and is only ever a switch.
             self._set_sheet({})
-            self._say(result.summary)
+            offer = result.offer
+            action = None
+            if offer.action == "switch" and offer.account:
+                action = (offer.label, lambda p=offer.provider,
+                          a=offer.account: self.switchTo(p, a))
+            self._say(result.summary, action=action)
             return
         if result.ok:
             self._set_sheet({})
