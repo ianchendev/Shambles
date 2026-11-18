@@ -229,6 +229,45 @@ def test_a_renewed_login_closes_the_sheet_and_confirms_the_account(make):
     assert ui.toast["text"] == "Old is signed in and in use."
 
 
+def test_a_renewal_says_you_are_still_where_you_were(make):
+    """D11. The service renewed Personal and put you back on Work: the toast
+    is its summary, and nothing pulses as if Personal had become live."""
+    from shambles.app.service import ActionOffer
+
+    ui, service, _ = make()
+    seen = []
+    ui.confirmed.connect(seen.append)
+    ui.signIn("claude", "Old")
+
+    service.settle(ActionResult(
+        True, "login", "Old renewed until 18 Dec. You're still on Work.",
+        snapshot=service.snap,
+        offer=ActionOffer("switch", "claude", "Old", "Use Old")))
+
+    assert ui.sheet == {}
+    assert seen == []
+    assert ui.toast["text"] == "Old renewed until 18 Dec. You're still on Work."
+    assert ui.toast["actionLabel"] == "Use Old"
+    assert service.named("switch") == []
+
+
+def test_use_on_a_renewal_toast_switches_to_the_renewed_account(make):
+    """The button is offered, never pressed for the user."""
+    from shambles.app.service import ActionOffer
+
+    ui, service, _ = make()
+    renewal = ActionResult(
+        True, "login", "Personal renewed until 18 Dec. You're still on Work.",
+        snapshot=service.snap,
+        offer=ActionOffer("switch", "claude", "Personal", "Use Personal"))
+    ui.signIn("claude", "Old")
+    service.settle(renewal)
+
+    ui.toastAction()
+
+    assert service.named("switch") == [("switch", "claude", "Personal")]
+
+
 def test_a_login_for_the_wrong_account_is_explained_and_can_be_retried(make):
     """Nothing was saved over the profile, and the window says so."""
     ui, service, _ = make()

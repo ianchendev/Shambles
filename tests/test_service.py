@@ -68,6 +68,7 @@ def test_action_result_has_a_stable_wire_shape():
         "summary": "",
         "warnings": [],
         "snapshot": None,
+        "offer": None,
         "error": {
             "code": "profile_missing",
             "message": "Missing.",
