@@ -282,6 +282,14 @@ def fake_vendor(tmp_path, monkeypatch):
     Never the real `claude` or `codex`: those would open a browser and try to
     authenticate. This prints what the real ones print when they cannot open a
     browser -- a URL to visit -- and exits with whatever code the test wants.
+
+    ``linger`` keeps it running that many seconds, as a vendor waiting for
+    its browser does, and then it exits 0 whatever ``exit_code`` says. The
+    wait is an ``exec``: the stand-in becomes the waiting process rather than
+    a shell with a child, as a real vendor on these systems is the process
+    Shambles started. A shell killed while its ``sleep`` ran would leave that
+    child holding the output pipe, and a cancel test would pass or fail on
+    whether the shell had forked yet.
     """
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
@@ -291,9 +299,8 @@ def fake_vendor(tmp_path, monkeypatch):
               linger=0):
         script = bindir / name
         body = "\n".join(f"echo {line!r}" for line in lines)
-        script.write_text(
-            f"#!/bin/sh\n{body}\nsleep {linger}\nexit {exit_code}\n",
-            encoding="utf-8")
+        tail = f"exec sleep {linger}\n" if linger else f"exit {exit_code}\n"
+        script.write_text(f"#!/bin/sh\n{body}\n{tail}", encoding="utf-8")
         script.chmod(0o755)
         return script
 
