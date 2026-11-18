@@ -268,8 +268,8 @@ class HelpScreen(ModalScreen[None]):
                 "Accounts and usage come from local state.\n"
                 "No telemetry. Update checks are off by default.\n"
                 "Affected applications appear in account details.\n"
-                "Existing sessions keep their loaded login; restart them\n"
-                "after switching accounts.\n\n"
+                "After a switch, the result says anything it did not\n"
+                "reach, such as a program still on the old account.\n\n"
                 "Claude ends a login about 30 days after you sign in,\n"
                 "however much you use it. Sign in again (l) before then.",
                 markup=False,

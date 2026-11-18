@@ -88,12 +88,10 @@ class ResultScreen(ModalScreen[str | None]):
             for warning in self.result.warnings:
                 yield Static(warning, markup=False)
             if self.can_launch:
-                yield Static(
-                    "\nExisting sessions keep their loaded login.\n"
-                    "Restart them to use the switched account.\n\n"
-                    f"Enter Launch {self.provider} here",
-                    markup=False,
-                )
+                # Nothing about running sessions here: what a switch did not
+                # reach is in the warnings above, from the service (M1).
+                yield Static(f"\nEnter Launch {self.provider} here",
+                             markup=False)
             yield Static(
                 "Esc Return to accounts   q Quit",
                 markup=False,
