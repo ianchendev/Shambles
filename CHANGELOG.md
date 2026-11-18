@@ -20,6 +20,9 @@ Notable changes per release. Dates are the tag date.
   next request, so for current Claude Code that was wrong. Shambles now
   says nothing either way until the behaviour is confirmed for older
   versions and for Codex.
+  The terminal UI's switch result and help screen still said it in other
+  words ("Existing sessions keep their loaded login"); they no longer do,
+  and the switch result lists what the switch did not reach instead.
 - **Claude accounts show their plan, not an internal code.** Rows read
   "Default ai" and "Default raven", which are Claude's rate-limit tiers.
   They now read Pro, Max 5x, Max 20x, Team, Team Premium or Enterprise,

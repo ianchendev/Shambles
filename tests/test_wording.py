@@ -14,7 +14,7 @@ import shambles
 
 CLAIMS = re.compile(
     r"(?:running|sessions?)\b[^.\n]{0,30}\b(?:keeps?|retains?) "
-    r"(?:the |their |its )?(?:login|token|account)"
+    r"(?:the |their |its )?(?:\w+ )?(?:login|token|account)"
     r"|start a new (?:session|one) to (?:pick it up|use)",
     re.IGNORECASE)
 
