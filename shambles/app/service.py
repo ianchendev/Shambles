@@ -83,6 +83,20 @@ class ActionResult:
 
 
 @dataclass(frozen=True)
+class DeviceSignIn:
+    """A sign-in waiting for a code to be entered on another device.
+
+    ``expires_at_ms`` is when the vendor stops waiting, on the service's
+    clock: the vendor states its wait when it shows the code, and the clock
+    starts when Shambles reads it.
+    """
+
+    user_code: str
+    verification_url: str
+    expires_at_ms: int
+
+
+@dataclass(frozen=True)
 class MigrationNotice:
     """What a startup migration did, for a frontend to show once.
 
@@ -317,7 +331,16 @@ class ShamblesService:
         """
         return login.open_url(url)
 
-    def start_login(self, provider_id, account, on_line, on_done):
+    def offers_device_sign_in(self, provider_id):
+        """Whether this provider can sign in with a code from another device.
+
+        A frontend offers the choice only where this is true; asking for it
+        anywhere else is refused before anything moves.
+        """
+        return login.accepts_device_auth(self._provider(provider_id))
+
+    def start_login(self, provider_id, account, on_line, on_done, *,
+                    device=False, on_device_code=None):
         """Sign a saved profile in again through the vendor's own command.
 
         The profile is made live first, because the vendor writes to the one
@@ -326,11 +349,19 @@ class ShamblesService:
         account with the one they were using signed out:
         :func:`shambles.switcher.settle_login` decides, the same way the
         window does.
+
+        ``device`` runs the vendor's sign-in with a one-time code instead of
+        a browser on this machine (:meth:`offers_device_sign_in`). Once the
+        vendor shows the code, ``on_device_code`` receives a
+        :class:`DeviceSignIn`, once, on the vendor's thread. The lines that
+        carried it still reach ``on_line`` only as progress.
         """
         return self._run_login(provider_id, account, on_line, on_done,
-                               adding=False)
+                               adding=False, device=device,
+                               on_device_code=on_device_code)
 
-    def start_add(self, provider_id, name, on_line, on_done):
+    def start_add(self, provider_id, name, on_line, on_done, *, device=False,
+                  on_device_code=None):
         """Create a profile and sign it in, in one step.
 
         Adding has to switch to the new, empty profile before the vendor runs,
@@ -338,12 +369,15 @@ class ShamblesService:
         what ``add`` alone does -- leaves them signed out with nothing to show
         for it, so this runs the sign-in straight away and rolls back if it
         comes to nothing. The profile is kept either way, so a retry does not
-        need the name again.
+        need the name again. ``device`` and ``on_device_code`` are as for
+        :meth:`start_login`.
         """
         return self._run_login(provider_id, name, on_line, on_done,
-                               adding=True)
+                               adding=True, device=device,
+                               on_device_code=on_device_code)
 
-    def _run_login(self, provider_id, account, on_line, on_done, *, adding):
+    def _run_login(self, provider_id, account, on_line, on_done, *, adding,
+                   device=False, on_device_code=None):
         action = "add" if adding else "login"
         provider = self._provider(provider_id)
         process = None
@@ -351,6 +385,8 @@ class ShamblesService:
         cancelled = threading.Event()
         #: Filled in once the profile is live: who to put back, and on what.
         prepared = {}
+        #: The vendor's fixed failure message, by the spec's name for it.
+        heard = {}
 
         def deliver(result):
             try:
@@ -373,7 +409,9 @@ class ShamblesService:
                 outcome = settle(exit_code == 0 and not cancelled.is_set())
                 result = self._login_result(action, provider, outcome,
                                             exit_code=exit_code,
-                                            cancelled=cancelled.is_set())
+                                            cancelled=cancelled.is_set(),
+                                            device=device,
+                                            notice=heard.get("notice"))
             except ShamblesError as exc:
                 result = self._failure(action, exc)
             except Exception:
@@ -383,13 +421,37 @@ class ShamblesService:
                         "Check the credential store and retry."))
             deliver(result)
 
+        reader = login.DeviceCodeReader(provider) if (
+            device and login.accepts_device_auth(provider)) else None
+
         def progress(line):
+            if reader is not None:
+                found = reader.feed(line)
+                notice = login.known_message(provider, line)
+                if notice:
+                    heard["notice"] = notice
+                if found and on_device_code is not None:
+                    try:
+                        on_device_code(DeviceSignIn(
+                            user_code=found.user_code,
+                            verification_url=found.verification_url,
+                            expires_at_ms=(self.clock_ms()
+                                           + found.expires_in_s * 1000)))
+                    except Exception:
+                        pass
             try:
                 on_line(_safe_login_line(line))
             except Exception:
                 pass
 
         try:
+            # Before anything moves, like the missing CLI below.
+            if device and not login.accepts_device_auth(provider):
+                deliver(self._result(False, action, error=ActionError(
+                    "device_sign_in_unavailable",
+                    login.DEVICE_NOT_OFFERED.format(
+                        binary=login.binary(provider)))))
+                return LoginHandle(None, completed)
             env = login.environment(provider, home=self.paths.home,
                                     platform=self.platform)
             # Before anything moves. A missing CLI found only at launch used
@@ -413,8 +475,8 @@ class ShamblesService:
                     self.paths, provider, account, platform=self.platform)
                 prepared["account"] = account
                 email = state.profile_email(self.paths, provider, account)
-            process = login.LoginProcess(login.command(provider, email=email),
-                                         env=env)
+            process = login.LoginProcess(
+                login.command(provider, email=email, device=device), env=env)
             process.start(on_line=progress, on_exit=finish)
         except ShamblesError as exc:
             self._unwind(prepared, settle)
@@ -463,7 +525,7 @@ class ShamblesService:
         return None
 
     def _login_result(self, action, provider, outcome, *, exit_code,
-                      cancelled):
+                      cancelled, device=False, notice=None):
         """Put a settled login into words a person can act on."""
         name = outcome.profile
         if outcome.kind == switcher.RENEWED:
@@ -514,8 +576,34 @@ class ShamblesService:
         else:
             code, message = ("login_not_written",
                              "The vendor did not write a usable login.")
+        recovery = f"{where} Sign in to '{name}' to try again."
+        if device and exit_code and not cancelled:
+            message, recovery = self._device_failure(
+                provider, notice, name=name, where=where, message=message,
+                recovery=recovery)
         return self._result(False, action, error=ActionError(
-            code, message, f"{where} Sign in to '{name}' to try again."))
+            code, message, recovery))
+
+    @staticmethod
+    def _device_failure(provider, notice, *, name, where, message, recovery):
+        """Say why a sign-in with a code from another device failed.
+
+        The vendor's own words only when they are one of its fixed messages,
+        and then from the spec's copy, never from its output. Otherwise the
+        likeliest cause is named: the account has not switched device code
+        sign-in on. Codex's own pages say to do that first.
+        """
+        vendor = provider.display_name or login.binary(provider)
+        setting = login.device_setting(provider)
+        if notice == "expired":
+            return ("The code expired before it was entered.",
+                    f"{where} Sign in to '{name}' again for a new code.")
+        sentence = login.device_message(provider, notice) if notice else None
+        if notice == "chatgpt_disabled" and sentence:
+            return f'{vendor} said: "{sentence}"', recovery
+        if sentence:
+            message = f'{vendor} said: "{sentence}"'
+        return message, f"{where} {setting} Then sign in to '{name}' again."
 
     def plan_remove(self, provider_id, name):
         """Ask before deleting a login, and say what getting it back costs."""
