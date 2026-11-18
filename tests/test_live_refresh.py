@@ -210,3 +210,58 @@ def test_the_watch_signature_never_reads_the_keychain(paths):
     app.watch_signature()
 
     assert secret.reads == 0
+
+
+# -- a sign-in made outside Shambles, with the login in the Keychain ------------
+
+
+def test_a_sign_in_outside_shambles_is_not_mixed_with_the_remembered_keychain(
+        paths):
+    """~/.claude.json now names somebody else, while the remembered Keychain
+    answer is still the old token. A snapshot built from both is neither
+    state: a false "signed in as someone else", a Save offer, usage under
+    the wrong name. So none is built, and the Keychain is still not read."""
+    secret = SecretStore()
+    work_is_live(paths)
+    app = keychain_service(paths, secret)
+    app.refresh()
+    secret.reads = 0
+
+    make_claude_json(paths, email="stranger@example.test", extra={
+        "oauthAccount": account("stranger@example.test", uuid="uuid-s")})
+    result = app.refresh_files()
+
+    assert result.snapshot is None
+    assert result.error is not None
+    assert result.error.code == "changed_outside"
+    assert secret.reads == 0
+
+
+def test_after_a_full_read_the_new_identity_is_the_one_compared_against(paths):
+    secret = SecretStore()
+    work_is_live(paths)
+    app = keychain_service(paths, secret)
+    app.refresh()
+    make_claude_json(paths, email="stranger@example.test", extra={
+        "oauthAccount": account("stranger@example.test", uuid="uuid-s")})
+    assert app.refresh_files().snapshot is None
+
+    app.refresh()
+    secret.reads = 0
+
+    assert app.refresh_files().snapshot is not None
+    assert secret.reads == 0
+
+
+def test_with_the_login_in_a_file_a_sign_in_outside_is_simply_read(paths):
+    """Nothing is remembered on Linux: the login file is read fresh along
+    with ~/.claude.json, so the two cannot disagree."""
+    work_is_live(paths)
+    app = file_service(paths)
+    app.refresh()
+
+    make_claude_json(paths, email="stranger@example.test", extra={
+        "oauthAccount": account("stranger@example.test", uuid="uuid-s")})
+    result = app.refresh_files()
+
+    assert result.ok and result.snapshot is not None

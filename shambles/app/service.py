@@ -227,6 +227,29 @@ class ShamblesService:
         #: watch_signature() never walks the session tree; a log started
         #: since is found by the next read (the minute timer at the latest).
         self._session_logs = {}
+        #: provider id -> who the vendor's own files named at the last
+        #: explicit read, for each provider answered from memory above.
+        self._file_identity = {}
+
+    def _identity_in_files(self, provider):
+        """Who the vendor's files say is signed in, without its store.
+
+        Claude Code writes the account into ``~/.claude.json`` at sign-in,
+        so a sign-in made outside Shambles shows there even when the token
+        itself is in the Keychain. None for a provider with no such file.
+        """
+        from .. import configjson
+        try:
+            where = provider.companion_path(home=self.paths.home)
+        except Exception:
+            return None
+        if where is None:
+            return None
+        account = configjson.load(where).get("oauthAccount")
+        if not isinstance(account, dict):
+            return ()
+        return tuple(account.get(key) for key in
+                     ("accountUuid", "emailAddress", "organizationUuid"))
 
     def _find_session_logs(self):
         from ..providers import spec as specmod
@@ -256,6 +279,8 @@ class ShamblesService:
             return _with_store(provider, wrap)
 
         self._find_session_logs()
+        for provider in self.providers:
+            self._file_identity[provider.id] = self._identity_in_files(provider)
         return snapshot_mod.build(
             paths=self.paths,
             providers=[recorded(p) for p in self.providers],
@@ -283,9 +308,19 @@ class ShamblesService:
                                        platform=self.platform)
             except Exception:
                 store = None
-            if store is not None and not _reads_only_files(store) \
-                    and provider.id not in self._remembered:
-                return ActionResult(True, "refresh_files")
+            if store is not None and not _reads_only_files(store):
+                if provider.id not in self._remembered:
+                    return ActionResult(True, "refresh_files")
+                # Signed in outside Shambles: the files name somebody new
+                # while the remembered store answer is the old token. A
+                # snapshot from both would be neither state, so none.
+                if (self._identity_in_files(provider)
+                        != self._file_identity.get(provider.id)):
+                    return ActionResult(False, "refresh_files", error=ActionError(
+                        "changed_outside",
+                        f"{provider.display_name}'s login changed outside "
+                        "Shambles.",
+                        "Press Refresh to read it."))
             outcome = self._remembered.get(provider.id)
             wrapped.append(_with_store(
                 provider,

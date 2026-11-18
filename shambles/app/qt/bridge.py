@@ -55,6 +55,10 @@ FOCUS_GAP_MS = 2_000
 UPDATED_TIP = ("Shambles re-reads Claude Code's and Codex's files when you "
                "return to the window, when those files change, and every "
                "minute. Nothing goes online. Refresh reads everything now.")
+OUTSIDE_TEXT = "Changed outside Shambles · Refresh"
+OUTSIDE_TIP = ("{message} The window still shows what it read before. Press "
+               "Refresh to read the new login; Shambles reads the Keychain "
+               "or Credential Manager only when you ask.")
 
 
 class Bridge(QObject):
@@ -96,6 +100,10 @@ class Bridge(QObject):
         self._read_at = None
         self._signature = None
         self._updated = ""
+        self._tip = UPDATED_TIP
+        #: Set when an automatic read found a login changed outside
+        #: Shambles; cleared by the next full read.
+        self._outside = ""
         #: How a switch is run off the window's thread. A test passes one
         #: that runs it inline; the window uses a thread of its own.
         self._runner = runner or self._in_thread
@@ -215,9 +223,9 @@ class Bridge(QObject):
         """``Updated just now`` / ``Updated 5m ago``, for the header."""
         return self._updated
 
-    @Property(str, constant=True)
+    @Property(str, notify=updatedChanged)
     def updatedTip(self):
-        return UPDATED_TIP
+        return self._tip
 
     # -- state changes ----------------------------------------------------
 
@@ -282,6 +290,7 @@ class Bridge(QObject):
         self._rebuild()
 
     def _mark_read(self):
+        self._outside = ""
         self._read_at = self._clock_ms()
         try:
             self._signature = self._service.watch_signature()
@@ -290,15 +299,19 @@ class Bridge(QObject):
         self._say_updated()
 
     def _say_updated(self):
-        if self._read_at is None:
+        tip = UPDATED_TIP
+        if self._outside:
+            text = OUTSIDE_TEXT
+            tip = OUTSIDE_TIP.format(message=self._outside)
+        elif self._read_at is None:
             text = ""
         else:
             minutes = max(0, self._clock_ms() - self._read_at) // 60_000
             text = ("Updated just now" if minutes < 1
                     else f"Updated {minutes}m ago" if minutes < 60
                     else f"Updated {minutes // 60}h ago")
-        if text != self._updated:
-            self._updated = text
+        if (text, tip) != (self._updated, self._tip):
+            self._updated, self._tip = text, tip
             self.updatedChanged.emit()
 
     def _report(self, result, success=""):
@@ -359,6 +372,17 @@ class Bridge(QObject):
         except Exception:
             return
         fresh = getattr(result, "snapshot", None)
+        error = getattr(result, "error", None)
+        if error is not None and error.code == "changed_outside":
+            # What is on screen stays, and the header says to Refresh. The
+            # fingerprint is taken so the poll does not ask again every 2 s.
+            self._outside = error.message
+            try:
+                self._signature = self._service.watch_signature()
+            except Exception:
+                pass
+            self._say_updated()
+            return
         if fresh is None:
             # No answer without the Keychain. What is on screen stays.
             return

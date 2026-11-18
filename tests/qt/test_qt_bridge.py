@@ -974,3 +974,40 @@ def test_the_header_says_when_the_window_last_read(make):
 
     ui.reread()
     assert ui.updatedText == "Updated just now"
+
+
+def test_a_login_changed_outside_shambles_keeps_the_view_and_says_refresh(make):
+    from shambles.app.service import ActionError
+
+    ui, service, _ = make()
+    before = ui.view
+    service.fail["refresh_files"] = ActionResult(
+        False, "refresh_files", error=ActionError(
+            "changed_outside", "Claude Code's login changed outside Shambles."))
+
+    ui.reread()
+    ui.tick()
+
+    assert ui.view == before
+    assert ui.updatedText == "Changed outside Shambles · Refresh"
+    assert "Refresh" in ui.updatedTip
+
+    del service.fail["refresh_files"]
+    ui.refresh()
+    assert ui.updatedText == "Updated just now"
+
+
+def test_a_login_changed_outside_is_not_asked_about_again_every_poll(make):
+    from shambles.app.service import ActionError
+
+    ui, service, _ = make()
+    service.fail["refresh_files"] = ActionResult(
+        False, "refresh_files", error=ActionError("changed_outside", "Changed."))
+    service.signature = (("claude.json", 9, 9),)
+    service.calls.clear()
+
+    ui.poll()
+    ui.poll()
+    ui.poll()
+
+    assert len(service.named("refresh_files")) == 1
