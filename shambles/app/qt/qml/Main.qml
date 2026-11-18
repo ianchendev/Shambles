@@ -225,6 +225,8 @@ ApplicationWindow {
                 Btn {
                     glyph: "refresh"
                     hint: "Refresh. Re-reads local files only."
+                    // U2: what is re-read by itself, and that this reads all.
+                    tip: ui.updatedTip
                     enabled: !ui.busy
                     implicitHeight: 40
                     onClicked: ui.refresh()
@@ -268,7 +270,8 @@ ApplicationWindow {
             Field {
                 id: filterField
                 visible: !!ui.view.showFilter
-                anchors.left: wordmark.right
+                // After "Updated just now" when that is on show, never over it.
+                anchors.left: updated.visible ? updated.right : wordmark.right
                 anchors.leftMargin: 20
                 anchors.right: tools.left
                 anchors.rightMargin: 20
