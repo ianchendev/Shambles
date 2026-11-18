@@ -1,6 +1,7 @@
 // What an action just did, in words. Slides in under the header and pushes
 // the list down, so it never covers a row's buttons. Errors stay until
-// closed or replaced; anything else goes by itself.
+// closed or replaced, and so do warnings (tone "warn": something a switch
+// did not reach); anything else goes by itself.
 import QtQuick
 
 Item {
@@ -8,6 +9,9 @@ Item {
     objectName: "toast"
     readonly property var toast: ui.toast
     readonly property bool bad: toast.tone === "bad"
+    readonly property bool warn: toast.tone === "warn"
+    // Read before it goes: an error, or advice on what to do next.
+    readonly property bool stays: bad || warn
     property bool shown: false
     width: parent ? parent.width : 0
     height: shown ? box.height : 0
@@ -26,24 +30,27 @@ Item {
         width: parent.width
         height: Math.max(40, label.implicitHeight + 20)
         radius: 10
-        color: root.bad ? ui.theme.badSurface : ui.theme.infoSurface
-        border.color: root.bad ? ui.theme.badBorder : ui.theme.accentSoftBorder
+        color: root.bad ? ui.theme.badSurface
+             : root.warn ? ui.theme.warnSurface : ui.theme.infoSurface
+        border.color: root.bad ? ui.theme.badBorder
+                    : root.warn ? ui.theme.warnBorder : ui.theme.accentSoftBorder
         border.width: 1
 
         MouseArea {
-            // Anything but an error goes away when clicked.
+            // Anything that does not stay goes away when clicked.
             anchors.fill: parent
-            enabled: !root.bad
+            enabled: !root.stays
             onClicked: root.shown = false
         }
         Icon {
             id: mark
             x: 12
             y: 12
-            name: root.bad ? "alert" : "check"
+            name: root.stays ? "alert" : "check"
             size: 16
             weight: 2.2
-            color: root.bad ? ui.theme.badText : ui.theme.accentText
+            color: root.bad ? ui.theme.badText
+                 : root.warn ? ui.theme.warnText : ui.theme.accentText
         }
         Text {
             id: label
@@ -53,7 +60,8 @@ Item {
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             text: root.toast.text || ""
-            color: root.bad ? ui.theme.badText : ui.theme.infoText
+            color: root.bad ? ui.theme.badText
+                 : root.warn ? ui.theme.warnText : ui.theme.infoText
             font.pixelSize: 13
             lineHeight: 1.25
             wrapMode: Text.WordWrap
@@ -79,7 +87,7 @@ Item {
             }
             Btn {
                 objectName: "toastClose"
-                visible: root.bad
+                visible: root.stays
                 kind: "ghost"
                 glyph: "close"
                 hint: "Close this message"
@@ -97,7 +105,7 @@ Item {
         target: ui
         function onToastChanged() {
             root.shown = (ui.toast.text || "") !== ""
-            if (root.bad)
+            if (root.stays)
                 timer.stop()
             else
                 timer.restart()

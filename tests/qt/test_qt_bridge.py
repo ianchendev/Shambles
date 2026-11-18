@@ -1050,3 +1050,27 @@ def test_a_login_changed_outside_is_not_asked_about_again_every_poll(make):
     ui.poll()
 
     assert len(service.named("refresh_files")) == 1
+# -- M1: what a switch did not reach --------------------------------------------
+
+
+def test_a_switch_that_did_not_reach_something_says_so_and_stays(make):
+    ui, service, _ = make()
+    service.fail["switch"] = ActionResult(
+        True, "switch", "Switched to Personal.", snapshot=service.snap,
+        warnings=("Codex's background service (codex app-server) is still "
+                  "running with the account it started with.",))
+
+    ui.switchTo("claude", "Personal")
+
+    assert ui.toast["tone"] == "warn"
+    assert ui.toast["text"].startswith("Switched to Personal. Codex's "
+                                       "background service")
+    assert ui.toast["actionLabel"] == ""
+
+
+def test_a_plain_switch_is_still_a_message_that_goes_by_itself(make):
+    ui, _service, _ = make()
+
+    ui.switchTo("claude", "Personal")
+
+    assert ui.toast["tone"] == "ok"

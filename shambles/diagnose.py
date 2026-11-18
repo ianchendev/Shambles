@@ -98,12 +98,18 @@ def is_windows_binary_under_wsl(path: str | None) -> bool:
 
 
 def diagnose(paths, providers, *, platform=sys.platform, env=None,
-             which=None, wsl=None, credman=None) -> list[Finding]:
+             which=None, wsl=None, credman=None, running=None) -> list[Finding]:
     """Everything worth saying about this machine, most serious first.
 
-    ``credman`` stands in for the Windows Credential Manager in tests.
+    ``credman`` stands in for the Windows Credential Manager in tests, and
+    ``running`` for :func:`shambles.login.running_programs`.
     """
     env = os.environ if env is None else env
+    if running is None:
+        from . import login
+
+        def running(name):
+            return login.running_programs(name, platform=platform)
     which = shutil.which if which is None else which
     wsl = is_wsl(env) if wsl is None and platform.startswith("linux") else bool(wsl)
     found: list[Finding] = []
@@ -119,6 +125,7 @@ def diagnose(paths, providers, *, platform=sys.platform, env=None,
     for provider in providers:
         found.extend(_provider_findings(paths, provider, platform=platform,
                                         env=env, which=which, wsl=wsl))
+        found.extend(_reach_findings(paths, provider, running=running))
 
     if platform == "win32" and any(p.id == "claude" for p in providers):
         found.extend(_old_credman_findings(credman))
@@ -217,6 +224,42 @@ def _provider_findings(paths, provider, *, platform, env, which, wsl):
                 "from the desktop, for one -- uses the default directory "
                 "and a separate login, which a switch made here does not "
                 "touch."))
+    return found
+
+
+def _reach_findings(paths, provider, *, running):
+    """M1: what a switch would not reach, said before anyone switches.
+
+    The same checks :func:`shambles.reach.after_switch` makes after one.
+    """
+    from . import reach
+    found = []
+    folder = (provider.spec.get("config_dir") or {}).get("env")
+    names = [*reach.AUTH_VARIABLES.get(provider.id, ()),
+             *([folder] if folder else [])]
+    for variable, where in reach.shell_settings(paths.home, names):
+        what = ("keeps a separate login in that folder" if variable == folder
+                else "signs in with that instead of its stored login")
+        found.append(Finding(
+            WARNING, provider.id, "shell_sets_variable",
+            f"{where} sets {variable}, so {provider.display_name} in a "
+            f"terminal that runs it {what}. A switch made by Shambles does "
+            "not change that terminal."))
+    if provider.id == "codex":
+        try:
+            processes = running(provider.login_binary())
+        except Exception:
+            processes = None
+        if processes:
+            servers = sum(1 for argv in processes if "app-server" in argv[1:])
+            count = len(processes)
+            found.append(Finding(
+                WARNING, provider.id, "codex_running",
+                f"{count} Codex process" + ("es are" if count > 1 else " is")
+                + " running" + (", including its background service (codex "
+                                "app-server)" if servers else "")
+                + ". Each stays on the account it started with until it is "
+                "restarted, so restart them after a switch."))
     return found
 
 
