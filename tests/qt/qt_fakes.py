@@ -105,6 +105,8 @@ class FakeService:
         self.theme = "system"
         #: What window_place() returns: None, or a stored place.
         self.place = None
+        #: What hidden_deadlines() returns.
+        self.hidden = {}
         self.migrations = ()
         self.opens = True
         #: action name -> ActionResult to return instead of success.
@@ -123,6 +125,13 @@ class FakeService:
 
     def window_place(self):
         return self.place
+
+    def hidden_deadlines(self):
+        return dict(self.hidden)
+
+    def hide_deadline(self, key, today):
+        self.hidden[key] = today
+        return self._done("hide_deadline", key, today)
 
     def run_migrations(self):
         return self.migrations

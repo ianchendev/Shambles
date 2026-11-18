@@ -135,15 +135,27 @@ def test_a_refused_switch_says_why_and_confirms_nothing(make):
 
 
 def test_a_number_key_switches_and_is_ignored_while_a_sheet_is_open(make):
+    """Work is live and first, so Personal, second, is Ctrl+2."""
     ui, service, _ = make()
 
     ui.openAdd("")
-    ui.pressKey("1")
+    ui.pressKey("2")
     assert service.named("switch") == []
 
     ui.dismiss()
     ui.pressKey("1")
+    assert service.named("switch") == [], "the live account's key does nothing"
+    ui.pressKey("2")
     assert service.named("switch") == [("switch", "claude", "Personal")]
+
+
+def test_a_number_key_on_a_signed_out_account_starts_its_sign_in(make):
+    ui, service, _ = make()
+
+    ui.pressKey("3")
+
+    assert service.named("start_login") == [("start_login", "claude", "Old")]
+    assert ui.sheet["kind"] == "login"
 
 
 # -- signing in: every ending puts the user somewhere they understand -----------
@@ -788,3 +800,64 @@ def test_a_tick_that_changes_nothing_does_not_redraw(make):
     now[0] += 60_000          # now "in 1h 59m"
     ui.tick()
     assert len(redraws) == 1
+
+
+# -- D4: a deadline line closed until tomorrow --------------------------------------
+
+DAY_MS = 86_400_000
+
+
+def due_soon():
+    from shambles.app.snapshot import Account, Notice
+
+    notice = Notice("sign_in_soon", "'Work' stops working soon.",
+                    "Sign in to 'Work' again before then.", account="Work")
+    work = Account(name="Work", email="work@example.test", active=True,
+                   state="closing", status_label="soon", sign_in_due=True,
+                   expires_at_ms=NOON + DAY_MS)
+    return Snapshot(1, [group(work, account("Other"), notices=[notice])])
+
+
+#: 2026-11-18, midday local time, so a day either side is another date.
+NOON = int(__import__("datetime").datetime(2026, 11, 18, 12).timestamp()
+           * 1000)
+
+
+def test_closing_a_deadline_line_hides_it_for_the_rest_of_the_day(make):
+    clock = [NOON]
+    ui, service, _ = make(FakeService(due_soon()), clock_ms=lambda: clock[0])
+    assert ui.view["groups"][0]["deadline"]["account"] == "Work"
+
+    ui.hideDeadline("claude/Work")
+
+    assert ui.view["groups"][0]["deadline"] is None
+    assert service.named("hide_deadline") == [
+        ("hide_deadline", "claude/Work", "2026-11-18")]
+    clock[0] = NOON + DAY_MS // 2 + 3_600_000
+    ui.tick()
+    assert ui.view["groups"][0]["deadline"]["account"] == "Work", \
+        "back the next morning"
+
+
+def test_a_line_closed_earlier_today_stays_closed_in_a_new_window(make):
+    service = FakeService(due_soon())
+    service.hidden = {"claude/Work": "2026-11-18"}
+
+    ui, _, _ = make(service, clock_ms=lambda: NOON)
+
+    assert ui.view["groups"][0]["deadline"] is None
+
+
+# -- D8: Ctrl held shows every number ----------------------------------------------
+
+
+def test_holding_ctrl_is_said_once_per_change(make):
+    ui, _, _ = make()
+    seen = []
+    ui.ctrlHeldChanged.connect(lambda: seen.append(ui.ctrlHeld))
+
+    ui.set_ctrl_held(True)
+    ui.set_ctrl_held(True)
+    ui.set_ctrl_held(False)
+
+    assert seen == [True, False]

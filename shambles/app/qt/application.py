@@ -10,7 +10,7 @@ import signal
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow  # noqa: F401  (types the root window)
@@ -160,6 +160,32 @@ def load_fonts() -> None:
         QFontDatabase.addApplicationFont(str(path))
 
 
+class CtrlWatch(QObject):
+    """Tells the bridge while Ctrl is held, so every account shows its
+    number (D8). Qt reports macOS's Command key as Ctrl, which is the key
+    the Ctrl+N shortcuts answer to there.
+
+    Watches the window only, and lets every event through.
+    """
+
+    def __init__(self, bridge, parent=None):
+        super().__init__(parent)
+        self._bridge = bridge
+
+    def eventFilter(self, _watched, event):
+        kind = event.type()
+        if kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            if event.key() == Qt.Key.Key_Control:
+                self._bridge.set_ctrl_held(kind == QEvent.Type.KeyPress)
+            elif not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self._bridge.set_ctrl_held(False)
+        elif kind in (QEvent.Type.FocusOut, QEvent.Type.WindowDeactivate,
+                      QEvent.Type.Hide):
+            # The release happens in another window, so it never arrives.
+            self._bridge.set_ctrl_held(False)
+        return False
+
+
 def build(service, *, motion=True, app=None):
     """Make the engine, bridge and window. Returns ``(engine, bridge)``.
 
@@ -186,6 +212,9 @@ def build(service, *, motion=True, app=None):
     engine.rootContext().setContextProperty("ui", bridge)
     bridge.start()
     engine.load(QUrl.fromLocalFile(str(QML)))
+    for window in engine.rootObjects():
+        watch = CtrlWatch(bridge, parent=window)
+        window.installEventFilter(watch)
     return engine, bridge
 
 

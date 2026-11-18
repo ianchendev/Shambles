@@ -166,3 +166,30 @@ def test_storing_a_place_that_is_not_one_raises_before_writing(paths, bad):
         settings.set_window_place(paths, *bad)
 
     assert not paths.settings_path.exists()
+
+
+# -- deadline lines closed for the day ------------------------------------------
+
+
+def test_a_closed_deadline_line_is_kept_with_its_day(paths):
+    assert settings.hidden_deadlines(paths) == {}
+
+    settings.hide_deadline(paths, "claude/Admin", "2026-11-18")
+
+    assert settings.hidden_deadlines(paths) == {"claude/Admin": "2026-11-18"}
+
+
+def test_lines_closed_on_other_days_are_dropped_when_another_is_closed(paths):
+    settings.hide_deadline(paths, "claude/Admin", "2026-11-17")
+    settings.hide_deadline(paths, "claude/Work", "2026-11-18")
+
+    assert settings.hidden_deadlines(paths) == {"claude/Work": "2026-11-18"}
+
+
+def test_hidden_deadlines_that_are_not_dates_by_name_are_ignored(paths):
+    settings.save_settings(paths, {settings.WINDOW_HIDDEN_DEADLINES: {
+        "claude/Admin": 20261118, "claude/Work": "2026-11-18", "x": None}})
+
+    assert settings.hidden_deadlines(paths) == {"claude/Work": "2026-11-18"}
+    settings.save_settings(paths, {settings.WINDOW_HIDDEN_DEADLINES: "all"})
+    assert settings.hidden_deadlines(paths) == {}

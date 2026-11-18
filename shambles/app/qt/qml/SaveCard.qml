@@ -56,8 +56,13 @@ Rectangle {
                 id: nameField
                 label: "Name for this account"
                 width: parent.width - saveButton.width - 10
-                text: root.save.suggested || ""
                 onAccepted: saveButton.clicked()
+                // Filled in when the suggestion changes, not every time the
+                // window is worked out again, which would overwrite a name
+                // being typed.
+                readonly property string suggested: root.save.suggested || ""
+                onSuggestedChanged: text = suggested
+                Component.onCompleted: text = suggested
             }
             Btn {
                 id: saveButton

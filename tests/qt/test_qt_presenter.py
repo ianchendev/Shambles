@@ -13,6 +13,9 @@ from shambles.app.snapshot import (Account, Group, Notice, Snapshot, Surface,
                                    Window, moment_label)
 
 HOUR = 3_600_000
+DAY = 24 * HOUR
+#: A fixed "now" for anything about deadlines: 2026-11-18 12:00 UTC.
+NOW = 1_795_521_600_000
 
 
 def account(name, *, active=False, state="live", needs_login=False,
@@ -71,7 +74,8 @@ def test_a_lapsed_account_signs_in_and_never_switches():
     other = only(view(group(account("Work", active=True), lapsed)))["others"][0]
 
     assert (other["action"], other["actionLabel"]) == ("signin", "Sign in")
-    assert (other["chip"], other["chipTone"]) == ("Needs sign-in", "bad")
+    assert (other["badge"]["text"], other["badge"]["tone"]) == ("Signed out",
+                                                                "bad")
 
 
 def test_a_lapsed_live_account_still_offers_sign_in():
@@ -80,7 +84,8 @@ def test_a_lapsed_live_account_still_offers_sign_in():
 
     live = only(view(group(lapsed)))["live"]
 
-    assert live["action"] == "signin" and live["chip"] == "Needs sign-in"
+    assert live["action"] == "signin"
+    assert live["badge"]["text"] == "Signed out"
 
 
 def test_sign_in_without_the_vendor_cli_is_disabled_with_the_reason():
@@ -127,28 +132,47 @@ def test_an_account_closing_soon_is_nudged_but_still_switches():
     soon = account("Client", state="closing", status_label="soon")
     other = only(view(group(account("Work", active=True), soon)))["others"][0]
 
-    assert (other["chip"], other["chipTone"]) == ("Expires soon", "warn")
+    assert other["badge"]["kind"] == "soon" and other["badge"]["tone"] == "warn"
+    assert other["badge"]["action"] == ""
     assert other["action"] == "switch"
 
 
 # -- number keys and the filter -------------------------------------------------
 
 
-def test_number_keys_go_to_switchable_accounts_in_order_across_providers():
+def test_number_keys_follow_each_accounts_place_and_never_renumber():
+    """D8: Ctrl+N is the Nth account down the window, live or not, so the
+    numbers do not shift when a switch changes who is live or a row
+    lapses. Ctrl+N on the live account does nothing."""
     lapsed = account("Lapsed", state="closed", needs_login=True)
     model = view(group(account("Work", active=True), account("Alpha"), lapsed,
                        account("Beta")),
                  group(account("Home", active=True), account("Team"),
                        provider="codex", title="Codex"))
 
+    numbers = {a["name"]: a["key"] for g in model["groups"]
+               for a in [g["live"], *g["others"]]}
+    assert numbers == {"Work": "1", "Alpha": "2", "Lapsed": "3", "Beta": "4",
+                       "Home": "5", "Team": "6"}
     keys = {k: v["name"] for k, v in model["keys"].items()}
-    assert keys == {"1": "Alpha", "2": "Beta", "3": "Team"}
-    by_name = {a["name"]: a["key"] for g in model["groups"]
-               for a in g["others"]}
-    assert by_name["Lapsed"] == ""
+    assert keys == {"2": "Alpha", "3": "Lapsed", "4": "Beta", "6": "Team"}
+
+    after = view(group(account("Work"), account("Alpha", active=True), lapsed,
+                       account("Beta")))
+    assert {a["name"]: a["key"] for a in [only(after)["live"],
+                                          *only(after)["others"]]} == {
+        "Work": "1", "Alpha": "2", "Lapsed": "3", "Beta": "4"}
 
 
-def test_the_filter_narrows_by_name_or_address_and_renumbers():
+def test_only_nine_accounts_get_a_number():
+    model = view(group(*[account(f"A{i}", active=(i == 0))
+                         for i in range(11)]))
+
+    assert [a["key"] for a in only(model)["others"]][-2:] == ["", ""]
+    assert sorted(model["keys"]) == list("23456789")
+
+
+def test_the_filter_narrows_by_name_or_address_and_keeps_the_numbers():
     model = view(group(account("Work", active=True),
                        account("Client Acme"),
                        account("Personal", email="me@example.test")),
@@ -157,8 +181,16 @@ def test_the_filter_narrows_by_name_or_address_and_renumbers():
     shown = only(model)
     assert [a["name"] for a in shown["others"]] == ["Client Acme"]
     assert shown["live"] is None
-    assert model["keys"]["1"]["name"] == "Client Acme"
+    assert shown["others"][0]["key"] == "2"
+    assert model["keys"]["2"]["name"] == "Client Acme"
     assert model["filtering"] and model["matches"] == 1
+
+
+def test_a_switch_button_names_where_it_goes():
+    other = only(view(group(account("Work", active=True),
+                            account("Dev"))))["others"][0]
+
+    assert other["actionTip"] == "Switch to Dev"
 
 
 def test_the_filter_box_only_appears_once_there_are_enough_accounts():
@@ -215,22 +247,34 @@ def test_a_config_override_starts_collapsed():
     assert shown["collapsed"] is True and shown["tone"] == "info"
 
 
-def test_a_missing_cli_is_said_beside_accounts_that_still_switch():
+def test_a_missing_cli_is_one_line_in_the_header_beside_accounts_that_switch():
+    """D6: no notice box; the header says it, with the rest behind an i."""
     shown = only(view(group(account("Work", active=True), account("Personal"),
                             can_sign_in=False)))
 
-    assert [n["code"] for n in shown["notices"]] == ["cli_missing"]
+    assert shown["notices"] == []
+    assert shown["missing"] is True
+    assert "claude command" in shown["missingTip"]
+    assert "still works" in shown["missingTip"]
     assert shown["others"][0]["actionEnabled"] is True
 
 
-def test_an_empty_provider_invites_an_account_or_says_the_cli_is_missing():
+def test_an_empty_provider_invites_an_account_or_takes_one_line():
     ready = only(view(group()))
     missing = only(view(group(can_sign_in=False)))
 
-    assert ready["empty"]["kind"] == "add"
+    assert ready["empty"]["kind"] == "add" and ready["missing"] is False
     assert ready["summary"] == "Not signed in"
-    assert missing["empty"]["kind"] == "cli"
-    assert missing["summary"] == "Not installed"
+    assert missing["empty"] is None, "no card for a tool that is not there"
+    assert missing["missing"] is True and missing["summary"] == "Not installed"
+    assert "fills in by itself" in missing["missingTip"]
+
+
+def test_where_switching_reaches_is_said_once_behind_the_heading():
+    shown = only(view(group(account("Work", active=True))))
+
+    assert shown["surfacesTip"] == ("Switching changes the Claude Code account "
+                                    "in the terminal and in VS Code.")
 
 
 # -- usage and the saved-login line ---------------------------------------------
@@ -625,23 +669,41 @@ def due_account(name, **kw):
                    sign_in_due=True, **kw)
 
 
-def test_the_live_account_due_a_sign_in_offers_one():
-    """It still works, and only a new sign-in keeps it past the date."""
-    live = only(view(group(due_account("Work", active=True))))["live"]
+def test_the_live_account_due_a_sign_in_offers_one_on_its_badge():
+    """It still works, and only a new sign-in keeps it past the date. The
+    live card has no button of its own for it; the badge is the button."""
+    live = only(view(group(due_account("Work", active=True,
+                                       expires_at_ms=NOW + 2 * DAY + HOUR)),
+                     now_ms=NOW))["live"]
 
-    assert (live["action"], live["actionLabel"]) == ("signin", "Sign in")
-    assert live["actionEnabled"] is True
+    assert live["action"] == ""
+    assert live["badge"]["action"] == "signin"
     assert live["signIn"] is True
 
 
-def test_a_parked_account_due_a_sign_in_offers_it_beside_switch():
-    """As the Tk window does: it still works, so Switch stays, and Sign in
-    is offered next to it before the date rather than after."""
+def test_a_parked_account_due_a_sign_in_keeps_one_button_and_a_badge():
+    """D2, fixing F3: Switch stays the row's one button, and the sign-in
+    moves onto the badge, so nothing pushes the row's menu off the card."""
     other = only(view(group(account("Work", active=True),
-                            due_account("Spare"))))["others"][0]
+                            due_account("Spare",
+                                        expires_at_ms=NOW + 2 * DAY + HOUR)),
+                      now_ms=NOW))["others"][0]
 
     assert other["action"] == "switch" and other["actionEnabled"] is True
-    assert other["signIn"] is True and other["signInExtra"] is True
+    assert other["badge"]["kind"] == "due"
+    assert (other["badge"]["icon"], other["badge"]["text"]) == ("clock", "2d")
+    assert other["badge"]["action"] == "signin"
+    assert other["badge"]["tip"].startswith("Sign in by ")
+    assert other["signIn"] is True and "signInExtra" not in other
+
+
+def test_a_due_badge_under_a_day_counts_hours():
+    other = only(view(group(account("Work", active=True),
+                            due_account("Spare",
+                                        expires_at_ms=NOW + 5 * HOUR + 1)),
+                      now_ms=NOW))["others"][0]
+
+    assert other["badge"]["text"] == "5h"
 
 
 def test_a_lapsed_account_still_signs_in_and_never_switches():
@@ -650,7 +712,9 @@ def test_a_lapsed_account_still_signs_in_and_never_switches():
     other = only(view(group(account("Work", active=True), lapsed)))["others"][0]
 
     assert other["action"] == "signin"
-    assert other["signIn"] is True and other["signInExtra"] is False
+    assert other["badge"]["kind"] == "signedout"
+    assert other["badge"]["action"] == ""
+    assert other["signIn"] is True
 
 
 def test_a_due_sign_in_without_the_cli_is_not_offered_as_working():
@@ -659,18 +723,107 @@ def test_a_due_sign_in_without_the_cli_is_not_offered_as_working():
 
     assert other["action"] == "switch" and other["actionEnabled"] is True
     assert other["signIn"] is False
+    assert other["badge"]["action"] == ""
 
 
-def test_the_sign_in_soon_notice_has_a_sign_in_button():
-    notice = Notice("sign_in_soon",
-                    "'Work' stops working on Tue 17 Nov. Claude ends every "
-                    "login a fixed time after it was signed in.",
-                    "Sign in to 'Work' again before then.", account="Work")
+SOON = Notice("sign_in_soon",
+              "'Work' stops working on Tue 17 Nov. Claude ends every "
+              "login a fixed time after it was signed in.",
+              "Sign in to 'Work' again before then.", account="Work")
 
-    shown = only(view(group(due_account("Work", active=True),
-                            notices=[notice])))["notices"][0]
 
-    assert shown["action"] == "signin"
-    assert shown["actionLabel"] == "Sign in to Work"
-    assert shown["account"] == "Work"
-    assert shown["tone"] == "warn"
+def test_a_deadline_in_the_last_three_days_is_one_line_with_sign_in():
+    """D4: who and when, a Sign in button, the explanation behind an i."""
+    shown = only(view(group(due_account("Work", active=True,
+                                        expires_at_ms=NOW + 2 * DAY),
+                            notices=[SOON]), now_ms=NOW))
+
+    strip = shown["deadline"]
+    assert shown["notices"] == []
+    assert strip["account"] == "Work"
+    assert strip["text"].startswith("Work stops working ")
+    assert len(strip["text"].split()) <= 8
+    assert strip["tip"] == SOON.message + " " + SOON.remedy
+    assert strip["canSignIn"] is True
+
+
+def test_a_deadline_further_off_is_left_to_the_rows_badge():
+    shown = only(view(group(due_account("Work", active=True,
+                                        expires_at_ms=NOW + 4 * DAY),
+                            notices=[SOON]), now_ms=NOW))
+
+    assert shown["deadline"] is None and shown["notices"] == []
+
+
+def test_a_deadline_hidden_today_stays_hidden():
+    shown = only(view(group(due_account("Work", active=True,
+                                        expires_at_ms=NOW + DAY),
+                            notices=[SOON]),
+                      now_ms=NOW, hidden_deadlines={"claude/Work"}))
+
+    assert shown["deadline"] is None
+
+
+# -- D1: one line of identity, and reasons said once --------------------------------
+
+
+def test_an_account_named_after_its_address_does_not_say_it_twice():
+    model = view(group(account("Me@Example.test", email="me@example.test",
+                               active=True),
+                       account("Work", email="work@example.test")))
+
+    assert only(model)["live"]["showAddress"] is False
+    assert only(model)["others"][0]["showAddress"] is True
+
+
+def test_a_reason_every_row_shares_is_said_once_for_the_group():
+    shown = only(view(group(account("Work", active=True), account("Personal"),
+                            account("Spare"), can_save=True,
+                            live_email="new@example.test",
+                            notices=[Notice("unsaved_login", "Not saved.",
+                                            "Save it.")])))
+
+    assert shown["hold"].startswith("Save the signed-in login")
+    assert all(not a["actionEnabled"] for a in shown["others"])
+
+
+# -- D3: the account with the most room -----------------------------------------------
+
+
+def limits(session, week):
+    return [Window("session", session, severity="ok"),
+            Window("week", week, severity="ok")]
+
+
+def test_most_room_is_offered_once_the_live_account_passes_80_percent():
+    model = view(group(account("Work", active=True, usage=limits(85, 40)),
+                       account("Dev", usage=limits(10, 70)),
+                       account("Spare", usage=limits(20, 30)),
+                       account("Bare")))
+
+    badges = {a["name"]: a["badge"]["kind"] for a in only(model)["others"]}
+    assert badges == {"Dev": "", "Spare": "room", "Bare": ""}
+
+
+def test_most_room_is_not_offered_while_the_live_account_has_room():
+    model = view(group(account("Work", active=True, usage=limits(79, 60)),
+                       account("Spare", usage=limits(0, 0))))
+
+    assert only(model)["others"][0]["badge"]["kind"] == ""
+
+
+def test_most_room_never_goes_to_an_account_that_cannot_be_switched_to():
+    lapsed = account("Old", state="closed", needs_login=True,
+                     usage=limits(0, 0))
+    model = view(group(account("Work", active=True, usage=limits(95, 95)),
+                       lapsed, account("Dev", usage=limits(50, 50))))
+
+    badges = {a["name"]: a["badge"]["kind"] for a in only(model)["others"]}
+    assert badges == {"Old": "signedout", "Dev": "room"}
+
+
+def test_most_room_needs_more_room_than_the_live_account_has():
+    model = view(group(account("Work", active=True, usage=limits(85, 10)),
+                       account("Dev", usage=limits(90, 90))))
+
+    assert only(model)["others"][0]["badge"]["kind"] == ""

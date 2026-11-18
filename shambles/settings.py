@@ -140,3 +140,31 @@ def set_window_place(paths, x, y, width, height, maximized=False) -> bool:
     data[WINDOW_PLACE] = place
     save_settings(paths, data)
     return True
+
+
+#: D4: the deadline lines the user closed, each with the local date they
+#: did, as ``{"claude/Admin": "2026-11-18"}``. A line stays hidden only on
+#: the date it was closed: "until tomorrow".
+WINDOW_HIDDEN_DEADLINES = "window.hidden_deadlines"
+
+
+def hidden_deadlines(paths) -> dict:
+    """``{"provider/account": "YYYY-MM-DD"}``, ignoring anything else."""
+    value = load_settings(paths).get(WINDOW_HIDDEN_DEADLINES)
+    if not isinstance(value, dict):
+        return {}
+    return {key: day for key, day in value.items()
+            if isinstance(key, str) and isinstance(day, str)}
+
+
+def hide_deadline(paths, key: str, today: str) -> None:
+    """Hide ``key``'s deadline line for ``today``. Lines closed on other
+    days are dropped while at it, so the setting never grows."""
+    if not key or not today:
+        raise ValueError("A deadline is hidden by account, for a day.")
+    kept = {k: day for k, day in hidden_deadlines(paths).items()
+            if day == today}
+    kept[key] = today
+    data = load_settings(paths)
+    data[WINDOW_HIDDEN_DEADLINES] = kept
+    save_settings(paths, data)

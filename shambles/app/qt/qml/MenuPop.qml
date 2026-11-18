@@ -7,6 +7,19 @@ Popup {
     // [{label, action, danger, checked}]
     property var items: []
     signal picked(string action)
+    // What is drawn. Replaced only when the items really differ: the card
+    // that owns the menu hands it a new array every time the window is
+    // worked out again, and a new array would make every entry again under
+    // the pointer and the keyboard focus.
+    property var shown: []
+    property string drawn: ""
+    onItemsChanged: {
+        var text = JSON.stringify(items)
+        if (text !== drawn) {
+            drawn = text
+            shown = items
+        }
+    }
     padding: 6
     modal: false
     focus: true
@@ -22,8 +35,9 @@ Popup {
     contentItem: Column {
         spacing: 2
         Repeater {
-            model: root.items
+            model: root.shown
             Btn {
+                objectName: "menu " + modelData.action
                 kind: "ghost"
                 width: Math.max(180, implicitWidth)
                 implicitHeight: 36

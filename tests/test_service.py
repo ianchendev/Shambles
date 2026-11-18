@@ -1221,6 +1221,13 @@ def test_the_window_place_is_remembered_for_the_next_window(paths):
         "x": 40, "y": 50, "width": 640, "height": 480, "maximized": False}
 
 
+def test_a_closed_deadline_line_is_remembered_for_the_day(paths):
+    assert service(paths).hide_deadline("claude/Admin", "2026-11-18").ok
+
+    assert service(paths).hidden_deadlines() == {
+        "claude/Admin": "2026-11-18"}
+
+
 def test_a_window_place_that_is_not_one_is_refused_and_nothing_is_written(
         paths):
     result = service(paths).set_window_place(40, 50, 0, 480)

@@ -1,5 +1,9 @@
 // One provider: its heading, anything that needs saying, its live account,
 // then everyone else.
+//
+// Rows, notices and the live card are each keyed (KeyedList), so working
+// the window out again keeps every card that is still there: an open menu
+// stays open, focus stays where it was, a tooltip stays up.
 import QtQuick
 
 Column {
@@ -7,34 +11,79 @@ Column {
     property var group: ({})
     spacing: 10
     readonly property var others: group.others || []
+    readonly property var notices: group.notices || []
+    readonly property var byId: {
+        var found = {}
+        for (var i = 0; i < others.length; i++)
+            found[others[i].id] = others[i]
+        return found
+    }
+    readonly property var noticeByKey: {
+        var found = {}
+        for (var i = 0; i < notices.length; i++)
+            found[notices[i].code + "/" + notices[i].account] = notices[i]
+        return found
+    }
+    // From ``group`` itself: when it changes, the properties worked out
+    // from it may not have caught up yet.
+    function syncAll() {
+        rowKeys.sync((group.others || []).map(function (a) { return a.id }))
+        noticeKeys.sync((group.notices || []).map(function (n) {
+            return n.code + "/" + n.account
+        }))
+        liveKeys.sync(group.live ? [group.live.id] : [])
+    }
+    onGroupChanged: syncAll()
+    Component.onCompleted: syncAll()
+
+    KeyedList { id: rowKeys }
+    KeyedList { id: noticeKeys }
+    KeyedList { id: liveKeys }
 
     Item {
         width: parent.width
-        height: 20
-        Text {
-            id: title
-            text: root.group.title || ""
-            color: ui.theme.text
-            font.pixelSize: 13
-            font.weight: Font.DemiBold
-            anchors.baseline: parent.bottom
-            anchors.baselineOffset: -5
+        height: 22
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6
+            Text {
+                text: root.group.title || ""
+                color: ui.theme.text
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Info {
+                // Where a switch here reaches: said once, on hover (D1).
+                visible: tip !== ""
+                tip: root.group.surfacesTip || ""
+                anchors.verticalCenter: parent.verticalCenter
+            }
         }
-        Text {
-            anchors.left: title.right
-            anchors.leftMargin: 10
-            anchors.baseline: title.baseline
-            text: root.group.surfaces || ""
-            color: ui.theme.muted
-            font.pixelSize: 12
-        }
-        Text {
+        Row {
             anchors.right: parent.right
-            anchors.baseline: title.baseline
-            text: root.group.summary || ""
-            color: ui.theme.muted
-            font.pixelSize: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6
+            Text {
+                text: root.group.summary || ""
+                color: ui.theme.muted
+                font.pixelSize: 12
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Info {
+                // D6: a tool that is not installed is this line, not a card.
+                objectName: "missingInfo"
+                visible: !!root.group.missing
+                tip: root.group.missingTip || ""
+                anchors.verticalCenter: parent.verticalCenter
+            }
         }
+    }
+
+    DeadlineStrip {
+        width: parent.width
+        visible: !!root.group.deadline
+        deadline: root.group.deadline || ({})
     }
 
     Loader {
@@ -52,18 +101,30 @@ Column {
     }
 
     Repeater {
-        model: root.group.notices || []
+        model: noticeKeys
         NoticeBox {
             width: root.width
-            notice: modelData
+            notice: root.noticeByKey[model.key] || ({})
         }
     }
 
-    Loader {
+    Repeater {
+        model: liveKeys
+        AccountCard {
+            width: root.width
+            account: root.group.live || ({})
+        }
+    }
+
+    Text {
+        // A reason every row below shares, said once (D1).
+        objectName: "hold"
+        visible: text !== "" && root.others.length > 0
         width: parent.width
-        active: !!root.group.live
-        visible: active
-        sourceComponent: Component { AccountCard { account: root.group.live || ({}) } }
+        text: root.group.hold || ""
+        color: ui.theme.muted
+        font.pixelSize: 12
+        wrapMode: Text.WordWrap
     }
 
     Rectangle {
@@ -78,19 +139,19 @@ Column {
             id: rows
             width: parent.width
             Repeater {
-                model: root.others
+                model: rowKeys
                 Column {
                     width: rows.width
                     Rectangle {
                         visible: index > 0
-                        x: 18
-                        width: parent.width - 36
+                        x: 16
+                        width: parent.width - 32
                         height: 1
                         color: ui.theme.hairline
                     }
                     AccountCard {
                         width: parent.width
-                        account: modelData
+                        account: root.byId[model.key] || ({})
                         embedded: true
                     }
                 }
@@ -104,9 +165,7 @@ Column {
         visible: active
         sourceComponent: Component {
             Item {
-                id: slot
-                readonly property var empty: root.group.empty || ({})
-                implicitHeight: empty.kind === "add" ? 76 : note.implicitHeight + 32
+                implicitHeight: 64
                 Rectangle {
                     // Dashes are not a Rectangle border style, so the slot is
                     // drawn solid and light: a place something goes.
@@ -117,36 +176,12 @@ Column {
                     border.width: 1
                 }
                 Btn {
-                    visible: slot.empty.kind === "add"
                     anchors.fill: parent
                     kind: "ghost"
                     glyph: "plus"
-                    text: slot.empty.text || ""
+                    text: (root.group.empty || {}).text || ""
                     font.pixelSize: 15
                     onClicked: ui.openAdd(root.group.provider)
-                }
-                Column {
-                    id: note
-                    visible: slot.empty.kind === "cli"
-                    x: 18
-                    y: 16
-                    width: parent.width - 36
-                    spacing: 4
-                    Text {
-                        width: parent.width
-                        text: slot.empty.text || ""
-                        color: ui.theme.text
-                        font.weight: Font.DemiBold
-                        wrapMode: Text.WordWrap
-                    }
-                    Text {
-                        width: parent.width
-                        text: slot.empty.detail || ""
-                        color: ui.theme.muted
-                        font.pixelSize: 13
-                        lineHeight: 1.25
-                        wrapMode: Text.WordWrap
-                    }
                 }
             }
         }

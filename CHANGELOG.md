@@ -41,9 +41,41 @@ Notable changes per release. Dates are the tag date.
   list down instead of sitting over its last row. An error stays until you
   close it with its ×. The wait for Claude Code is one line, "Waiting for
   Claude Code to finish renewing", with the reason behind its ⓘ.
+- **Calmer rows: one line, one button, one badge.** Each account reads
+  across the same way: name and plan, its address once, its usage, one
+  badge, one button, and the ⋯ menu, always last. The ▾ button is gone;
+  click a row, or choose Details in its menu, to open it. Badges replace
+  the second button and the sentences: a clock and the days left for a
+  login due a sign-in (click it to sign in), "Signed out", and "Most
+  room". Dates, ages, reasons and what a switch reaches moved into
+  tooltips and ⓘ icons; a reason every row shares is said once above them.
+- **Small usage bars on every account.** Parked accounts show their
+  5-hour and weekly use as two thin bars, with the details on hover. Once
+  the account in use passes 80% of either limit, the parked account with
+  the most room left is marked "Most room". It is a hint; Shambles never
+  switches by itself.
+- **A sign-in deadline is one line.** In its last three days a deadline
+  reads "Admin stops working Sat 21 Nov" with Sign in beside it and the
+  explanation behind ⓘ. Its × hides it until tomorrow.
+- **A tool that is not installed takes one line.** "Codex · Not installed"
+  in the section heading, with the details behind ⓘ, instead of a card.
+- **Switching by number needs Ctrl** (⌘ on macOS). Ctrl+1 to Ctrl+9 press
+  the Nth account's button, numbered by its place, so the numbers no
+  longer move when a switch or a lapsed login changes the rows. A bare
+  digit used to switch accounts at a stray key press. Hold Ctrl to see
+  every account's number; the Switch tooltip says it too.
 
 ### Fixed
 
+- **A row due a sign-in lost its menu.** With Sign in beside Switch, the
+  row's ▾ was pushed off the card and its ⋯ menu, which holds Rename and
+  Remove, went out of reach, from 640 px wide down or with a name longer
+  than about 15 characters. The row now has one button, and the sign-in
+  rides on its badge.
+- **Cards no longer close their menu when the window updates.** The window
+  made every card again each time it worked the view out, which now
+  happens on its own every half minute. An open menu closed and keyboard
+  focus went. Cards are now kept by account and only change in place.
 - **The sign-in link shows again when the browser does not open.** Shambles
   offers a link from the vendor's output only when it is a real sign-in
   request, so the window never offers an arbitrary address. Its list was
