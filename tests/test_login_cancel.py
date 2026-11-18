@@ -201,13 +201,14 @@ def test_kill_tree_is_on_for_windows_only():
 # -- the real thing, on Windows ---------------------------------------------
 
 
-@windows_only
-def test_cancel_ends_a_vendor_started_through_a_cmd_shim(tmp_path):
-    """The shape npm gives every vendor CLI on Windows, end to end."""
+def _shim(tmp_path):
+    """A .cmd file around a Python vendor that keeps writing a heartbeat."""
     beat = tmp_path / "heartbeat.txt"
     child = tmp_path / "vendor.py"
     child.write_text(textwrap.dedent(f"""\
-        import time
+        import os, time
+        with open({str(tmp_path / "vendor.pid")!r}, "w") as fh:
+            fh.write(str(os.getpid()))
         print("started", flush=True)
         while True:
             with open({str(beat)!r}, "a") as fh:
@@ -216,6 +217,41 @@ def test_cancel_ends_a_vendor_started_through_a_cmd_shim(tmp_path):
     """), encoding="utf-8")
     shim = tmp_path / "vendor.cmd"
     shim.write_text(f'@"{sys.executable}" "{child}" %*\r\n', encoding="utf-8")
+    return shim, beat
+
+
+def _still_beating(beat, *, for_s=0.5):
+    size = beat.stat().st_size
+    time.sleep(for_s)
+    return beat.stat().st_size != size
+
+
+@windows_only
+def test_terminate_alone_leaves_the_vendor_behind_a_shim_running(tmp_path):
+    """Why the fix exists, kept as evidence: the old cancel on this shape."""
+    shim, beat = _shim(tmp_path)
+    child = subprocess.Popen([str(shim)], stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, text=True)
+    try:
+        assert child.stdout.readline().strip() == "started"
+        child.terminate()
+        child.wait(timeout=10)
+        # cmd.exe is gone; the vendor it started is not.
+        assert _still_beating(beat, for_s=1.0)
+    finally:
+        # By the vendor's own number: with cmd.exe gone, a tree kill from
+        # cmd.exe's number can no longer find it.
+        pid = tmp_path / "vendor.pid"
+        if pid.exists():
+            login.kill_tree(int(pid.read_text()), timeout=10)
+        child.stdout.close()
+
+
+@windows_only
+def test_cancel_ends_a_vendor_started_through_a_cmd_shim(tmp_path):
+    """The shape npm gives every vendor CLI on Windows, end to end."""
+    shim, beat = _shim(tmp_path)
 
     lines, codes, done = [], [], threading.Event()
     process = login.LoginProcess([str(shim)])
@@ -231,6 +267,4 @@ def test_cancel_ends_a_vendor_started_through_a_cmd_shim(tmp_path):
     # The exit arrives only once nothing holds the output pipe, and the
     # vendor behind cmd.exe holds it until it is gone.
     assert done.wait(timeout=15), "the vendor behind the shim was left running"
-    size = beat.stat().st_size
-    time.sleep(0.5)
-    assert beat.stat().st_size == size, "the vendor is still writing"
+    assert not _still_beating(beat), "the vendor is still writing"
