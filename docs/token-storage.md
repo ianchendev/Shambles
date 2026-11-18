@@ -140,9 +140,11 @@ manual link (`code=true`, redirect `/oauth/code/callback`): that page always
 ends by showing `<code>#<state>`. It reads the code with a line reader on
 `process.stdin` and no terminal check, splits it at `#`, and answers a line
 without both halves with `Invalid code` on stderr. Only the cloud-sessions
-sign-in checks `isTTY`. With stdout a terminal, the link is wrapped in OSC 8
-hyperlink escapes and colour; `auth` is also not among the subcommands that
-skip its raw-mode early-input capture.
+sign-in checks `isTTY`. With stdout a terminal, the link is always wrapped
+in OSC 8 hyperlink escapes and colour (through a pipe, only when the
+environment suggests a terminal that shows hyperlinks, such as
+`WT_SESSION`); `auth` is also not among the subcommands that skip its
+raw-mode early-input capture.
 
 **What outranks the stored login** [DOC], in order: the Bedrock, Vertex and
 Foundry switches, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,

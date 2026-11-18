@@ -437,9 +437,11 @@ class LoginProcess:
                 stderr=subprocess.STDOUT,
                 # A pipe, not a pseudo-terminal. Claude Code reads a pasted
                 # code from a pipe as readily as from a terminal, and a
-                # terminal would change what it prints: the sign-in link
-                # comes wrapped in hyperlink escapes and colour, and it
-                # starts reading keystrokes in raw mode.
+                # terminal would change what it does: it would always wrap
+                # the sign-in link in hyperlink escapes and colour (through
+                # a pipe, only when the environment suggests a terminal that
+                # shows them; find_url strips them either way), and it would
+                # start reading keystrokes in raw mode.
                 stdin=(subprocess.PIPE if self._takes_input
                        else subprocess.DEVNULL),
                 text=True,

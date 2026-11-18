@@ -486,8 +486,8 @@ whitespace is stripped. The code is a credential: it is never in a result, an
 error or a progress line. Such a vendor gets a pipe on its standard input,
 closed when it exits; every other vendor keeps the end-of-file input it
 always had. A pipe rather than a pseudo-terminal, because Claude Code reads
-the code from either, and a terminal would change its output (hyperlink
-escapes around the link) and start its raw-mode keystroke capture.
+the code from either, and a terminal would change what it does: hyperlink
+escapes around the link every time, and its raw-mode keystroke capture.
 
 The CLI is a compatibility adapter. It consumes service results but preserves
 the established human-readable output, `list --json` snapshot shape,
