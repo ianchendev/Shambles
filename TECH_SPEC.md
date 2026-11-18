@@ -475,6 +475,20 @@ output exposes only supported HTTPS authorization endpoints and allowed
 authorization parameters. Credential fields, userinfo, fragments and unknown
 URLs are hidden; all other output becomes `[vendor output hidden]`.
 
+A sign-in can take one thing back: the code a vendor's browser page shows
+when the browser cannot reach this machine. `LoginHandle.accepts_code` says
+whether this sign-in reads one; only a provider whose spec has
+`login.paste_code` does (Claude). `LoginHandle.send_code(code)` returns an
+`ActionResult` with no snapshot and one of three refusals: `code_not_accepted`,
+`login_not_running`, or `code_invalid` for anything that is not one line of
+visible ASCII with both halves around the spec's separator, after surrounding
+whitespace is stripped. The code is a credential: it is never in a result, an
+error or a progress line. Such a vendor gets a pipe on its standard input,
+closed when it exits; every other vendor keeps the end-of-file input it
+always had. A pipe rather than a pseudo-terminal, because Claude Code reads
+the code from either, and a terminal would change what it does: hyperlink
+escapes around the link every time, and its raw-mode keystroke capture.
+
 The CLI is a compatibility adapter. It consumes service results but preserves
 the established human-readable output, `list --json` snapshot shape,
 `switch --json` payload, and exit codes expected by native shells. A client
