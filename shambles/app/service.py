@@ -312,6 +312,22 @@ class ShamblesService:
                 f"Could not save the window's place: {exc.strerror or exc}."))
         return ActionResult(True, "set_window_place")
 
+    def hidden_deadlines(self):
+        """``{"provider/account": "YYYY-MM-DD"}``: deadline lines the user
+        closed, and the day they did. See :func:`settings.hide_deadline`."""
+        return settings_mod.hidden_deadlines(self.paths)
+
+    def hide_deadline(self, key, today):
+        try:
+            settings_mod.hide_deadline(self.paths, key, today)
+        except ValueError as exc:
+            return ActionResult(False, "hide_deadline", error=ActionError(
+                "invalid_setting", str(exc)))
+        except OSError as exc:
+            return ActionResult(False, "hide_deadline", error=ActionError(
+                "unwritable", f"Could not save that: {exc.strerror or exc}."))
+        return ActionResult(True, "hide_deadline")
+
     def sign_in_url(self, line):
         """The sign-in address in one progress line, or None.
 

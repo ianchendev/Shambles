@@ -25,6 +25,16 @@ ApplicationWindow {
     property string pulseId: ""
     readonly property bool typing: activeFocusItem instanceof TextInput
     readonly property var groups: ui.view.groups || []
+    // Keyed by provider, so working the window out again keeps each
+    // section, and everything in it, rather than making it all again.
+    readonly property var groupById: {
+        var found = {}
+        for (var i = 0; i < groups.length; i++)
+            found[groups[i].provider] = groups[i]
+        return found
+    }
+    onGroupsChanged: groupKeys.sync(groups.map(function (g) { return g.provider }))
+    KeyedList { id: groupKeys }
 
     // Bring a control the keyboard just reached into the scrolled view. With
     // ``whole``, all of it where it fits (an account that was just opened),
@@ -95,6 +105,7 @@ ApplicationWindow {
     onHeightChanged: placeTimer.restart()
     onVisibilityChanged: placeTimer.restart()
     Component.onCompleted: {
+        groupKeys.sync(groups.map(function (g) { return g.provider }))
         normalPlace = Qt.rect(ui.place.x, ui.place.y, ui.place.width, ui.place.height)
         if (ui.place.maximized)
             showMaximized()
@@ -138,12 +149,14 @@ ApplicationWindow {
             }
         }
     }
+    // Ctrl+1 to Ctrl+9 (Command on macOS): the Nth account's button
+    // (D8). Never a bare digit, which switched accounts at a stray key.
     Repeater {
         model: 9
         Item {
             Shortcut {
-                sequence: String(index + 1)
-                enabled: !ui.sheetOpen && !win.typing
+                sequence: "Ctrl+" + (index + 1)
+                enabled: !ui.sheetOpen
                 onActivated: ui.pressKey(String(index + 1))
             }
         }
@@ -295,11 +308,11 @@ ApplicationWindow {
 
                 Repeater {
                     id: sections
-                    model: win.groups
+                    model: groupKeys
                     GroupSection {
                         width: column.width
-                        group: modelData
-                        visible: !modelData.hidden
+                        group: win.groupById[model.key] || ({})
+                        visible: !group.hidden
                     }
                 }
 
@@ -361,12 +374,30 @@ ApplicationWindow {
             width: parent.width
             height: 38
             color: ui.theme.ground
-            Text {
+            Row {
+                // What the window reads, said on hover (D1).
                 x: 20
                 anchors.verticalCenter: parent.verticalCenter
-                text: "Reads local files only, never the network."
-                color: ui.theme.muted
-                font.pixelSize: 12
+                spacing: 5
+                Icon {
+                    name: "lock"
+                    size: 13
+                    weight: 2
+                    color: ui.theme.muted
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                    text: "Local only"
+                    color: ui.theme.muted
+                    font.pixelSize: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                HoverHandler { id: localHover }
+                Tip {
+                    text: "Shambles reads what Claude Code and Codex keep on "
+                          + "this computer. Switching accounts never goes online."
+                    visible: localHover.hovered
+                }
             }
             Text {
                 anchors.right: parent.right

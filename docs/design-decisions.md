@@ -21,7 +21,13 @@ Status values: **Decided** · **Leaning** (a direction, not yet committed) ·
 
 ## DD-1 — Token lifetime is system state, not a user-facing number
 
-**Status: Decided; context corrected 2026-11-13**
+**Status: Decided; context corrected 2026-11-13; amended 2026-11-18**
+
+> **Amendment (2026-11-18).** The window's row badge for a login due a sign-in
+> shows the days left, "2d", or the hours in the last day (proposal D2, accepted
+> by the owner). It appears only while the state is already "sign in soon",
+> and it is the button that starts the sign-in. So the state still leads,
+> and the number only says how soon. Healthy accounts still show no duration.
 
 > **Correction.** The context below says Claude's window rolls forward on every
 > refresh. It does not. Measured on a Linux machine on 2026-11-13, comparing a profile's stash with

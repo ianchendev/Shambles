@@ -18,13 +18,25 @@ import time
 
 from .. import snapshot as timing
 
-#: The chip on an account that needs the user. Keys are the snapshot's
-#: ``status_label``; the wording here is the window's own.
-CHIPS = {
-    "soon": ("Expires soon", "warn"),
-    "needs login": ("Needs sign-in", "bad"),
-    "signed out": ("Signed out", "bad"),
-}
+#: D2: a row has one button and at most one badge, and the badge carries
+#: what used to be a second button or a sentence. ``kind`` is what the QML
+#: keys off; ``action`` is what clicking the badge does, if anything.
+NO_BADGE = {"kind": "", "text": "", "icon": "", "tone": "", "tip": "",
+            "action": ""}
+MOST_ROOM = {"kind": "room", "text": "Most room", "icon": "", "tone": "info",
+             "tip": "The account with the most room left in both limits.",
+             "action": ""}
+#: D3: once the live account has used this much of either limit, the parked
+#: account with the most room left is pointed out. A hint: Shambles never
+#: switches by itself.
+ROOM_FROM = 80
+
+HOUR_MS = 3_600_000
+DAY_MS = 24 * HOUR_MS
+#: D4: a sign-in deadline gets a line of its own in the group only this
+#: close to it. Before then the row's badge says it.
+STRIP_WITHIN_MS = 3 * DAY_MS
+DAY_FORMAT = "%a %d %b"
 
 USAGE_LABELS = {"session": "Session", "week": "Week"}
 
@@ -46,38 +58,50 @@ NOTICE_TONES = {UNREADABLE: "bad", MISSING: "warn", "sign_in_soon": "warn",
 #: is one more thing to tab past for no gain.
 FILTER_FROM = 7
 
-#: Number keys switch straight to an account. Nine, because there are nine.
+#: Ctrl+1 to Ctrl+9 (D8): the Nth account down the window, by its place
+#: among every saved account, so a number never moves to another account
+#: when a switch or a lapsed login changes the rows. Nine, because there
+#: are nine.
 KEYS = "123456789"
 
 DATE_FORMAT = "%a %d %b, %H:%M"
 
 
-def view(snapshot, *, filter_text: str = "", now_ms: int | None = None) -> dict:
+def view(snapshot, *, filter_text: str = "", now_ms: int | None = None,
+         hidden_deadlines=frozenset()) -> dict:
     """The whole window, as data.
 
-    ``filter_text`` narrows the accounts shown; number keys are handed out
-    after filtering, so the first match is always ``1``.
+    ``filter_text`` narrows the accounts shown. Number keys belong to each
+    account's place among all of them, so filtering does not renumber.
 
     ``now_ms`` is the moment the window is drawn, which can be long after the
     snapshot was read: a limit can reset, and a reading grow old, while the
     window sits open. Defaults to the clock.
+
+    ``hidden_deadlines`` holds ``provider/account`` for each deadline line
+    the user closed today (D4).
     """
     if now_ms is None:
         now_ms = int(time.time() * 1000)
     needle = filter_text.strip().casefold()
     total = sum(len(g.accounts) for g in snapshot.groups)
-    groups = [_group(g, needle, now_ms) for g in snapshot.groups]
+    places = iter(KEYS)
+    numbers = {f"{g.provider}/{a.name}": next(places, "")
+               for g in snapshot.groups for a in g.accounts}
+    groups = [_group(g, needle, now_ms, numbers=numbers,
+                     hidden=frozenset(hidden_deadlines))
+              for g in snapshot.groups]
 
+    # What Ctrl+N does: the account's own button, where it has a working
+    # one. Only accounts on show; nothing for the live one.
     keys = {}
-    spare = iter(KEYS)
     for group in groups:
         for account in group["others"]:
-            if account["action"] == "switch" and account["actionEnabled"]:
-                key = next(spare, "")
-                account["key"] = key
-                if key:
-                    keys[key] = {"provider": account["provider"],
-                                 "name": account["name"]}
+            if account["key"] and account["action"] \
+                    and account["actionEnabled"]:
+                keys[account["key"]] = {"provider": account["provider"],
+                                        "name": account["name"],
+                                        "action": account["action"]}
 
     return {
         "groups": groups,
@@ -90,7 +114,7 @@ def view(snapshot, *, filter_text: str = "", now_ms: int | None = None) -> dict:
     }
 
 
-def _group(group, needle: str, now_ms: int) -> dict:
+def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
     codes = {n.code for n in group.notices}
     settle_to = next((n.account for n in group.notices
                       if n.code == ELSEWHERE and n.account), None)
@@ -115,16 +139,25 @@ def _group(group, needle: str, now_ms: int) -> dict:
         hold = ""
     accounts = [_account(group, a,
                          hold="" if a.name == settle_to else hold,
-                         now_ms=now_ms)
+                         now_ms=now_ms,
+                         key=numbers.get(f"{group.provider}/{a.name}", ""))
                 for a in group.accounts]
+    _most_room(accounts)
     shown = [a for a in accounts if _matches(a, needle)]
     live = next((a for a in shown if a["live"]), None)
     attention = sum(1 for a in group.accounts if a.needs_login)
 
     save = None
     settle = None
+    deadline = None
     notices = []
     for notice in group.notices:
+        if notice.code == SIGN_IN_SOON:
+            # D4: a line of its own in the last days, the row's badge
+            # before then; never the paragraph.
+            if deadline is None:
+                deadline = _deadline(group, notice, accounts, now_ms, hidden)
+            continue
         if notice.code == ELSEWHERE and notice.account:
             # Drawn as a card with the one button that settles it, where the
             # save card would be: this is that state's next step, and the
@@ -151,11 +184,6 @@ def _group(group, needle: str, now_ms: int) -> dict:
             # A marker for a deleted profile can simply be dropped. Offered
             # beside the notice, never instead of saving a live login.
             action, action_label = "forget", "Forget that profile"
-        elif notice.code == SIGN_IN_SOON and notice.account \
-                and group.can_sign_in:
-            # The notice's whole point is that signing in again is what
-            # keeps the account, so it carries the button that does it.
-            action, action_label = "signin", f"Sign in to {notice.account}"
         else:
             action, action_label = "", ""
         notices.append({
@@ -170,35 +198,39 @@ def _group(group, needle: str, now_ms: int) -> dict:
             "collapsed": notice.code == OVERRIDE,
         })
 
-    if not group.can_sign_in and group.accounts:
-        notices.append({
-            "code": "cli_missing", "tone": "info", "provider": group.provider,
-            "message": f"{group.cli} is not on your PATH, so accounts cannot "
-                       "be added or signed in here.",
-            "remedy": "Switching between accounts you already saved still "
-                      f"works. Install {group.cli}, then refresh.",
-            "account": "", "action": "", "actionLabel": "",
-            "collapsed": False,
-        })
+    # D6: a tool that is not installed is one line in the heading, with
+    # no card and no notice.
+    missing = not group.can_sign_in
+    if not missing:
+        missing_tip = ""
+    elif group.accounts:
+        missing_tip = (f"Shambles runs the {group.cli} command to sign "
+                       "accounts in, and it is not installed here. Switching "
+                       "between the accounts already saved still works.")
+    else:
+        missing_tip = (f"Shambles runs the {group.cli} command to sign "
+                       f"accounts in. Install {group.display_name}, and this "
+                       "section fills in by itself.")
 
     empty = None
-    if not group.accounts and save is None:
-        if group.can_sign_in:
-            empty = {"kind": "add",
-                     "text": f"Add a {group.display_name} account",
-                     "detail": ""}
-        else:
-            empty = {"kind": "cli",
-                     "text": f"The {group.cli} command is not on your PATH",
-                     "detail": "Shambles runs it to sign you in. Install "
-                               f"{group.display_name}, then refresh to add "
-                               "accounts here."}
+    if not group.accounts and save is None and group.can_sign_in:
+        empty = {"kind": "add",
+                 "text": f"Add a {group.display_name} account",
+                 "detail": ""}
 
     return {
         "provider": group.provider,
         "title": group.display_name,
         "surfaces": ", ".join(s.label for s in group.surfaces),
+        "surfacesTip": _reach(group),
         "summary": _summary(group, attention),
+        "missing": missing,
+        "missingTip": missing_tip,
+        # D1: a reason every row shares, said once above them.
+        "hold": hold if any(a["action"] and not a["live"]
+                            and a["name"] != settle_to
+                            for a in accounts) else "",
+        "deadline": deadline,
         "canSignIn": group.can_sign_in,
         "cli": group.cli,
         "save": save,
@@ -211,6 +243,68 @@ def _group(group, needle: str, now_ms: int) -> dict:
     }
 
 
+def _reach(group) -> str:
+    """Where a switch in this group takes effect, for the i by its name."""
+    places = [("the terminal" if s.label.casefold() == "terminal"
+               else s.label) for s in group.surfaces]
+    if not places:
+        return ""
+    where = [f"in {place}" for place in places]
+    said = where[0] if len(where) == 1 else \
+        ", ".join(where[:-1]) + " and " + where[-1]
+    return f"Switching changes the {group.display_name} account {said}."
+
+
+def _deadline(group, notice, accounts, now_ms, hidden):
+    """D4's line for the deadline ``notice`` is about, or None."""
+    account = next((a for a in group.accounts if a.name == notice.account),
+                   None)
+    if account is None or account.expires_at_ms is None:
+        return None
+    if account.expires_at_ms - now_ms > STRIP_WITHIN_MS:
+        return None
+    key = f"{group.provider}/{account.name}"
+    if key in hidden:
+        return None
+    row = next(a for a in accounts if a["name"] == account.name)
+    day = local_time(account.expires_at_ms, DAY_FORMAT)
+    return {
+        "key": key,
+        "provider": group.provider,
+        "account": account.name,
+        "text": f"{account.name} stops working {day}".strip(),
+        "tip": " ".join(p for p in (notice.message, notice.remedy) if p),
+        "canSignIn": bool(row["signIn"] and row["signInEnabled"]),
+    }
+
+
+def _fullest(account: dict):
+    """How much of its fullest limit an account has used, or None.
+
+    A limit that has reset since its figure was read counts as empty.
+    """
+    used = [0 if w["state"] == "reset" else w["percent"]
+            for w in account["usage"]]
+    return max(used) if used else None
+
+
+def _most_room(accounts) -> None:
+    """D3: badge the parked account with the most room, once the live one
+    is past ROOM_FROM in either limit. Only one Switch could reach, and only
+    if it really has more room than the live account."""
+    live = next((a for a in accounts if a["live"]), None)
+    used = _fullest(live) if live else None
+    if used is None or used < ROOM_FROM:
+        return
+    choices = [a for a in accounts
+               if not a["live"] and a["action"] == "switch"
+               and a["actionEnabled"] and not a["badge"]["kind"]
+               and _fullest(a) is not None]
+    best = min(choices, key=_fullest, default=None)
+    if best is not None and _fullest(best) < used:
+        best["badge"] = dict(MOST_ROOM)
+
+
 def _summary(group, attention: int) -> str:
     count = len(group.accounts)
     if not count:
@@ -221,6 +315,8 @@ def _summary(group, attention: int) -> str:
     if attention:
         text += f" · {attention} need" + ("s" if attention == 1 else "")
         text += " sign-in"
+    if not group.can_sign_in:
+        text += " · Not installed"
     return text
 
 
@@ -231,8 +327,7 @@ def _matches(account: dict, needle: str) -> bool:
             or needle in account["email"].casefold())
 
 
-def _account(group, account, *, hold: str, now_ms: int) -> dict:
-    chip_text, chip_tone = CHIPS.get(account.status_label, ("", ""))
+def _account(group, account, *, hold: str, now_ms: int, key: str) -> dict:
     usage = [_window(w, live=account.active, now_ms=now_ms)
              for w in account.usage]
 
@@ -244,12 +339,13 @@ def _account(group, account, *, hold: str, now_ms: int) -> dict:
     # A sign-in is offered for a login that has lapsed, and for one that
     # still works but that only a new sign-in keeps past its fixed date
     # (sign_in_due: a Claude login near its deadline). The first can only be
-    # signed in; the second can still be switched to, so Sign in sits beside
-    # Switch there, as it does in the Tk window.
+    # signed in, and that is its button. The second can still be switched
+    # to, so Switch stays its one button and the sign-in rides on its badge
+    # (D2) -- two buttons are what pushed the row's menu off the card (F3).
     due = account.sign_in_due and not account.needs_login
     sign_in = (account.needs_login or due) and group.can_sign_in
     action, label, enabled, reason = "", "", False, ""
-    if account.needs_login or (due and live):
+    if account.needs_login:
         # Never Switch on a lapsed login: that installs a dead token and
         # leaves the vendor prompting for the sign-in this button runs.
         action, label = "signin", "Sign in"
@@ -262,9 +358,29 @@ def _account(group, account, *, hold: str, now_ms: int) -> dict:
         enabled = not hold
     if hold and action:
         reason = hold
-    sign_in_extra = sign_in and action == "switch"
 
     email = account.email or ""
+    if account.needs_login:
+        badge = {"kind": "signedout", "text": "Signed out", "icon": "",
+                 "tone": "bad", "tip": login_line(account), "action": ""}
+    elif due:
+        can = sign_in and not hold
+        when = local_time(account.expires_at_ms)
+        left = _left(account.expires_at_ms, now_ms)
+        badge = {"kind": "due", "tone": "warn", "icon": "clock",
+                 "text": left or "Soon",
+                 "tip": (f"Sign in by {when}." if when else "Sign in soon.")
+                 + (" Click to sign in again now." if can else ""),
+                 "action": "signin" if can else ""}
+    elif account.status_label == "soon":
+        # Closing, but kept by using it (Codex): the nudge DD-1 asks for,
+        # with what to do on hover. Switching is the fix, so no click.
+        left = _left(account.expires_at_ms, now_ms)
+        badge = {"kind": "soon", "tone": "warn", "icon": "clock",
+                 "text": left or "Soon",
+                 "tip": login_line(account), "action": ""}
+    else:
+        badge = dict(NO_BADGE)
     return {
         "id": f"{group.provider}/{account.name}",
         "provider": group.provider,
@@ -274,20 +390,24 @@ def _account(group, account, *, hold: str, now_ms: int) -> dict:
         "plan": plan_label(account.plan),
         "subtitle": " · ".join(p for p in (email or "Address unknown",
                                            plan_label(account.plan)) if p),
+        # D1: the address once. An account named after it says it already.
+        "showAddress": bool(email) and email.casefold()
+        != account.name.casefold(),
         "initial": (account.name[:1] or "?").upper(),
         "live": live,
-        "chip": chip_text,
-        "chipTone": chip_tone,
+        "badge": badge,
         "action": action,
         "actionLabel": label,
         "actionEnabled": enabled,
+        # Why the button is off, for its tooltip (D1: reasons on hover).
         "actionReason": reason,
-        # Whether Sign in is offered at all, and whether as a second button
-        # beside Switch rather than as the row's own action.
+        "actionTip": (f"Sign in to {account.name}" if action == "signin"
+                      else f"Switch to {account.name}" if action else ""),
+        # Whether a sign-in is offered at all, from the row's button or its
+        # badge, and whether it can start now.
         "signIn": sign_in,
-        "signInExtra": sign_in_extra,
         "signInEnabled": sign_in and not hold,
-        "key": "",
+        "key": key,
         "usage": usage,
         "usageSummary": " · ".join(
             f"{w['label'].lower()} reset" if w["state"] == "reset"
@@ -368,16 +488,35 @@ def plan_label(plan) -> str:
     return text[:1].upper() + text[1:]
 
 
-def local_time(ms) -> str:
+def local_time(ms, fmt: str = DATE_FORMAT) -> str:
     """``ms`` as a local date, or ``""`` if it is not a representable one.
 
     The value is whatever the credential said and is never range-checked,
     so a vendor emitting microseconds lands outside ``datetime``'s range.
     """
     try:
-        return datetime.datetime.fromtimestamp(ms / 1000).strftime(DATE_FORMAT)
+        return datetime.datetime.fromtimestamp(ms / 1000).strftime(fmt)
     except (ValueError, OverflowError, OSError, TypeError):
         return ""
+
+
+def _left(ms, now_ms) -> str:
+    """Time left until ``ms``, rounded down: ``2d``, ``5h``, ``<1h``.
+
+    Only on a sign-in deadline's badge, and only in its last days, where
+    the state DD-1 asks for is already "sign in soon"; the number says how
+    soon. Rounded down so it never promises time that is not there.
+    """
+    if ms is None:
+        return ""
+    gap = ms - now_ms
+    if gap <= 0:
+        return ""
+    if gap >= DAY_MS:
+        return f"{gap // DAY_MS}d"
+    if gap >= HOUR_MS:
+        return f"{gap // HOUR_MS}h"
+    return "<1h"
 
 
 #: For a login whose deadline is fixed at sign-in (Claude's, about thirty

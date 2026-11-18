@@ -16,6 +16,7 @@ the GUI thread; no state is touched off that thread.
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
+import datetime
 import threading
 import time
 
@@ -52,6 +53,7 @@ class Bridge(QObject):
     filterChanged = Signal()
     #: An account just became live: ``provider/name``. The card pulses.
     confirmed = Signal(str)
+    ctrlHeldChanged = Signal()
 
     busyChanged = Signal()
     #: The window asked to close mid-switch and the switch has now finished.
@@ -103,6 +105,10 @@ class Bridge(QObject):
         self._lineArrived.connect(self._on_line)
         self._loginSettled.connect(self._on_settled)
         self._place = self._opening_place(screens)
+        #: D4: deadline lines closed, ``{"provider/account": day}``. Read
+        #: with the accounts, not on every redraw.
+        self._hidden = {}
+        self._ctrl_held = False
         self._switchWaited.connect(self._on_switch_waited)
         self._switchFinished.connect(self._on_switch_finished)
 
@@ -157,6 +163,18 @@ class Bridge(QObject):
         ``height``, ``maximized``. Read once, when the window is made."""
         return self._place
 
+    @Property(bool, notify=ctrlHeldChanged)
+    def ctrlHeld(self):
+        """Ctrl (Command on macOS) is held: every account shows its number
+        (D8)."""
+        return self._ctrl_held
+
+    def set_ctrl_held(self, held):
+        held = bool(held)
+        if held != self._ctrl_held:
+            self._ctrl_held = held
+            self.ctrlHeldChanged.emit()
+
     @Property(bool, constant=True)
     def motion(self):
         return self._motion
@@ -203,8 +221,12 @@ class Bridge(QObject):
         """
         if self._snapshot is None:
             return
-        model = presenter.view(self._snapshot, filter_text=self._filter,
-                               now_ms=self._clock_ms())
+        now_ms = self._clock_ms()
+        today = _day(now_ms)
+        model = presenter.view(
+            self._snapshot, filter_text=self._filter, now_ms=now_ms,
+            hidden_deadlines={key for key, day in self._hidden.items()
+                              if day == today})
         for group in model["groups"]:
             if group["save"] is not None:
                 group["save"]["error"] = self._save_errors.get(
@@ -268,6 +290,10 @@ class Bridge(QObject):
     def refresh(self):
         if self._switching is not None:
             return
+        try:
+            self._hidden = dict(self._service.hidden_deadlines())
+        except Exception:
+            pass
         try:
             result = self._service.refresh()
         except Exception:
@@ -428,9 +454,26 @@ class Bridge(QObject):
 
     @Slot(str)
     def pressKey(self, key):
+        """Ctrl+N: the Nth account's own button, as if it were clicked."""
         target = self._view["keys"].get(key)
-        if target and not self._sheet:
+        if not target or self._sheet:
+            return
+        if target.get("action") == "signin":
+            self.signIn(target["provider"], target["name"])
+        else:
             self.switchTo(target["provider"], target["name"])
+
+    @Slot(str)
+    def hideDeadline(self, key):
+        """D4's ×: hide that deadline line until tomorrow. The row's badge
+        still says it."""
+        today = _day(self._clock_ms())
+        self._hidden[key] = today
+        try:
+            self._service.hide_deadline(key, today)
+        except Exception:
+            pass
+        self._rebuild()
 
     # -- signing in and adding ------------------------------------------------
 
@@ -678,6 +721,11 @@ class Bridge(QObject):
         if worker is not None and worker.is_alive():
             # Bounded by the refresh lock's own limit plus the switch itself.
             worker.join(60)
+
+
+def _day(ms) -> str:
+    """The local date at ``ms``, as the settings file keeps it."""
+    return datetime.date.fromtimestamp(ms / 1000).isoformat()
 
 
 def _error_text(result) -> str:

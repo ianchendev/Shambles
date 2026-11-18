@@ -23,14 +23,16 @@ Canvas {
         "plus": "M12 5v14 M5 12h14",
         "check": "M5 12.5l4.5 4.5L19 7.5",
         "alert": "M12 4l9 16H3z M12 10v4 M12 17v.5",
-        "info": "M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z M12 8v5 M12 16.5v.5",
+        "info": "M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z M12 7.5v.5 M12 11v5.5",
         "external": "M14 5h5v5 M19 5l-8 8 M11 7H6v11h11v-5",
         "copy": "M11 9h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z M5 15V6a2 2 0 0 1 2-2h8",
         "chevron": "M6 9l6 6 6-6",
         "search": "M18 11a7 7 0 1 1-14 0a7 7 0 0 1 14 0z M20 20l-3.5-3.5",
         "user": "M16 8a4 4 0 1 1-8 0a4 4 0 0 1 8 0z M4 21a8 8 0 0 1 16 0",
         "close": "M6 6l12 12 M18 6L6 18",
-        "more": "M5 12h.01 M12 12h.01 M19 12h.01"
+        "more": "M5 12h.01 M12 12h.01 M19 12h.01",
+        "clock": "M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0z M12 7v5l3 2",
+        "lock": "M8 11V8a4 4 0 0 1 8 0v3 M6 11h12v9H6z"
     })
 
     onNameChanged: requestPaint()

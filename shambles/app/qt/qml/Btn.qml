@@ -9,6 +9,9 @@ T.Button {
     property string kind: "plain"
     property string glyph: ""
     property string hint: ""
+    // Shown on hover and on keyboard focus. Icon-only buttons say what
+    // they do here; others add what is not on their face.
+    property string tip: ""
     readonly property bool iconOnly: text === ""
 
     implicitHeight: 38
@@ -57,6 +60,11 @@ T.Button {
             border.width: 2
             visible: control.visualFocus
         }
+    }
+
+    Tip {
+        text: control.tip
+        visible: control.tip !== "" && (control.hovered || control.visualFocus)
     }
 
     contentItem: Item {
