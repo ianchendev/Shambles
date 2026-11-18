@@ -211,9 +211,11 @@ ApplicationWindow {
                 color: ui.theme.muted
                 font.pixelSize: 12
                 HoverHandler { id: updatedHover }
-                ToolTip.visible: updatedHover.hovered
-                ToolTip.text: ui.updatedTip
-                ToolTip.delay: 500
+                // The window's one tooltip look (D9).
+                Tip {
+                    text: ui.updatedTip
+                    visible: text !== "" && updatedHover.hovered
+                }
             }
 
             Row {
