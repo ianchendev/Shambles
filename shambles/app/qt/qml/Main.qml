@@ -131,6 +131,9 @@ ApplicationWindow {
             close.accepted = false
     }
 
+    // U2: coming back to the window re-reads files (never the Keychain).
+    onActiveChanged: if (active) ui.windowFocused()
+
     Shortcut { sequences: ["Ctrl+R", "F5"]; onActivated: ui.refresh() }
     Shortcut { sequence: "Ctrl+N"; enabled: !ui.sheetOpen; onActivated: ui.openAdd("") }
     Shortcut {
@@ -197,6 +200,22 @@ ApplicationWindow {
                 font.weight: Font.DemiBold
             }
 
+            Text {
+                // U2: "Updated just now". Its tooltip says what is re-read.
+                id: updated
+                anchors.left: wordmark.right
+                anchors.leftMargin: 10
+                anchors.baseline: wordmark.baseline
+                visible: text !== "" && win.width > 560
+                text: ui.updatedText
+                color: ui.theme.muted
+                font.pixelSize: 12
+                HoverHandler { id: updatedHover }
+                ToolTip.visible: updatedHover.hovered
+                ToolTip.text: ui.updatedTip
+                ToolTip.delay: 500
+            }
+
             Row {
                 id: tools
                 anchors.right: parent.right
@@ -206,6 +225,8 @@ ApplicationWindow {
                 Btn {
                     glyph: "refresh"
                     hint: "Refresh. Re-reads local files only."
+                    // U2: what is re-read by itself, and that this reads all.
+                    tip: ui.updatedTip
                     enabled: !ui.busy
                     implicitHeight: 40
                     onClicked: ui.refresh()
@@ -249,7 +270,8 @@ ApplicationWindow {
             Field {
                 id: filterField
                 visible: !!ui.view.showFilter
-                anchors.left: wordmark.right
+                // After "Updated just now" when that is on show, never over it.
+                anchors.left: updated.visible ? updated.right : wordmark.right
                 anchors.leftMargin: 20
                 anchors.right: tools.left
                 anchors.rightMargin: 20

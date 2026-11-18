@@ -295,7 +295,7 @@ def read_codex_usage(config_dir: Path) -> Usage:
     ``cachedUsageUtilization``. A session that never emitted ``rate_limits``
     returns empty, which the UI already treats as a supported state.
     """
-    path = _latest_codex_session(config_dir)
+    path = latest_codex_session(config_dir)
     if path is None:
         return EMPTY
     try:
@@ -328,7 +328,9 @@ def read_codex_usage(config_dir: Path) -> Usage:
     return EMPTY
 
 
-def _latest_codex_session(config_dir: Path) -> Path | None:
+def latest_codex_session(config_dir: Path) -> Path | None:
+    """The newest session log under ``config_dir``, or None. Walks the tree,
+    so a caller polling for changes should keep the answer, not ask again."""
     sessions = Path(config_dir) / "sessions"
     if not sessions.is_dir():
         return None
