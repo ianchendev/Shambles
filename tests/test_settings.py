@@ -101,3 +101,68 @@ def test_setting_the_theme_keeps_the_other_settings(paths):
 
     assert settings.window_theme(paths) == "light"
     assert settings.update_check_enabled(paths) is True
+
+
+# -- where the window was -------------------------------------------------------
+
+
+def test_a_home_with_no_stored_window_place_reads_as_none(paths):
+    assert settings.window_place(paths) is None
+
+
+def test_the_window_place_round_trips_and_keeps_the_other_settings(paths):
+    settings.set_window_theme(paths, "dark")
+
+    settings.set_window_place(paths, 120, -40, 600, 500, maximized=True)
+
+    assert settings.window_place(paths) == {
+        "x": 120, "y": -40, "width": 600, "height": 500, "maximized": True}
+    assert settings.window_theme(paths) == "dark"
+
+
+def test_storing_the_same_place_again_does_not_rewrite_the_file(paths):
+    """The window reports its place after every move; most reports repeat
+    the last one, and a settings file rewritten for nothing is churn in a
+    directory that also holds logins."""
+    assert settings.set_window_place(paths, 10, 20, 700, 600) is True
+    before = os.stat(paths.settings_path).st_mtime_ns
+    os.utime(paths.settings_path, ns=(before - 10**9, before - 10**9))
+
+    assert settings.set_window_place(paths, 10, 20, 700, 600) is False
+
+    assert os.stat(paths.settings_path).st_mtime_ns == before - 10**9
+
+
+@pytest.mark.parametrize("stored", [
+    "760x720",
+    [10, 20, 700, 600],
+    {"x": 10, "y": 20, "width": 700},
+    {"x": 10, "y": 20, "width": 0, "height": 600},
+    {"x": 10, "y": 20, "width": 700, "height": -5},
+    {"x": "10", "y": 20, "width": 700, "height": 600},
+    {"x": True, "y": 20, "width": 700, "height": 600},
+    {"x": 1.5, "y": 20, "width": 700, "height": 600},
+])
+def test_a_stored_place_that_is_not_a_place_reads_as_none(paths, stored):
+    """A hand-edited file is a guess at the format; the window opens where
+    it would have opened with no file at all."""
+    settings.save_settings(paths, {settings.WINDOW_PLACE: stored})
+
+    assert settings.window_place(paths) is None
+
+
+def test_a_place_without_a_maximised_flag_reads_as_not_maximised(paths):
+    settings.save_settings(paths, {settings.WINDOW_PLACE: {
+        "x": 1, "y": 2, "width": 700, "height": 600, "maximized": "yes"}})
+
+    assert settings.window_place(paths)["maximized"] is False
+
+
+@pytest.mark.parametrize("bad", [
+    (1, 2, 0, 600), (1, 2, 700, -1), ("1", 2, 700, 600), (1.5, 2, 700, 600),
+])
+def test_storing_a_place_that_is_not_one_raises_before_writing(paths, bad):
+    with pytest.raises(ValueError):
+        settings.set_window_place(paths, *bad)
+
+    assert not paths.settings_path.exists()

@@ -294,6 +294,24 @@ class ShamblesService:
                 f"Could not save the theme: {exc.strerror or exc}."))
         return ActionResult(True, "set_window_theme")
 
+    def window_place(self):
+        """Where the window was left, or None: see
+        :func:`shambles.settings.window_place`."""
+        return settings_mod.window_place(self.paths)
+
+    def set_window_place(self, x, y, width, height, maximized=False):
+        try:
+            settings_mod.set_window_place(self.paths, x, y, width, height,
+                                          maximized)
+        except ValueError as exc:
+            return ActionResult(False, "set_window_place", error=ActionError(
+                "invalid_setting", str(exc)))
+        except OSError as exc:
+            return ActionResult(False, "set_window_place", error=ActionError(
+                "unwritable",
+                f"Could not save the window's place: {exc.strerror or exc}."))
+        return ActionResult(True, "set_window_place")
+
     def sign_in_url(self, line):
         """The sign-in address in one progress line, or None.
 

@@ -103,6 +103,8 @@ class FakeService:
         self.snap = snapshot or standard()
         self.calls = []
         self.theme = "system"
+        #: What window_place() returns: None, or a stored place.
+        self.place = None
         self.migrations = ()
         self.opens = True
         #: action name -> ActionResult to return instead of success.
@@ -118,6 +120,9 @@ class FakeService:
 
     def window_theme(self):
         return self.theme
+
+    def window_place(self):
+        return self.place
 
     def run_migrations(self):
         return self.migrations
@@ -140,6 +145,9 @@ class FakeService:
         self.calls.append(("set_window_theme", theme))
         self.theme = theme
         return ActionResult(True, "set_window_theme")
+
+    def set_window_place(self, x, y, width, height, maximized=False):
+        return self._done("set_window_place", x, y, width, height, maximized)
 
     def switch(self, provider, name, *, on_wait=None):
         """Like the service: ``on_wait`` once if it has to wait. Set

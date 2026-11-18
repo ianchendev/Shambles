@@ -137,6 +137,19 @@ def _system_dark(app):
     return None
 
 
+def _area(screen):
+    rect = screen.availableGeometry()
+    return (rect.x(), rect.y(), rect.width(), rect.height())
+
+
+def screen_areas(app):
+    """Every screen's usable area, and the primary's, as plain tuples for
+    :mod:`.placement`."""
+    areas = [_area(screen) for screen in app.screens()]
+    primary = app.primaryScreen()
+    return areas, (_area(primary) if primary is not None else None)
+
+
 def load_fonts() -> None:
     """Register the bundled typeface.
 
@@ -164,7 +177,8 @@ def build(service, *, motion=True, app=None):
     app.setFont(font)
 
     bridge = Bridge(service, clipboard=app.clipboard(),
-                    system_dark=lambda: _system_dark(app), motion=motion)
+                    system_dark=lambda: _system_dark(app), motion=motion,
+                    screens=lambda: screen_areas(app))
     app.styleHints().colorSchemeChanged.connect(
         lambda _scheme: bridge.system_theme_changed())
 

@@ -90,3 +90,53 @@ def set_window_theme(paths, theme: str) -> None:
     data = load_settings(paths)
     data[WINDOW_THEME] = theme
     save_settings(paths, data)
+
+
+#: Where the window was last left and how big, so it opens there again:
+#: ``{"x", "y", "width", "height", "maximized"}`` in the toolkit's own units.
+#: The size is the window's ordinary one; ``maximized`` says it was
+#: maximised on top of that.
+WINDOW_PLACE = "window.place"
+_PLACE_NUMBERS = ("x", "y", "width", "height")
+
+
+def _is_int(value) -> bool:
+    # bool is an int to Python, and True is not a coordinate.
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def window_place(paths):
+    """The stored place, or None for anything that is not one.
+
+    Like the theme: a hand-edited value is a guess at the format, and the
+    window opening where it would with no file costs nothing.
+    """
+    value = load_settings(paths).get(WINDOW_PLACE)
+    if not isinstance(value, dict):
+        return None
+    if not all(_is_int(value.get(key)) for key in _PLACE_NUMBERS):
+        return None
+    if value["width"] <= 0 or value["height"] <= 0:
+        return None
+    place = {key: value[key] for key in _PLACE_NUMBERS}
+    place["maximized"] = value.get("maximized") is True
+    return place
+
+
+def set_window_place(paths, x, y, width, height, maximized=False) -> bool:
+    """Remember where the window is. Returns whether the file was written.
+
+    Raises ``ValueError`` before writing anything if the numbers are not a
+    place. Writes nothing when the place is the one already stored: the
+    window reports after every move, and most reports repeat the last.
+    """
+    numbers = (x, y, width, height)
+    if not all(_is_int(n) for n in numbers) or width <= 0 or height <= 0:
+        raise ValueError(f"{numbers!r} is not a window place.")
+    place = dict(zip(_PLACE_NUMBERS, numbers), maximized=bool(maximized))
+    if window_place(paths) == place:
+        return False
+    data = load_settings(paths)
+    data[WINDOW_PLACE] = place
+    save_settings(paths, data)
+    return True

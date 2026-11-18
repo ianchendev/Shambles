@@ -4,19 +4,6 @@ Notable changes per release. Dates are the tag date.
 
 ## Unreleased
 
-### Fixed
-
-- **The sign-in link shows again when the browser does not open.** Shambles
-  offers a link from the vendor's output only when it is a real sign-in
-  request, so the window never offers an arbitrary address. Its list was
-  out of date. Every link current Claude Code prints was thrown away: they
-  come from `claude.com` or `platform.claude.com`, carry `code=true` and
-  return to `platform.claude.com/oauth/code/callback`. Codex links for a
-  fixed workspace were thrown away too. Claude Code also wraps its link in
-  a terminal hyperlink when it runs inside Windows Terminal, VS Code or
-  JetBrains, even when its output goes to Shambles rather than a terminal,
-  and that link was lost as well. The sign-in sheet now shows Open sign-in
-  page and Copy link for both vendors.
 ### Changed
 
 - **A limit that has reset says so.** A saved reading carries its reset
@@ -40,6 +27,40 @@ Notable changes per release. Dates are the tag date.
   Team seat it stores. The window, the terminal UI and `shambles list` all
   show the new names. A plan Shambles does not recognise still shows what
   it showed before.
+
+- **Move the window by its own header, and resize it from the corner.**
+  Under WSL on a 4K screen the title bar Windows draws is tiny. Drag
+  anywhere in the window's header that is not a button to move it,
+  double-click it to maximise, and drag the grip in the bottom-right
+  corner to resize. The window opens where it was left last time, at the
+  same size; if that place is on a monitor that is no longer there, it
+  opens in the centre. The smallest size goes from 520x420 to 420x360,
+  and at narrow widths rows leave out the address line.
+- **Messages no longer cover the list.** What an action did, and the line
+  shown while a switch waits, now slide in under the header and push the
+  list down instead of sitting over its last row. An error stays until you
+  close it with its ×. The wait for Claude Code is one line, "Waiting for
+  Claude Code to finish renewing", with the reason behind its ⓘ.
+
+### Fixed
+
+- **The sign-in link shows again when the browser does not open.** Shambles
+  offers a link from the vendor's output only when it is a real sign-in
+  request, so the window never offers an arbitrary address. Its list was
+  out of date. Every link current Claude Code prints was thrown away: they
+  come from `claude.com` or `platform.claude.com`, carry `code=true` and
+  return to `platform.claude.com/oauth/code/callback`. Codex links for a
+  fixed workspace were thrown away too. Claude Code also wraps its link in
+  a terminal hyperlink when it runs inside Windows Terminal, VS Code or
+  JetBrains, even when its output goes to Shambles rather than a terminal,
+  and that link was lost as well. The sign-in sheet now shows Open sign-in
+  page and Copy link for both vendors.
+
+- **Small windows kept buttons out of reach.** At the smallest size the
+  sign-in sheet hid Cancel and the eject sheet hid both its buttons, with
+  nothing to say there was more. A sheet's buttons now stay at its bottom
+  and its text scrolls above them, with a scroll bar on show. Opening an
+  account near the bottom of the list scrolls its details into view.
 
 ## 2.2.2 - 2026-11-15
 

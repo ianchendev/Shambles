@@ -5,6 +5,7 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    objectName: "card " + (account.id || "")
     property var account: ({})
     // Inside the shared list card, which draws the surface for every row.
     property bool embedded: false
@@ -18,6 +19,8 @@ Item {
         if (win)
             win.expandedId = open ? "" : account.id
     }
+    // Opened near the bottom, the details would land below the footer.
+    onOpenChanged: if (open && win && win.revealSoon) win.revealSoon(root)
 
     Rectangle {
         anchors.fill: parent
@@ -110,7 +113,10 @@ Item {
                     }
                 }
                 Text {
+                    objectName: "address"
                     Layout.fillWidth: true
+                    // A narrow window keeps the row to its name and button.
+                    visible: !(root.embedded && !!root.win && root.win.narrow)
                     text: root.account.subtitle || ""
                     color: ui.theme.muted
                     font.pixelSize: 13

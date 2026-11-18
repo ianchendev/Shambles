@@ -21,7 +21,7 @@ import time
 
 from ... import __version__
 from ..service import ActionError, ActionResult, waiting_for_refresh
-from . import presenter, theme
+from . import placement, presenter, theme
 
 # None of these says what a running session does after the change. Claude
 # Code 2.1.300 re-reads a changed login at its next request; older versions
@@ -33,6 +33,10 @@ SIGNED_IN = "{name} is signed in and in use."
 NO_BROWSER = ("No browser could be launched from here, which is usual under "
               "WSL and over SSH. The link is on your clipboard.")
 UNREADABLE = "Could not read your accounts. Press Refresh to try again."
+#: D10: what the busy line says while a switch waits on Claude Code's own
+#: renewal. The full reason, with the time limit, goes behind its i.
+WAITING = "Waiting for Claude Code to finish renewing"
+CLOSES = " Shambles closes when it is done."
 
 #: How often the window redraws what it already holds, so a countdown ("in
 #: 1h 52m") stays true and a limit shows as reset when its time comes. Reads
@@ -59,7 +63,8 @@ class Bridge(QObject):
     _switchFinished = Signal(object)
 
     def __init__(self, service, *, clipboard=None, system_dark=None,
-                 motion=True, runner=None, clock_ms=None, parent=None):
+                 motion=True, runner=None, screens=None, clock_ms=None,
+                 parent=None):
         super().__init__(parent)
         #: The time the window draws at. A test passes its own.
         self._clock_ms = clock_ms or (lambda: int(time.time() * 1000))
@@ -75,6 +80,7 @@ class Bridge(QObject):
         self._switching = None
         self._quit_pending = False
         self._busy_text = ""
+        self._busy_detail = ""
         self._service = service
         self._clipboard = clipboard
         #: Callable returning True/False/None for the OS colour scheme.
@@ -85,7 +91,10 @@ class Bridge(QObject):
         self._view = {"groups": [], "count": 0, "showFilter": False,
                       "filtering": False, "matches": 0, "keys": {}}
         self._sheet = {}
-        self._toast = {"text": "", "tone": "ok", "serial": 0}
+        self._toast = {"text": "", "tone": "ok", "serial": 0,
+                       "actionLabel": ""}
+        #: What the toast's button does, if it has one.
+        self._toast_action = None
         self._save_errors = {}
         #: The running vendor login, and what it is for.
         self._handle = None
@@ -93,6 +102,7 @@ class Bridge(QObject):
         self._eject_plan = None
         self._lineArrived.connect(self._on_line)
         self._loginSettled.connect(self._on_settled)
+        self._place = self._opening_place(screens)
         self._switchWaited.connect(self._on_switch_waited)
         self._switchFinished.connect(self._on_switch_finished)
 
@@ -135,6 +145,18 @@ class Bridge(QObject):
     def busyText(self):
         return self._busy_text
 
+    @Property(str, notify=busyChanged)
+    def busyDetail(self):
+        """Why the busy line has taken so long, for its i. Empty when the
+        line says all there is."""
+        return self._busy_detail
+
+    @Property("QVariantMap", constant=True)
+    def place(self):
+        """Where the window opens and how big: ``x``, ``y``, ``width``,
+        ``height``, ``maximized``. Read once, when the window is made."""
+        return self._place
+
     @Property(bool, constant=True)
     def motion(self):
         return self._motion
@@ -153,12 +175,23 @@ class Bridge(QObject):
         self._sheet = sheet or {}
         self.sheetChanged.emit()
 
-    def _say(self, text, tone="ok"):
+    def _say(self, text, tone="ok", action=None):
+        """Show ``text``. ``action`` is ``(label, callable)`` for a button
+        on the message that offers the obvious next step."""
         if not text:
             return
+        label, self._toast_action = action if action else ("", None)
         self._toast = {"text": text, "tone": tone,
-                       "serial": self._toast["serial"] + 1}
+                       "serial": self._toast["serial"] + 1,
+                       "actionLabel": label}
         self.toastChanged.emit()
+
+    @Slot()
+    def toastAction(self):
+        """The toast's button. Runs once; a later message replaces it."""
+        action, self._toast_action = self._toast_action, None
+        if action is not None and not self._occupied():
+            action()
 
     def _rebuild(self, *, only_if_changed=False):
         """Work the view out again from the snapshot held.
@@ -256,6 +289,33 @@ class Bridge(QObject):
     def system_theme_changed(self):
         self.themeChanged.emit()
 
+    # -- where the window is ------------------------------------------------
+
+    def _opening_place(self, screens):
+        """Where the window was left, unless no screen shows it any more.
+
+        ``screens`` returns ``(available areas, primary area)`` as
+        ``(x, y, width, height)`` tuples; the application passes Qt's.
+        """
+        try:
+            stored = self._service.window_place()
+        except Exception:
+            stored = None
+        areas, primary = screens() if screens is not None else ([], None)
+        return placement.opening_place(stored, list(areas), primary)
+
+    @Slot(int, int, int, int, bool)
+    def rememberPlace(self, x, y, width, height, maximized):
+        """Keep where the window is, for the next time it opens.
+
+        Failing to save is not worth a message. The next window opens in
+        the centre instead, and nothing else depends on it.
+        """
+        try:
+            self._service.set_window_place(x, y, width, height, maximized)
+        except Exception:
+            pass
+
     @Slot(str)
     def setFilter(self, text):
         if text == self._filter:
@@ -278,8 +338,9 @@ class Bridge(QObject):
         """A sign-in or a switch is running, and nothing else may start."""
         return self._handle is not None or self._switching is not None
 
-    def _set_busy(self, text):
+    def _set_busy(self, text, detail=""):
         self._busy_text = text
+        self._busy_detail = detail
         self.busyChanged.emit()
 
     def _run_switch(self, provider, name, success):
@@ -318,10 +379,10 @@ class Bridge(QObject):
     def _on_switch_waited(self):
         if self._switching is None:
             return
-        text = waiting_for_refresh()
+        text = WAITING
         if self._quit_pending:
-            text += " Shambles closes when it is done."
-        self._set_busy(text)
+            text += "." + CLOSES
+        self._set_busy(text, waiting_for_refresh())
 
     @Slot(object)
     def _on_switch_finished(self, result):
@@ -340,9 +401,12 @@ class Bridge(QObject):
         it closes itself once the switch has finished."""
         if self._switching is None:
             return True
-        self._quit_pending = True
-        self._set_busy(self._busy_text.rstrip()
-                       + " Shambles closes when it is done.")
+        if not self._quit_pending:
+            self._quit_pending = True
+            text = self._busy_text.rstrip()
+            if not text.endswith((".", "\u2026")):
+                text += "."
+            self._set_busy(text + CLOSES, self._busy_detail)
         return False
 
     @Slot(str)

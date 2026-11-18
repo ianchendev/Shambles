@@ -194,7 +194,7 @@ def test_the_busy_strip_and_a_due_sign_in_draw_without_a_qml_warning(
     root.grabWindow()
 
     ui.switchTo("claude", "Spare")
-    assert pump(lambda: "renewing its login" in ui.busyText, timeout=5)
+    assert pump(lambda: "renewing" in ui.busyText, timeout=5)
     root.grabWindow()
     service.hold.set()
     assert pump(lambda: not ui.busy, timeout=5)

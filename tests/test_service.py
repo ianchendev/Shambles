@@ -1212,6 +1212,23 @@ def test_an_unknown_window_theme_is_refused_and_nothing_is_written(paths):
     assert not paths.settings_path.exists()
 
 
+def test_the_window_place_is_remembered_for_the_next_window(paths):
+    svc = service(paths)
+    assert svc.window_place() is None
+
+    assert svc.set_window_place(40, 50, 640, 480, maximized=False).ok
+    assert service(paths).window_place() == {
+        "x": 40, "y": 50, "width": 640, "height": 480, "maximized": False}
+
+
+def test_a_window_place_that_is_not_one_is_refused_and_nothing_is_written(
+        paths):
+    result = service(paths).set_window_place(40, 50, 0, 480)
+
+    assert not result.ok and result.error.code == "invalid_setting"
+    assert not paths.settings_path.exists()
+
+
 # --- Signing in again before a Claude login's deadline ----------------------
 #
 # The window and the terminal UI now offer Sign in on a Claude account that
