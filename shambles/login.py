@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import ShamblesError
@@ -234,13 +235,18 @@ def available(provider) -> bool:
     return shutil.which(provider.login_binary()) is not None
 
 
-def command(provider, *, email: str | None = None) -> list[str]:
+def command(provider, *, email: str | None = None,
+            device: bool = False) -> list[str]:
     """The vendor's login argv, optionally pre-filling a known address.
 
     A provider that declares no ``email_flag`` gets no address rather than a
-    guessed flag name.
+    guessed flag name. ``device`` asks for the sign-in with a one-time code
+    entered on another device, and only a provider whose spec describes one
+    (:func:`accepts_device_auth`) can give it.
     """
     argv = provider.login_command()
+    if device:
+        argv = argv + [_device_rules(provider)["flag"]]
     flag = provider.spec.get("login", {}).get("email_flag")
     if email and flag:
         argv = argv + [flag, email]
@@ -318,6 +324,106 @@ def clean_code(provider, pasted) -> str:
         if not (head and found and tail):
             raise CodeRejectedError(CODE_INCOMPLETE)
     return text
+
+
+# -- signing in with a code on another device -------------------------------
+
+DEVICE_NOT_OFFERED = ("{binary} cannot sign in with a code from another "
+                      "device. Sign in with the browser instead.")
+
+
+def plain(line: str) -> str:
+    """``line`` without terminal escape sequences.
+
+    Codex colours its device prompt whether or not it is writing to a
+    terminal, so the link and the code each arrive wrapped in escapes.
+    """
+    return _ESCAPE.sub("", line or "")
+
+
+def _device_rules(provider) -> dict:
+    rules = provider.spec.get("login", {}).get("device_auth")
+    if not isinstance(rules, dict):
+        raise LoginUnavailableError(
+            DEVICE_NOT_OFFERED.format(binary=binary(provider)))
+    return rules
+
+
+def accepts_device_auth(provider) -> bool:
+    """Whether this provider can sign in with a code entered elsewhere."""
+    try:
+        _device_rules(provider)
+    except LoginUnavailableError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class DeviceCode:
+    """What to show for a sign-in finished on another device."""
+
+    user_code: str
+    verification_url: str
+    #: How long the vendor waits for the code to be entered.
+    expires_in_s: int
+
+
+class DeviceCodeReader:
+    """Picks the link and the one-time code out of the vendor's output.
+
+    By position, not by the English around them: the link is a line that is
+    exactly the one the spec names, and the code is the first line after it
+    that is nothing but a code. So no other address is ever offered as the
+    place to enter it, and no other line is shown as the code.
+    """
+
+    def __init__(self, provider):
+        rules = _device_rules(provider)
+        self._link = rules["verification_url"]
+        self._code = re.compile(rules["code_pattern"])
+        self._expires_in_s = int(rules.get("expires_in_s") or 0)
+        self._after_link = False
+        self._found = False
+
+    def feed(self, line: str) -> DeviceCode | None:
+        """The code, from the line that completes it; otherwise None."""
+        if self._found:
+            return None
+        text = plain(line).strip()
+        if not self._after_link:
+            self._after_link = text == self._link
+            return None
+        if not self._code.fullmatch(text):
+            return None
+        self._found = True
+        return DeviceCode(user_code=text, verification_url=self._link,
+                          expires_in_s=self._expires_in_s)
+
+
+def known_message(provider, line: str) -> str | None:
+    """Which of the vendor's fixed device sign-in messages ``line`` holds.
+
+    Returns the spec's name for it, never text from the line: what a
+    frontend shows is the spec's own copy of the sentence.
+    """
+    rules = provider.spec.get("login", {}).get("device_auth") or {}
+    text = plain(line)
+    for key, sentence in (rules.get("messages") or {}).items():
+        if sentence and sentence in text:
+            return key
+    return None
+
+
+def device_message(provider, key: str) -> str | None:
+    """The spec's copy of the vendor's fixed message ``key``."""
+    rules = provider.spec.get("login", {}).get("device_auth") or {}
+    return (rules.get("messages") or {}).get(key)
+
+
+def device_setting(provider) -> str:
+    """What has to be switched on for this provider's device sign-in."""
+    rules = provider.spec.get("login", {}).get("device_auth") or {}
+    return rules.get("setting") or ""
 
 
 def environment(provider, *, home, platform) -> dict[str, str]:

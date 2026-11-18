@@ -185,6 +185,19 @@ All [SRC] at `c0cc9fc` unless marked.
   `logout_with_revoke` in `login/src/auth/manager.rs`). So does
   `codex logout`. A saved copy of the login that was live when either ran is
   dead.
+- [SRC, 2026-11] **`codex login --device-auth`** does the same revoke, then
+  asks `<issuer>/api/accounts/deviceauth/usercode` for a one-time code and
+  prints the link `<issuer>/codex/device` (default issuer
+  `https://auth.openai.com`) and the code, each on a line of its own and in
+  ANSI colour whether or not stdout is a terminal. It polls for up to 15
+  minutes. On failure it prints `Error logging in: <message>` to stderr and
+  exits 1. Its fixed messages are "device code login is not enabled for this
+  Codex server. ..." (a 404 for the code), "device auth timed out after 15
+  minutes", and "ChatGPT login is disabled. ...". From rust-v0.169.0:
+  `login/src/device_code_auth.rs` and `cli/src/login.rs`. [DOC] The account
+  must allow it first: "Enable device code login in your ChatGPT security
+  settings (personal account) or ChatGPT workspace permissions (workspace
+  admin)" (learn.chatgpt.com/docs/auth). Not run: no runner has an account.
 - Since 0.167.0 (2026-11-06) `auth.json` is written by temp file and rename
   under two lock files, `auth.lock` and `auth.json.lock`. A hard-linked or
   read-only `auth.json` makes Codex's own save fail.
