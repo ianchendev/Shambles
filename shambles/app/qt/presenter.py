@@ -283,7 +283,9 @@ def _deadline(group, notice, accounts, now_ms, hidden):
         "provider": group.provider,
         "account": account.name,
         "text": f"{account.name} stops working {day}".strip(),
-        "tip": " ".join(p for p in (notice.message, notice.remedy) if p),
+        "tip": as_the_window_says(
+            " ".join(p for p in (notice.message, notice.remedy) if p),
+            tool=group.display_name, names=[a.name for a in group.accounts]),
         "canSignIn": bool(row["signIn"] and row["signInEnabled"]),
     }
 
@@ -659,11 +661,31 @@ def _restates(title: str, message: str) -> bool:
         and len(again) <= len(said) + 2
 
 
-def result_sheet(result, *, name: str) -> dict:
+def as_the_window_says(text: str, *, tool: str = "", names=()) -> str:
+    """The service's words in the window's own (D9).
+
+    The tool by its name where the service says "the vendor", and account
+    names without the quotes the service puts round them: the rest of the
+    window writes ``work``, not ``'work'``. Only the names given lose their
+    quotes, so an apostrophe elsewhere ("vendor's", "O'Brien") is left be.
+    """
+    if tool:
+        text = re.sub(r"\b[Tt]he vendor's\b", f"{tool}'s", text)
+        text = re.sub(r"\b[Tt]he vendor\b", tool, text)
+    for name in sorted(set(names), key=len, reverse=True):
+        if name:
+            text = text.replace(f"'{name}'", name)
+    return text
+
+
+def result_sheet(result, *, name: str, provider_title: str = "",
+                 names=()) -> dict:
     """A sign-in that ended some way other than working.
 
     D7: the body does not repeat the title, and "Sign in to try again" is
-    not said right above the Try again button.
+    not said right above the Try again button. ``provider_title`` names the
+    tool and ``names`` are the provider's accounts, for
+    :func:`as_the_window_says`.
     """
     error = result.error
     code = error.code if error else ""
@@ -672,10 +694,15 @@ def result_sheet(result, *, name: str) -> dict:
     message = error.message if error else ""
     if _restates(title, message):
         message = ""
+    elif code == "login_not_written" and provider_title:
+        message = f"{provider_title} did not save a usable login."
     remedy = error.recovery if error else ""
     if retry:
         remedy = re.sub(rf"\s*Sign in to '{re.escape(name)}' to try again\.\s*$",
                         "", remedy)
+    names = {name, *names}
+    message = as_the_window_says(message, tool=provider_title, names=names)
+    remedy = as_the_window_says(remedy, tool=provider_title, names=names)
     return {
         "kind": "result",
         "tone": "warn" if code in ("login_other_account",

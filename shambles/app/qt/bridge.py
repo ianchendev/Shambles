@@ -696,7 +696,12 @@ class Bridge(QObject):
                 self._view, provider=provider, name=name,
                 error=result.error.message if result.error else ""))
         else:
-            sheet = presenter.result_sheet(result, name=name)
+            group = presenter.find_group(self._view, provider) or {}
+            accounts = ([group["live"]] if group.get("live") else []) \
+                + list(group.get("others") or [])
+            sheet = presenter.result_sheet(
+                result, name=name, provider_title=group.get("title", ""),
+                names=[a["name"] for a in accounts])
             sheet["provider"] = provider
             self._set_sheet(sheet)
 

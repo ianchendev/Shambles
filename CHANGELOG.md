@@ -102,7 +102,9 @@ Notable changes per release. Dates are the tag date.
   logins on a line of its own, with why behind ⓘ: about 35 words where it
   was 90. The notice after a storage move does the same. A failed sign-in
   no longer repeats its title in its text, or says "Sign in to try again"
-  right above the Try again button.
+  right above the Try again button. It names the tool ("Claude Code did
+  not save a usable login") where it said "the vendor", and writes account
+  names without quotes, as the rest of the window does.
 - **Every icon button says what it does** on hover and on keyboard focus,
   using the name a screen reader already reads. One word for each thing:
   "In use" for the account a tool is on (was "Live"), "signed out" for a

@@ -281,7 +281,7 @@ def test_a_login_for_the_wrong_account_is_explained_and_can_be_retried(make):
 
     assert ui.sheet["kind"] == "result"
     assert ui.sheet["title"] == "That was a different account"
-    assert "Nothing was saved over 'Old'" in ui.sheet["message"]
+    assert "Nothing was saved over Old." in ui.sheet["message"]
 
     ui.retry()
 
@@ -393,7 +393,7 @@ def test_adding_an_account_already_saved_says_which_one(make):
         "'Work'. Nothing was saved under 'Second'.", "You are on 'Work' now."))
 
     assert ui.sheet["title"] == "That account is already saved"
-    assert "'Work'" in ui.sheet["message"]
+    assert "already saved as Work." in ui.sheet["message"]
 
 
 def test_a_provider_without_its_cli_cannot_be_added_to(make):

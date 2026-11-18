@@ -515,7 +515,7 @@ def test_a_wrong_account_result_is_a_warning_that_can_be_retried():
 
     assert sheet["title"] == "That was a different account"
     assert sheet["tone"] == "warn" and sheet["retry"] is True
-    assert "Nothing was saved over 'Personal'" in sheet["message"]
+    assert "Nothing was saved over Personal." in sheet["message"]
 
 
 def test_removing_says_what_it_costs_and_names_the_address():
@@ -669,11 +669,13 @@ def test_a_failed_sign_in_does_not_repeat_its_title_or_its_button():
         "You are back on 'work'. Nothing was lost. Sign in to 'client' to "
         "try again."))
 
-    sheet = presenter.result_sheet(result, name="client")
+    sheet = presenter.result_sheet(result, name="client",
+                                   provider_title="Claude Code",
+                                   names=["work", "client"])
 
     assert sheet["title"] == "Sign-in did not finish"
     assert sheet["message"] == ""
-    assert sheet["remedy"] == "You are back on 'work'. Nothing was lost."
+    assert sheet["remedy"] == "You are back on work. Nothing was lost."
     assert sheet["retry"] is True
 
 
@@ -682,10 +684,42 @@ def test_a_message_that_adds_to_the_title_is_kept():
         "login_not_written", "The vendor did not write a usable login.",
         "'client' still needs a sign-in. Sign in to 'client' to try again."))
 
-    sheet = presenter.result_sheet(result, name="client")
+    sheet = presenter.result_sheet(result, name="client",
+                                   provider_title="Codex",
+                                   names=["work", "client"])
 
-    assert sheet["message"] == "The vendor did not write a usable login."
-    assert sheet["remedy"] == "'client' still needs a sign-in."
+    # The tool by name, not "the vendor"; names as the rest of the window
+    # writes them, without quotes (D9).
+    assert sheet["message"] == "Codex did not save a usable login."
+    assert sheet["remedy"] == "client still needs a sign-in."
+
+
+def test_only_account_names_lose_their_quotes():
+    result = ActionResult(False, "login", error=ActionError(
+        "login_other_account",
+        "Your browser signed in as dev@example.test, but 'O'Brien' is "
+        "obrien@example.test. Nothing was saved over 'O'Brien'.",
+        "The vendor's page can sign you out first. Then sign in to "
+        "'O'Brien' again."))
+
+    sheet = presenter.result_sheet(result, name="O'Brien",
+                                   provider_title="Claude Code",
+                                   names=["O'Brien", "work"])
+
+    assert sheet["message"] == (
+        "Your browser signed in as dev@example.test, but O'Brien is "
+        "obrien@example.test. Nothing was saved over O'Brien.")
+    assert sheet["remedy"] == ("Claude Code's page can sign you out first. "
+                               "Then sign in to O'Brien again.")
+
+
+def test_a_deadline_tooltip_writes_names_without_quotes():
+    shown = only(view(group(due_account("Work", active=True,
+                                        expires_at_ms=NOW + DAY),
+                            notices=[SOON]), now_ms=NOW))
+
+    assert "'Work'" not in shown["deadline"]["tip"]
+    assert shown["deadline"]["tip"].startswith("Work stops working")
 
 
 # -- a saved account signed in under the wrong marker ------------------------------
@@ -829,7 +863,8 @@ def test_a_deadline_in_the_last_three_days_is_one_line_with_sign_in():
     assert strip["account"] == "Work"
     assert strip["text"].startswith("Work stops working ")
     assert len(strip["text"].split()) <= 8
-    assert strip["tip"] == SOON.message + " " + SOON.remedy
+    assert strip["tip"] == (SOON.message + " " + SOON.remedy).replace(
+        "'Work'", "Work")
     assert strip["canSignIn"] is True
 
 
