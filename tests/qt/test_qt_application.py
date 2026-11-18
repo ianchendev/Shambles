@@ -222,6 +222,29 @@ def test_reset_old_and_running_limits_draw_without_a_qml_warning(window, pump):
     assert messages == []
 
 
+def test_a_warning_message_draws_and_stays_without_a_qml_warning(window,
+                                                                  pump):
+    """M1: a switch that did not reach something. The message keeps its
+    close button and does not time out."""
+    engine, ui, service, messages = window()
+    root = engine.rootObjects()[0]
+    service.fail["switch"] = ActionResult(
+        True, "switch", "", snapshot=service.snap,
+        warnings=("CLAUDE_CODE_OAUTH_TOKEN is set here, and Claude Code uses "
+                  "it ahead of any saved login.",))
+
+    ui.switchTo("claude", "Personal")
+    pump(timeout=0.3)
+    root.grabWindow()
+
+    from PySide6.QtCore import QObject
+    toast = root.findChild(QObject, "toast")
+    close = root.findChild(QObject, "toastClose")
+    assert toast.property("stays") is True
+    assert close.property("visible") is True
+    assert messages == []
+
+
 def test_the_unsaved_login_and_empty_states_draw_without_a_qml_warning(
         window, pump):
     engine, ui, service, messages = window(FakeService(unsaved()))

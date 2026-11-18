@@ -255,7 +255,9 @@ class Bridge(QObject):
             text = " ".join(part for part in
                             (success or result.summary, *result.warnings)
                             if part)
-            self._say(text)
+            # A warning is something the action did not reach (M1): it
+            # stays until closed, where a plain success goes by itself.
+            self._say(text, "warn" if result.warnings else "ok")
         else:
             self._say(_error_text(result), "bad")
         return result.ok
