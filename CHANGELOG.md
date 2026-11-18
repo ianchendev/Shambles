@@ -19,6 +19,19 @@ Notable changes per release. Dates are the tag date.
   Nothing is stopped or changed for you; `shambles doctor` reports the same
   things. Running processes are listed on Linux, WSL and macOS, not yet on
   native Windows.
+- **Paste the code from Claude's sign-in page.** Opened on another device
+  or browser profile, or from Copy link, Claude's sign-in page ends by
+  showing a code instead of signing you in. There was nowhere to put it,
+  so those sign-ins could never finish. The sign-in sheet now has a field
+  for it. The code goes straight to Claude Code; the window does not keep
+  or show it. This works on Windows too.
+- **Codex: sign in on another device.** The Codex sign-in sheet offers
+  This browser or Another device. Another device shows a one-time code and
+  its link, with Copy code, Copy link and how long the code lasts, to enter
+  from a phone or any other browser. The ChatGPT account has to allow
+  sign-in with a code (device code login, in its security settings or its
+  workspace's permissions). If it does not, the sheet says so and where to
+  turn it on.
 
 ### Changed
 
@@ -29,6 +42,9 @@ Notable changes per release. Dates are the tag date.
   on and says so: "Admin renewed until 18 Dec. You're still on Personal."
   Signing in an account whose login has lapsed, to use it, still leaves you
   on it.
+- **A shorter sign-in sheet.** Four sentence-long steps are now one line,
+  Saved, Ready, Your browser, Save, each explained on hover. The advice
+  about which browser profile to use sits behind the ⓘ beside the link.
 - **A limit that has reset says so.** A saved reading carries its reset
   time. Once that time has passed the window shows the limit as reset
   instead of an old 100%, with the old figure on hover. Reset times under

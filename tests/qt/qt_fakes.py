@@ -62,6 +62,15 @@ def due():
                               notices=[notice])])
 
 
+def codex_pair():
+    """Claude's Work live; Codex's Main live and Spare signed out."""
+    return Snapshot(1, [
+        group(account("Work", active=True)),
+        group(account("Main", active=True), lapsed("Spare"),
+              provider="codex", title="Codex"),
+    ])
+
+
 def unsaved():
     notice = Notice("unsaved_login",
                     "Signed in as new@example.test, which is not saved yet.",
@@ -78,12 +87,22 @@ def failure(action, code, message, recovery=""):
 
 
 class Handle:
-    def __init__(self):
+    def __init__(self, *, accepts_code=False):
         self.cancelled = False
         self.waited = None
+        self.accepts_code = accepts_code
+        #: Codes sent, and what send_code answers next (None: success).
+        self.codes = []
+        self.answer = None
 
     def cancel(self):
         self.cancelled = True
+
+    def send_code(self, code):
+        self.codes.append(code)
+        if self.answer is not None:
+            return self.answer
+        return ActionResult(True, "send_code", "Code sent.")
 
     def wait(self, timeout=None):
         self.waited = timeout
@@ -114,6 +133,9 @@ class FakeService:
         #: (on_line, on_done) of the sign-in in flight.
         self.login = None
         self.handles = []
+        #: ``device`` for each sign-in started, and its code callback.
+        self.devices = []
+        self.device_code = None
 
     # -- reads ---------------------------------------------------------
 
@@ -209,20 +231,30 @@ class FakeService:
         self.calls.append(("open", url))
         return self.opens
 
-    def _start(self, action, provider, name, on_line, on_done):
+    def offers_device_sign_in(self, provider):
+        return provider == "codex"
+
+    def _start(self, action, provider, name, on_line, on_done, device,
+               on_device_code):
         self.calls.append((action, provider, name))
+        self.devices.append(device)
         if action in self.fail:
             on_done(self.fail[action])
             return Handle()
         self.login = (on_line, on_done)
-        self.handles.append(Handle())
+        self.device_code = on_device_code
+        self.handles.append(Handle(accepts_code=provider == "claude"))
         return self.handles[-1]
 
-    def start_login(self, provider, name, on_line, on_done):
-        return self._start("start_login", provider, name, on_line, on_done)
+    def start_login(self, provider, name, on_line, on_done, *, device=False,
+                    on_device_code=None):
+        return self._start("start_login", provider, name, on_line, on_done,
+                           device, on_device_code)
 
-    def start_add(self, provider, name, on_line, on_done):
-        return self._start("start_add", provider, name, on_line, on_done)
+    def start_add(self, provider, name, on_line, on_done, *, device=False,
+                  on_device_code=None):
+        return self._start("start_add", provider, name, on_line, on_done,
+                           device, on_device_code)
 
     # -- test helpers --------------------------------------------------
 
