@@ -8,7 +8,7 @@ pytest.importorskip("PySide6.QtQuick", exc_type=ImportError,
 from qt_fakes import FakeService, failure, unsaved  # noqa: E402
 from qt_support import pump, qt_app  # noqa: E402,F401
 from shambles.app.qt import application  # noqa: E402
-from shambles.app.service import ActionResult  # noqa: E402
+from shambles.app.service import ActionResult, DeviceSignIn  # noqa: E402
 
 WSL = {"WSL_DISTRO_NAME": "Ubuntu"}
 
@@ -154,6 +154,18 @@ def test_every_sheet_and_both_themes_draw_without_a_qml_warning(window, pump):
                                "A different account.", "Try a private window."))
         shown()
         ui.dismiss()
+        # Codex's "Another device" sheet, before and after its code.
+        ui.openAdd("codex")
+        ui.submitAdd("codex", "Spare")
+        ui.chooseMethod("device")
+        shown()
+        service.settle(failure("login", "login_cancelled", "Cancelled."))
+        service.device_code(DeviceSignIn(
+            "CODE-12345", "https://auth.openai.com/codex/device",
+            ui._clock_ms() + 15 * 60_000))
+        shown()
+        ui.cancelLogin()
+        service.settle(failure("login", "login_cancelled", "Cancelled."))
         ui.switchTo("claude", "Personal")
         assert pump(lambda: not ui.busy, timeout=5)
         root.setProperty("expandedId", "claude/Old")

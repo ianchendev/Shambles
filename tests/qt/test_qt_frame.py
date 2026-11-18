@@ -259,6 +259,33 @@ def open_each_sheet(ui, service):
                            "A different account.", "Try a private window."))
     yield "result"
     ui.dismiss()
+    yield from open_device_sheet(ui, service)
+    service.settle(failure(
+        "login", "login_failed",
+        'Codex said: "device code login is not enabled for this Codex '
+        'server. Use the browser login or verify the server URL."',
+        "You are back on 'Main'. Nothing was lost. Signing in with a code "
+        "needs device code login turned on in your ChatGPT security "
+        "settings, or allowed in your workspace's permissions by its admin. "
+        "Then sign in to 'Spare' again."))
+    yield "device failure"
+    ui.dismiss()
+
+
+def open_device_sheet(ui, service):
+    """Codex's "Another device" sheet with its code: yields its name."""
+    from qt_fakes import failure
+
+    from shambles.app.service import DeviceSignIn
+
+    ui.openAdd("codex")
+    ui.submitAdd("codex", "Spare")
+    ui.chooseMethod("device")
+    service.settle(failure("login", "login_cancelled", "Sign-in cancelled."))
+    service.device_code(DeviceSignIn(
+        "CODE-12345", "https://auth.openai.com/codex/device",
+        ui._clock_ms() + 15 * 60_000))
+    yield "device"
     ui.askRename("claude", "Personal")
     yield "rename"
     ui.dismiss()
