@@ -1,11 +1,13 @@
 """Structured data exchanged by the application service boundary."""
 
 from dataclasses import asdict, dataclass
+import os
 import threading
 
 from .. import eject as eject_mod
 from .. import login
 from .. import migrate as migrate_mod
+from .. import reach
 from .. import settings as settings_mod
 from .. import state
 from .. import switcher
@@ -13,6 +15,9 @@ from .. import usage as usage_mod
 from ..errors import (AlreadyManagedError, ConfigUnreadableError,
                       DriftedLoginError, ProfileNotFoundError, ShamblesError)
 from ..stores.base import StoreUnavailableError
+from ..stores.fallback import FallbackStore
+from ..stores.file import FileStore
+from ..stores.unsupported import UnsupportedStore
 from . import snapshot as snapshot_mod
 from .snapshot import Snapshot
 
@@ -62,6 +67,20 @@ class ActionPlan:
 
 
 @dataclass(frozen=True)
+class ActionOffer:
+    """One next step a frontend may offer beside a result, never take.
+
+    ``action`` names the service call it stands for (``switch``), on
+    ``provider``/``account``; ``label`` is the button's text.
+    """
+
+    action: str
+    provider: str
+    account: str | None
+    label: str
+
+
+@dataclass(frozen=True)
 class ActionResult:
     ok: bool
     action: str
@@ -69,6 +88,7 @@ class ActionResult:
     warnings: tuple[str, ...] = ()
     snapshot: Snapshot | None = None
     error: ActionError | None = None
+    offer: ActionOffer | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -79,6 +99,7 @@ class ActionResult:
             "snapshot": (snapshot_mod.to_dict(self.snapshot)
                          if self.snapshot else None),
             "error": (asdict(self.error) if self.error else None),
+            "offer": (asdict(self.offer) if self.offer else None),
         }
 
 
@@ -180,12 +201,98 @@ class LoginHandle:
 HIDDEN_LINE = "[vendor output hidden]"
 
 
+def _day_month(ms) -> str:
+    """``ms`` as ``18 Dec`` in local time, or ``""``."""
+    import datetime
+    try:
+        when = datetime.datetime.fromtimestamp(ms / 1000)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+    return f"{when.day} {when.strftime('%b')}"
+
+
 def _safe_login_line(line):
     # Vendor stdout has no stable schema and can contain credentials under
     # spellings Shambles cannot enumerate safely. The one documented value a
     # caller needs is a supported sign-in URL, checked by the login layer;
     # everything else becomes a fixed progress message.
     return login.authorization_url(line) or HIDDEN_LINE
+
+
+def _reads_only_files(store) -> bool:
+    """Whether reading ``store`` touches nothing but files.
+
+    Anything not known to be a file counts as not, so a store added later
+    is kept off the automatic path until someone says otherwise.
+    """
+    return isinstance(store, (FileStore, UnsupportedStore))
+
+
+def _files_of(store) -> list:
+    """The files behind a store, for watching. Never reads the store."""
+    if isinstance(store, FileStore):
+        return [store.path]
+    if isinstance(store, FallbackStore):
+        return _files_of(store.primary) + _files_of(store.fallback)
+    return []
+
+
+class _Recorded:
+    """A store whose every read is remembered for :meth:`refresh_files`."""
+
+    def __init__(self, real, memory, key):
+        self._real, self._memory, self._key = real, memory, key
+
+    def read(self):
+        try:
+            blob = self._real.read()
+        except Exception as exc:
+            self._memory[self._key] = (False, exc)
+            raise
+        self._memory[self._key] = (True, blob)
+        return blob
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class _Remembered:
+    """A store answered from the last explicit read, without touching it."""
+
+    def __init__(self, real, outcome):
+        self._real, self._outcome = real, outcome
+
+    def read(self):
+        ok, value = self._outcome
+        if not ok:
+            raise value
+        return value
+
+    def write(self, payload):
+        raise StoreUnavailableError("A files-only refresh never writes.")
+
+    def delete(self):
+        raise StoreUnavailableError("A files-only refresh never writes.")
+
+    def describe(self):
+        return self._real.describe()
+
+
+def _with_store(provider, wrap):
+    """``provider``, its ``store()`` answered through ``wrap``.
+
+    A shallow copy rather than a proxy: code that rebuilds a provider from
+    ``type(provider)`` must still get the real class.
+    """
+    import copy
+    twin = copy.copy(provider)
+    real = provider.store
+
+    def store(*, home, platform):
+        return wrap(real(home=home, platform=platform))
+
+    twin.store = store
+    return twin
 
 
 class ShamblesService:
@@ -195,6 +302,49 @@ class ShamblesService:
         self.providers = tuple(providers)
         self.platform = platform
         self.clock_ms = clock_ms
+        #: provider id -> (ok, bytes or exception): the last explicit read of
+        #: each store that is not a plain file. What refresh_files() answers
+        #: from, so nothing automatic ever reaches the Keychain.
+        self._remembered = {}
+        #: provider id -> newest session log, found at the last read. Kept so
+        #: watch_signature() never walks the session tree; a log started
+        #: since is found by the next read (the minute timer at the latest).
+        self._session_logs = {}
+        #: provider id -> who the vendor's own files named at the last
+        #: explicit read, for each provider answered from memory above.
+        self._file_identity = {}
+
+    def _identity_in_files(self, provider):
+        """Who the vendor's files say is signed in, without its store.
+
+        Claude Code writes the account into ``~/.claude.json`` at sign-in,
+        so a sign-in made outside Shambles shows there even when the token
+        itself is in the Keychain. None for a provider with no such file.
+        """
+        from .. import configjson
+        try:
+            where = provider.companion_path(home=self.paths.home)
+        except Exception:
+            return None
+        if where is None:
+            return None
+        account = configjson.load(where).get("oauthAccount")
+        if not isinstance(account, dict):
+            return ()
+        return tuple(account.get(key) for key in
+                     ("accountUuid", "emailAddress", "organizationUuid"))
+
+    def _find_session_logs(self):
+        from ..providers import spec as specmod
+        for provider in self.providers:
+            if provider.id != "codex":
+                continue
+            try:
+                self._session_logs[provider.id] = usage_mod.latest_codex_session(
+                    specmod.config_dir(provider.spec, home=self.paths.home,
+                                       env=getattr(provider, "env", None)))
+            except Exception:
+                self._session_logs.pop(provider.id, None)
 
     def _provider(self, provider_id):
         try:
@@ -203,9 +353,114 @@ class ShamblesService:
             raise KeyError(provider_id)
 
     def snapshot(self):
-        return snapshot_mod.build(paths=self.paths, providers=self.providers,
-                                  platform=self.platform,
-                                  now_ms=self.clock_ms())
+        """Read everything, stores included, and remember what they said."""
+        def recorded(provider):
+            def wrap(store):
+                if _reads_only_files(store):
+                    return store
+                return _Recorded(store, self._remembered, provider.id)
+            return _with_store(provider, wrap)
+
+        self._find_session_logs()
+        for provider in self.providers:
+            self._file_identity[provider.id] = self._identity_in_files(provider)
+        return snapshot_mod.build(
+            paths=self.paths,
+            providers=[recorded(p) for p in self.providers],
+            platform=self.platform, now_ms=self.clock_ms())
+
+    def refresh_files(self):
+        """Re-read what the vendors wrote, from files only (U2).
+
+        For everything nobody asked for: the window regaining focus, a file
+        changing, the minute timer. Reading the macOS Keychain on a timer
+        raises password prompts, so a store that is not a plain file is
+        answered with what it said at the last explicit read (Refresh, a
+        switch, a sign-in). With no such read yet there is no answer, and
+        guessing "empty" would show the live account as signed out, so this
+        then returns no snapshot at all.
+
+        Writes nothing but the usage sidecar, as :meth:`refresh` does: no
+        adoption, no re-stash. Those read the live store and move bytes, and
+        stay behind an explicit action.
+        """
+        wrapped = []
+        for provider in self.providers:
+            try:
+                store = provider.store(home=self.paths.home,
+                                       platform=self.platform)
+            except Exception:
+                store = None
+            if store is not None and not _reads_only_files(store):
+                if provider.id not in self._remembered:
+                    return ActionResult(True, "refresh_files")
+                # Signed in outside Shambles: the files name somebody new
+                # while the remembered store answer is the old token. A
+                # snapshot from both would be neither state, so none.
+                if (self._identity_in_files(provider)
+                        != self._file_identity.get(provider.id)):
+                    return ActionResult(False, "refresh_files", error=ActionError(
+                        "changed_outside",
+                        f"{provider.display_name}'s login changed outside "
+                        "Shambles.",
+                        "Press Refresh to read it."))
+            outcome = self._remembered.get(provider.id)
+            wrapped.append(_with_store(
+                provider,
+                lambda real, outcome=outcome: (
+                    real if _reads_only_files(real) or outcome is None
+                    else _Remembered(real, outcome))))
+
+        for provider in self.providers:
+            try:
+                usage_mod.capture_live(
+                    self.paths, provider.id,
+                    state.read_active(self.paths, provider.id),
+                    now_ms=self.clock_ms(), provider=provider)
+            except Exception:
+                pass  # display only; the next read tries again
+        self._find_session_logs()
+        try:
+            fresh = snapshot_mod.build(paths=self.paths, providers=wrapped,
+                                       platform=self.platform,
+                                       now_ms=self.clock_ms())
+        except Exception:
+            return ActionResult(True, "refresh_files")
+        return ActionResult(True, "refresh_files", snapshot=fresh)
+
+    def watch_signature(self):
+        """A cheap fingerprint of every file a refresh would read.
+
+        Size and modification time of the vendors' login files and config,
+        Shambles' own markers, and the newest Codex session log. Stats only:
+        no file is opened, and no store is asked anything. When this changes
+        something was written, and :meth:`refresh_files` is worth running.
+        """
+        watched = []
+        for provider in self.providers:
+            try:
+                store = provider.store(home=self.paths.home,
+                                       platform=self.platform)
+            except Exception:
+                store = None
+            watched += _files_of(store)
+            companion = provider.companion_path(home=self.paths.home)
+            if companion is not None:
+                watched.append(companion)
+            watched.append(self.paths.active_marker(provider.id))
+            watched.append(self.paths.provider_dir(provider.id))
+            watched.append(self._session_logs.get(provider.id))
+        signature = []
+        for path in watched:
+            if path is None:
+                continue
+            try:
+                info = os.stat(path)
+            except OSError:
+                signature.append((str(path), None))
+                continue
+            signature.append((str(path), info.st_mtime_ns, info.st_size))
+        return tuple(signature)
 
     def plan_switch(self, provider_id, account):
         return ActionPlan("switch", provider_id, account, False,
@@ -224,7 +479,7 @@ class ShamblesService:
             switcher.switch(self.paths, provider, account,
                             platform=self.platform, on_wait=on_wait)
             return self._result(True, "switch", f"Switched to {account}.",
-                                warnings=self._switch_warnings(provider))
+                                warnings=self._switch_warnings(provider, account))
         except ShamblesError as exc:
             return self._failure("switch", exc)
 
@@ -483,11 +738,15 @@ class ShamblesService:
         def finish(exit_code):
             try:
                 outcome = settle(exit_code == 0 and not cancelled.is_set())
-                result = self._login_result(action, provider, outcome,
-                                            exit_code=exit_code,
-                                            cancelled=cancelled.is_set(),
-                                            device=device,
-                                            notice=heard.get("notice"))
+                if (outcome.kind == switcher.RENEWED
+                        and prepared.get("renewing")):
+                    result = self._renewed(provider, outcome)
+                else:
+                    result = self._login_result(action, provider, outcome,
+                                                exit_code=exit_code,
+                                                cancelled=cancelled.is_set(),
+                                                device=device,
+                                                notice=heard.get("notice"))
             except ShamblesError as exc:
                 result = self._failure(action, exc)
             except Exception:
@@ -547,9 +806,15 @@ class ShamblesService:
                     self.paths, provider, account, platform=self.platform)
                 email = None
             else:
+                # Decided before anything moves: whether this is a renewal
+                # of a parked account that still works (D11), to be put back
+                # afterwards, or a sign-in to use it.
+                renewing = self._renewal(provider, account)
                 prepared["previous"] = switcher.begin_relogin(
                     self.paths, provider, account, platform=self.platform)
                 prepared["account"] = account
+                prepared["renewing"] = (renewing and bool(prepared["previous"])
+                                        and prepared["previous"] != account)
                 email = state.profile_email(self.paths, provider, account)
             process = login.LoginProcess(
                 login.command(provider, email=email, device=device),
@@ -566,6 +831,56 @@ class ShamblesService:
                     "Check the login configuration and retry.")))
         return LoginHandle(process, completed, cancelled, provider=provider)
 
+    def _renewal(self, provider, name) -> bool:
+        """Whether signing ``name`` in now is a renewal (D11).
+
+        Yes when it is parked and its saved login still works: the user is
+        signing in early to keep it, not to use it. A lapsed login, or the
+        account already in use, is not.
+        """
+        if self._live_profile(provider) in (None, name):
+            return False
+        try:
+            blob = self.paths.credentials(provider.id, name).read_bytes()
+        except OSError:
+            return False
+        try:
+            return (bool(blob) and provider.has_login(blob)
+                    and not provider.liveness(
+                        blob, now_ms=self.clock_ms()).needs_login)
+        except Exception:
+            return False
+
+    def _renewed(self, provider, outcome):
+        """A renewal saved under its account. Now put the user back.
+
+        The ordinary switch, so the account set aside comes back exactly as
+        it was kept. The new login is already filed by then, so a switch
+        back that is refused costs nothing but the move: the user stays on
+        the renewed account and is told so.
+        """
+        name, previous = outcome.profile, outcome.previous
+        until = ""
+        try:
+            blob = self.paths.credentials(provider.id, name).read_bytes()
+            expires = provider.liveness(blob,
+                                        now_ms=self.clock_ms()).expires_at_ms
+            until = _day_month(expires) if expires else ""
+        except Exception:
+            pass
+        renewed = (f"{name} renewed until {until}." if until
+                   else f"{name} renewed.")
+        try:
+            switcher.switch(self.paths, provider, previous,
+                            platform=self.platform, now_ms_fn=self.clock_ms)
+        except ShamblesError:
+            return self._result(True, "login", f"{renewed} You're on {name} "
+                                f"now; switch back to {previous} when you "
+                                "like.")
+        return self._result(
+            True, "login", f"{renewed} You're still on {previous}.",
+            offer=ActionOffer("switch", provider.id, name, f"Use {name}"))
+
     @staticmethod
     def _unwind(prepared, settle):
         """Put the user back after a launch that failed once they had moved."""
@@ -576,7 +891,7 @@ class ShamblesService:
         except Exception:
             pass
 
-    def _switch_warnings(self, provider):
+    def _switch_warnings(self, provider, account):
         """What a successful switch did not reach.
 
         A terminal whose environment points the vendor somewhere else keeps
@@ -584,14 +899,32 @@ class ShamblesService:
         it on exactly that one. Said with the result, because that is when a
         person acts on it.
         """
+        said = []
         override = state.config_dir_override(
             provider, home=self.paths.home, env=getattr(provider, "env", None))
-        if not override:
-            return ()
-        variable = (provider.spec.get("config_dir") or {}).get("env", "")
-        return (f"{variable} is set in this environment, so a terminal started "
-                f"from here reads its login from {override}, not the one "
-                "Shambles just switched. VS Code is unaffected.",)
+        if override:
+            variable = (provider.spec.get("config_dir") or {}).get("env", "")
+            said.append(
+                f"{variable} is set in this environment, so a terminal "
+                f"started from here reads its login from {override}, not the "
+                "one Shambles just switched. VS Code is unaffected.")
+        # M1. Only Codex is asked about running processes: its code keeps a
+        # loaded login until restarted, where Claude Code re-reads a changed
+        # one at its next request.
+        running = None
+        if provider.id == "codex":
+            try:
+                running = login.running_programs(
+                    login.binary(provider), platform=self.platform)
+            except Exception:
+                running = None
+        try:
+            said += reach.after_switch(
+                provider, account, home=self.paths.home,
+                env=getattr(provider, "env", None), running=running)
+        except Exception:
+            pass  # what a switch did not reach is advice, never a failure
+        return tuple(said)
 
     def _live_profile(self, provider):
         """The saved profile that is live right now, if there is one."""
@@ -764,7 +1097,8 @@ class ShamblesService:
         return self._result(False, action,
                             error=ActionError(code, message, recovery))
 
-    def _result(self, ok, action, summary="", *, error=None, warnings=()):
+    def _result(self, ok, action, summary="", *, error=None, warnings=(),
+                offer=None):
         """A failed read cannot erase an operation that already finished."""
         try:
             fresh = self.snapshot()
@@ -773,6 +1107,6 @@ class ShamblesService:
                 ok, action, summary,
                 warnings=(*warnings,
                           "Account status is unavailable. Refresh to retry."),
-                error=error)
+                error=error, offer=offer)
         return ActionResult(ok, action, summary, warnings=tuple(warnings),
-                            snapshot=fresh, error=error)
+                            snapshot=fresh, error=error, offer=offer)

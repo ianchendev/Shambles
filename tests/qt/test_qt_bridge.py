@@ -229,6 +229,45 @@ def test_a_renewed_login_closes_the_sheet_and_confirms_the_account(make):
     assert ui.toast["text"] == "Old is signed in and in use."
 
 
+def test_a_renewal_says_you_are_still_where_you_were(make):
+    """D11. The service renewed Personal and put you back on Work: the toast
+    is its summary, and nothing pulses as if Personal had become live."""
+    from shambles.app.service import ActionOffer
+
+    ui, service, _ = make()
+    seen = []
+    ui.confirmed.connect(seen.append)
+    ui.signIn("claude", "Old")
+
+    service.settle(ActionResult(
+        True, "login", "Old renewed until 18 Dec. You're still on Work.",
+        snapshot=service.snap,
+        offer=ActionOffer("switch", "claude", "Old", "Use Old")))
+
+    assert ui.sheet == {}
+    assert seen == []
+    assert ui.toast["text"] == "Old renewed until 18 Dec. You're still on Work."
+    assert ui.toast["actionLabel"] == "Use Old"
+    assert service.named("switch") == []
+
+
+def test_use_on_a_renewal_toast_switches_to_the_renewed_account(make):
+    """The button is offered, never pressed for the user."""
+    from shambles.app.service import ActionOffer
+
+    ui, service, _ = make()
+    renewal = ActionResult(
+        True, "login", "Personal renewed until 18 Dec. You're still on Work.",
+        snapshot=service.snap,
+        offer=ActionOffer("switch", "claude", "Personal", "Use Personal"))
+    ui.signIn("claude", "Old")
+    service.settle(renewal)
+
+    ui.toastAction()
+
+    assert service.named("switch") == [("switch", "claude", "Personal")]
+
+
 def test_a_login_for_the_wrong_account_is_explained_and_can_be_retried(make):
     """Nothing was saved over the profile, and the window says so."""
     ui, service, _ = make()
@@ -861,3 +900,177 @@ def test_holding_ctrl_is_said_once_per_change(make):
     ui.set_ctrl_held(False)
 
     assert seen == [True, False]
+
+
+# -- U2: the window keeps itself current ------------------------------------------
+
+
+def test_coming_back_to_the_window_re_reads_files_only(make):
+    """Focus is not an explicit action, so it must never reach the
+    Keychain: refresh_files, not refresh."""
+    from qt_fakes import with_usage
+
+    now = [1_790_000_000_000]
+    ui, service, _ = make(clock_ms=lambda: now[0])
+    service.snap = with_usage(now[0])
+    service.calls.clear()
+
+    ui.windowFocused()          # the focus the window gets as it opens
+    assert service.named("refresh_files") == []
+
+    now[0] += bridge_mod.FOCUS_GAP_MS
+    ui.windowFocused()
+
+    assert service.named("refresh_files") == [("refresh_files",)]
+    assert service.named("refresh") == []
+    assert ui.view["groups"][0]["live"]["name"] == "Work"
+    assert ui.view["groups"][0]["others"][0]["name"] == "Dev"
+
+
+def test_a_file_written_by_the_vendor_is_picked_up_by_the_poll(make):
+    ui, service, _ = make()
+    service.calls.clear()
+
+    ui.poll()
+    assert service.named("refresh_files") == []
+
+    service.signature = (("claude.json", 2, 10),)
+    ui.poll()
+    ui.poll()
+
+    assert service.named("refresh_files") == [("refresh_files",)]
+
+
+def test_the_timers_run_once_the_window_has_started(make):
+    ui, _service, _ = make()
+
+    assert ui._poll.isActive() and ui._poll.interval() == bridge_mod.POLL_MS
+    assert ui._minute.isActive()
+    assert ui._minute.interval() == bridge_mod.REREAD_MS == 60_000
+
+
+def test_nothing_is_re_read_under_a_running_switch(make):
+    import threading
+
+    ui, service, _ = make(runner=None)
+    service.hold = threading.Event()
+    ui.switchTo("claude", "Personal")
+    assert ui.busy
+    service.calls = [c for c in service.calls if c[0] != "refresh_files"]
+
+    ui.windowFocused()
+    ui.reread()
+
+    assert service.named("refresh_files") == []
+    service.hold.set()
+    ui.shutdown()
+
+
+def test_nothing_is_re_read_under_a_running_sign_in(make):
+    ui, service, _ = make()
+    ui.signIn("claude", "Old")
+    assert ui.sheet["kind"] == "login"
+    service.calls.clear()
+
+    ui.windowFocused()
+    ui.reread()
+
+    assert service.named("refresh_files") == []
+
+
+def test_a_files_only_read_with_no_answer_leaves_the_window_as_it_was(make):
+    """No snapshot means the service could not answer without the
+    Keychain. The window keeps what it shows rather than blanking it."""
+    ui, service, _ = make()
+    before = ui.view
+    service.fail["refresh_files"] = ActionResult(True, "refresh_files")
+
+    ui.reread()
+
+    assert ui.view == before
+
+
+def test_a_re_read_that_changes_nothing_does_not_redraw(make):
+    ui, _service, _ = make()
+    redraws = []
+    ui.viewChanged.connect(lambda: redraws.append(1))
+
+    ui.reread()
+    ui.poll()
+
+    assert redraws == []
+
+
+def test_the_header_says_when_the_window_last_read(make):
+    now = [1_790_000_000_000]
+    ui, _service, _ = make(clock_ms=lambda: now[0])
+    assert ui.updatedText == "Updated just now"
+    assert "Nothing goes online" in ui.updatedTip
+
+    now[0] += 5 * 60_000
+    ui.tick()
+    assert ui.updatedText == "Updated 5m ago"
+
+    ui.reread()
+    assert ui.updatedText == "Updated just now"
+
+
+def test_a_login_changed_outside_shambles_keeps_the_view_and_says_refresh(make):
+    from shambles.app.service import ActionError
+
+    ui, service, _ = make()
+    before = ui.view
+    service.fail["refresh_files"] = ActionResult(
+        False, "refresh_files", error=ActionError(
+            "changed_outside", "Claude Code's login changed outside Shambles."))
+
+    ui.reread()
+    ui.tick()
+
+    assert ui.view == before
+    assert ui.updatedText == "Changed outside Shambles · Refresh"
+    assert "Refresh" in ui.updatedTip
+
+    del service.fail["refresh_files"]
+    ui.refresh()
+    assert ui.updatedText == "Updated just now"
+
+
+def test_a_login_changed_outside_is_not_asked_about_again_every_poll(make):
+    from shambles.app.service import ActionError
+
+    ui, service, _ = make()
+    service.fail["refresh_files"] = ActionResult(
+        False, "refresh_files", error=ActionError("changed_outside", "Changed."))
+    service.signature = (("claude.json", 9, 9),)
+    service.calls.clear()
+
+    ui.poll()
+    ui.poll()
+    ui.poll()
+
+    assert len(service.named("refresh_files")) == 1
+# -- M1: what a switch did not reach --------------------------------------------
+
+
+def test_a_switch_that_did_not_reach_something_says_so_and_stays(make):
+    ui, service, _ = make()
+    service.fail["switch"] = ActionResult(
+        True, "switch", "Switched to Personal.", snapshot=service.snap,
+        warnings=("Codex's background service (codex app-server) is still "
+                  "running with the account it started with.",))
+
+    ui.switchTo("claude", "Personal")
+
+    assert ui.toast["tone"] == "warn"
+    assert ui.toast["text"].startswith("Switched to Personal. Codex's "
+                                       "background service")
+    assert ui.toast["actionLabel"] == ""
+
+
+def test_a_plain_switch_is_still_a_message_that_goes_by_itself(make):
+    ui, _service, _ = make()
+
+    ui.switchTo("claude", "Personal")
+
+    assert ui.toast["tone"] == "ok"

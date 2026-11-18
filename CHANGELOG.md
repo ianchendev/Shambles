@@ -4,8 +4,31 @@ Notable changes per release. Dates are the tag date.
 
 ## Unreleased
 
+### Added
+
+- **A switch says what it did not reach.** After a switch Shambles looks
+  for the usual reasons "I switched but nothing changed", and says what to
+  do. A Codex process that was already running, including the background
+  service VS Code starts (`codex app-server`), stays on the account it
+  started with until it is restarted; Codex's own code only re-reads its
+  login after a sign-in it made itself. `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` in the environment
+  outranks any saved Claude login. A shell start-up file (`~/.zshrc`,
+  `~/.bashrc` and the like) that sets one of those, or moves
+  `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, gives every terminal its own login.
+  Nothing is stopped or changed for you; `shambles doctor` reports the same
+  things. Running processes are listed on Linux, WSL and macOS, not yet on
+  native Windows.
+
 ### Changed
 
+- **Renewing a parked account keeps you where you were.** Signing in an
+  account you are not using, before its login runs out, has to make it live
+  while Claude Code writes the new login. Shambles then left you on it. Now,
+  once the new login is saved, it switches you back to the account you were
+  on and says so: "Admin renewed until 18 Dec. You're still on Personal."
+  Signing in an account whose login has lapsed, to use it, still leaves you
+  on it.
 - **A limit that has reset says so.** A saved reading carries its reset
   time. Once that time has passed the window shows the limit as reset
   instead of an old 100%, with the old figure on hover. Reset times under
@@ -13,6 +36,13 @@ Notable changes per release. Dates are the tag date.
   hover. An hour-old reading is marked by the bar's look and its tooltip
   instead of an "as of 7h ago" line. The window redraws every 30 seconds
   so a countdown stays true while it sits open; that redraw reads nothing.
+- **The window keeps itself current.** It re-reads Claude Code's and
+  Codex's files when you come back to it, when those files change (a stat
+  every 2 seconds), and every minute, and the header says "Updated just
+  now". Refresh stays as the manual way to read everything. These
+  automatic reads never touch the macOS Keychain or Windows Credential
+  Manager, which would raise password prompts: a login kept there is
+  answered from the last Refresh, switch or sign-in.
 - **No more "running sessions keep their login".** The window, the
   terminal UI, the classic window and the README said a session already
   running keeps the login it started with, and to start a new one after a
@@ -99,7 +129,6 @@ Notable changes per release. Dates are the tag date.
   nothing to say there was more. A sheet's buttons now stay at its bottom
   and its text scrolls above them, with a scroll bar on show. Opening an
   account near the bottom of the list scrolls its details into view.
-
 ## 2.2.2 - 2026-11-15
 
 ### Fixed
