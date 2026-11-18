@@ -33,6 +33,13 @@ Notable changes per release. Dates are the tag date.
   next request, so for current Claude Code that was wrong. Shambles now
   says nothing either way until the behaviour is confirmed for older
   versions and for Codex.
+- **Claude accounts show their plan, not an internal code.** Rows read
+  "Default ai" and "Default raven", which are Claude's rate-limit tiers.
+  They now read Pro, Max 5x, Max 20x, Team, Team Premium or Enterprise,
+  named the way Claude Code names them, from the organisation type and the
+  Team seat it stores. The window, the terminal UI and `shambles list` all
+  show the new names. A plan Shambles does not recognise still shows what
+  it showed before.
 
 ## 2.2.2 - 2026-11-15
 

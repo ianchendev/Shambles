@@ -649,10 +649,22 @@ The account holder confirmed the plan is Max 5x, matching
 value and therefore also says `"team"`.
 
 **Implication for the UI**: a switcher that shows a plan badge must read
-`oauthAccount.organizationRateLimitTier` from `~/.claude.json`, **not**
-`subscriptionType` from the credential store — the latter would label a Max 5x
-user as "team". Whether `subscriptionType` is stale, an internal seat label, or
-something else is unresolved.
+`oauthAccount` in `~/.claude.json`, **not** `subscriptionType` from the
+credential store, which would label a Max 5x user as "team". Whether
+`subscriptionType` is stale, an internal seat label, or something else is
+unresolved.
+
+`organizationRateLimitTier` alone is not a plan name either. It happens to
+spell one for Max (`default_claude_max_5x`), but a Pro account's reads
+`default_claude_ai` and a Team account's `default_raven`, whatever the seat
+[OBS, 2026-11-18]. Claude Code 2.1.300 fills `organizationType`, `seatTier`,
+`organizationRateLimitTier` and `userRateLimitTier` into `oauthAccount` from
+its bootstrap call and names the plan from the type (`claude_pro`, `claude_max`,
+`claude_team`, `claude_enterprise`) [SRC, the binary]. Shambles does the same:
+Max is told apart by its tier (5x, 20x), and a Team seat by `seatTier`, where
+`team_standard` is a standard seat and `team_tier_1` the premium one (it
+carries `userRateLimitTier` `default_claude_max_5x`) [OBS]. The table is
+`identity.plan_names` in `shambles/providers/claude.json`.
 
 ## Codex agent credentials
 
