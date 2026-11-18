@@ -2,7 +2,11 @@
 // result of a sign-in, confirmations, renaming, and one-off notices. Drawn
 // inside the window, over a scrim, so nothing opens that the window manager
 // can lose behind another window.
+//
+// Each sheet is a Pane: what it says, which scrolls when the window is too
+// short for it, and its buttons, which never scroll out of reach.
 import QtQuick
+import QtQuick.Controls.Basic as C
 import QtQuick.Templates as T
 
 Item {
@@ -16,13 +20,14 @@ Item {
         anchors.fill: parent
         color: ui.theme.scrim
     }
-    MouseArea {
+    WindowMover {
         // Clicking outside closes a form, but never a running sign-in or a
-        // confirmation: those end by a deliberate button.
+        // confirmation: those end by a deliberate button. Dragging moves
+        // the window, as the header does when no sheet is up.
         anchors.fill: parent
         hoverEnabled: true
         onWheel: (wheel) => { wheel.accepted = true }
-        onClicked: {
+        onTapped: {
             if (root.kind !== "login" && root.kind !== "confirm")
                 ui.dismiss()
         }
@@ -30,32 +35,106 @@ Item {
 
     Rectangle {
         id: panel
+        objectName: "sheetPanel"
         width: Math.min(540, parent.width - 40)
-        height: Math.min(content.implicitHeight + 52, parent.height - 40)
+        height: Math.min(content.implicitHeight + 2 * pad, parent.height - 40)
         anchors.centerIn: parent
         radius: 18
         color: ui.theme.sheet
         border.color: ui.theme.border
         border.width: 1
+        readonly property int pad: parent.width < 520 ? 20 : 26
 
         MouseArea { anchors.fill: parent }
 
-        Flickable {
+        Loader {
+            id: content
             anchors.fill: parent
-            anchors.margins: 26
+            anchors.margins: panel.pad
+            sourceComponent: root.kind === "add" ? addForm
+                : root.kind === "login" ? loginView
+                : root.kind === "result" ? resultView
+                : root.kind === "confirm" ? confirmView
+                : root.kind === "rename" ? renameForm
+                : root.kind === "notice" ? noticeView : null
+        }
+    }
+
+    component Pane: Item {
+        id: pane
+        default property alias body: bodyColumn.data
+        property alias footer: footerSlot.data
+        property alias spacing: bodyColumn.spacing
+        // A rule above the buttons even when nothing scrolls.
+        property bool rule: false
+        readonly property bool scrolls: scroll.contentHeight > scroll.height + 1
+        readonly property int gap: 16
+        implicitHeight: bodyColumn.implicitHeight + gap + footerSlot.height
+                        + (rule ? gap + 1 : 0)
+
+        Flickable {
+            id: scroll
+            objectName: "sheetBody"
+            // Wider and taller than the text by a few pixels, so focus
+            // rings, drawn outside their control, are not cut off; and wide
+            // enough on the right to hold the scroll bar clear of the text.
+            x: -4
+            width: pane.width + 18
+            anchors.top: parent.top
+            anchors.topMargin: -4
+            anchors.bottom: divider.top
+            anchors.bottomMargin: pane.gap - 4
             contentWidth: width
-            contentHeight: content.implicitHeight
+            contentHeight: bodyColumn.implicitHeight + 8
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            Loader {
-                id: content
-                width: parent.width
-                sourceComponent: root.kind === "add" ? addForm
-                    : root.kind === "login" ? loginView
-                    : root.kind === "result" ? resultView
-                    : root.kind === "confirm" ? confirmView
-                    : root.kind === "rename" ? renameForm
-                    : root.kind === "notice" ? noticeView : null
+            C.ScrollBar.vertical: C.ScrollBar {
+                objectName: "sheetScrollBar"
+                policy: pane.scrolls ? C.ScrollBar.AlwaysOn : C.ScrollBar.AlwaysOff
+            }
+            Column {
+                id: bodyColumn
+                x: 4
+                y: 4
+                width: pane.width
+                spacing: 16
+            }
+        }
+        Rectangle {
+            // Says there is a bottom to the text above when it scrolls.
+            id: divider
+            anchors.bottom: footerSlot.top
+            anchors.bottomMargin: pane.rule || pane.scrolls ? pane.gap : 0
+            width: pane.width
+            height: pane.rule || pane.scrolls ? 1 : 0
+            color: ui.theme.hairline
+        }
+        Item {
+            id: footerSlot
+            objectName: "sheetFooter"
+            anchors.bottom: parent.bottom
+            width: pane.width
+            height: childrenRect.height
+        }
+
+        // Tab into the text of a scrolled sheet brings what it reached into
+        // view, the way the list does.
+        Connections {
+            target: pane.Window.window
+            function onActiveFocusItemChanged() {
+                var item = pane.Window.window ? pane.Window.window.activeFocusItem : null
+                var probe = item
+                while (probe && probe !== bodyColumn)
+                    probe = probe.parent
+                if (!item || probe !== bodyColumn)
+                    return
+                var top = item.mapToItem(bodyColumn, 0, 0).y
+                var bottom = top + item.height
+                if (top < scroll.contentY)
+                    scroll.contentY = Math.max(0, top - 4)
+                else if (bottom + 8 > scroll.contentY + scroll.height)
+                    scroll.contentY = Math.min(scroll.contentHeight - scroll.height,
+                                               bottom + 8 - scroll.height)
             }
         }
     }
@@ -111,7 +190,7 @@ Item {
 
     Component {
         id: addForm
-        Column {
+        Pane {
             id: form
             spacing: 14
             property string provider: root.sheet.provider || ""
@@ -184,7 +263,7 @@ Item {
                 font.pixelSize: 13
                 wrapMode: Text.WordWrap
             }
-            Row {
+            footer: Row {
                 anchors.right: parent.right
                 spacing: 10
                 Btn { text: "Cancel"; onClicked: ui.dismiss() }
@@ -200,8 +279,8 @@ Item {
 
     Component {
         id: loginView
-        Column {
-            spacing: 16
+        Pane {
+            rule: true
             Component.onCompleted: cancelButton.forceActiveFocus()
 
             Column {
@@ -293,8 +372,7 @@ Item {
                     }
                 }
             }
-            Rectangle { width: parent.width; height: 1; color: ui.theme.hairline }
-            Item {
+            footer: Item {
                 width: parent.width
                 height: Math.max(cancelButton.height, cancelNote.implicitHeight)
                 Text {
@@ -320,8 +398,7 @@ Item {
 
     Component {
         id: resultView
-        Column {
-            spacing: 16
+        Pane {
             Component.onCompleted: (root.sheet.retry ? retryButton : closeButton).forceActiveFocus()
             Row {
                 width: parent.width
@@ -335,7 +412,7 @@ Item {
             }
             Body { text: root.sheet.message || "" }
             Callout { visible: text !== ""; text: root.sheet.remedy || "" }
-            Row {
+            footer: Row {
                 anchors.right: parent.right
                 spacing: 10
                 Btn { id: closeButton; text: "Close"; onClicked: ui.dismiss() }
@@ -352,14 +429,13 @@ Item {
 
     Component {
         id: confirmView
-        Column {
-            spacing: 16
+        Pane {
             // Cancel holds the focus, so Enter on a destructive question
             // answers no.
             Component.onCompleted: keepButton.forceActiveFocus()
             Heading { text: root.sheet.title || "" }
             Body { text: root.sheet.message || "" }
-            Row {
+            footer: Row {
                 anchors.right: parent.right
                 spacing: 10
                 Btn { id: keepButton; text: "Cancel"; onClicked: ui.dismiss() }
@@ -374,7 +450,7 @@ Item {
 
     Component {
         id: renameForm
-        Column {
+        Pane {
             spacing: 14
             Component.onCompleted: {
                 renameField.forceActiveFocus()
@@ -397,7 +473,7 @@ Item {
                 font.pixelSize: 13
                 wrapMode: Text.WordWrap
             }
-            Row {
+            footer: Row {
                 anchors.right: parent.right
                 spacing: 10
                 Btn { text: "Cancel"; onClicked: ui.dismiss() }
@@ -408,8 +484,7 @@ Item {
 
     Component {
         id: noticeView
-        Column {
-            spacing: 16
+        Pane {
             Component.onCompleted: okButton.forceActiveFocus()
             Row {
                 width: parent.width
@@ -425,7 +500,7 @@ Item {
                 model: root.sheet.messages || []
                 Body { text: modelData }
             }
-            Btn {
+            footer: Btn {
                 id: okButton
                 anchors.right: parent.right
                 kind: "primary"

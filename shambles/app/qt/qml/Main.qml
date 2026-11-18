@@ -4,13 +4,20 @@ import QtQuick.Controls.Basic
 
 ApplicationWindow {
     id: win
-    width: 760
-    height: 720
-    minimumWidth: 520
-    minimumHeight: 420
+    // Where it was left last time, unless no screen shows that any more.
+    x: ui.place.x
+    y: ui.place.y
+    width: ui.place.width
+    height: ui.place.height
+    // Small enough to sit beside an editor. placement.MINIMUM says the same.
+    minimumWidth: 420
+    minimumHeight: 360
     visible: true
     title: "Shambles"
     color: ui.theme.ground
+
+    // Rows drop their address line below this width.
+    readonly property bool narrow: width < 520
 
     // Which account's details are open, and which card should pulse. Kept
     // here because the cards are rebuilt whenever the accounts are re-read.
@@ -19,8 +26,10 @@ ApplicationWindow {
     readonly property bool typing: activeFocusItem instanceof TextInput
     readonly property var groups: ui.view.groups || []
 
-    // Bring a control the keyboard just reached into the scrolled view.
-    function reveal(item) {
+    // Bring a control the keyboard just reached into the scrolled view. With
+    // ``whole``, all of it where it fits (an account that was just opened),
+    // and never at the cost of its top.
+    function reveal(item, whole) {
         if (!item)
             return
         // Only things inside the scrolled list; the header never scrolls.
@@ -31,11 +40,64 @@ ApplicationWindow {
             return
         var top = item.mapToItem(column, 0, 0).y + column.y
         var bottom = top + item.height
-        if (top < scroller.contentY + 8)
-            scroller.contentY = Math.max(0, top - 60)
-        else if (bottom > scroller.contentY + scroller.height - 8)
-            scroller.contentY = Math.min(Math.max(0, scroller.contentHeight - scroller.height),
-                                         bottom - scroller.height + 24)
+        var last = Math.max(0, scroller.contentHeight - scroller.height)
+        if (top < scroller.contentY + 8) {
+            scroller.contentY = Math.max(0, top - (whole ? 8 : 60))
+        } else if (bottom > scroller.contentY + scroller.height - 8) {
+            var target = bottom - scroller.height + (whole ? 8 : 24)
+            if (whole)
+                target = Math.min(target, top - 8)
+            scroller.contentY = Math.min(last, Math.max(0, target))
+        }
+    }
+
+    // An opened account grows downwards, possibly below the footer, where
+    // the click that opened it would seem to have done nothing. Wait for the
+    // list to lay itself out, then bring all of it into view.
+    property var revealTarget: null
+    function revealSoon(item) {
+        revealTarget = item
+        revealTimer.restart()
+    }
+    Timer {
+        id: revealTimer
+        interval: 60
+        onTriggered: {
+            var item = win.revealTarget
+            win.revealTarget = null
+            if (item)
+                win.reveal(item, true)
+        }
+    }
+
+    // Where the window is, kept for the next time it opens. Read after the
+    // window settles rather than on every step of a drag, and only its
+    // ordinary size: maximised is kept as a flag on top of that.
+    property rect normalPlace: Qt.rect(0, 0, 0, 0)
+    function savePlace() {
+        if (visibility === Window.Windowed)
+            normalPlace = Qt.rect(x, y, width, height)
+        else if (visibility !== Window.Maximized)
+            return
+        if (normalPlace.width <= 0)
+            return
+        ui.rememberPlace(normalPlace.x, normalPlace.y, normalPlace.width,
+                         normalPlace.height, visibility === Window.Maximized)
+    }
+    Timer {
+        id: placeTimer
+        interval: 800
+        onTriggered: win.savePlace()
+    }
+    onXChanged: placeTimer.restart()
+    onYChanged: placeTimer.restart()
+    onWidthChanged: placeTimer.restart()
+    onHeightChanged: placeTimer.restart()
+    onVisibilityChanged: placeTimer.restart()
+    Component.onCompleted: {
+        normalPlace = Qt.rect(ui.place.x, ui.place.y, ui.place.width, ui.place.height)
+        if (ui.place.maximized)
+            showMaximized()
     }
 
     Connections {
@@ -53,6 +115,7 @@ ApplicationWindow {
     // and moving the marker, it is the one thing that could lose a login.
     // The bridge closes the window itself once the switch has finished.
     onClosing: (close) => {
+        savePlace()
         if (!ui.closeRequested())
             close.accepted = false
     }
@@ -97,10 +160,19 @@ ApplicationWindow {
             // clip drawn shapes to the scrolled area, so anything scrolled
             // under the header has to be covered by it.
             id: header
+            objectName: "header"
             z: 2
             width: parent.width
             height: 68
             color: ui.theme.ground
+
+            WindowMover {
+                // Everything in the header that is not a button or the
+                // filter moves the window. Below them, so they keep their
+                // own clicks.
+                objectName: "dragArea"
+                anchors.fill: parent
+            }
 
             Text {
                 id: wordmark
@@ -150,9 +222,11 @@ ApplicationWindow {
                     }
                 }
                 Btn {
+                    objectName: "addButton"
                     kind: "primary"
                     glyph: "plus"
-                    text: "Add account"
+                    text: win.narrow ? "Add" : "Add account"
+                    hint: "Add account"
                     enabled: !ui.busy
                     implicitHeight: 40
                     onClicked: ui.openAdd("")
@@ -173,17 +247,44 @@ ApplicationWindow {
             }
         }
 
+        Rectangle {
+            // What just happened, and what is happening: under the header,
+            // pushing the list down rather than covering its last row.
+            // Opaque and above the list for the same reason as the header.
+            id: messages
+            objectName: "messages"
+            z: 2
+            anchors.top: header.bottom
+            width: parent.width
+            height: stack.height
+            color: ui.theme.ground
+            Column {
+                id: stack
+                x: 20
+                width: parent.width - 40
+                spacing: 8
+                bottomPadding: busy.visible || toast.visible ? 12 : 0
+                BusyBar { id: busy }
+                Toast { id: toast }
+            }
+        }
+
         Flickable {
             id: scroller
             objectName: "scroller"
-            anchors.top: header.bottom
+            anchors.top: messages.bottom
             anchors.bottom: footer.top
             width: parent.width
             contentWidth: width
             contentHeight: column.height + 24
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            // Always shown while there is more to scroll to, not only while
+            // scrolling, so a list cut off by a short window says so.
+            ScrollBar.vertical: ScrollBar {
+                policy: scroller.contentHeight > scroller.height + 1
+                        ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+            }
 
             Column {
                 id: column
@@ -230,7 +331,7 @@ ApplicationWindow {
             }
             visible: current !== null
             z: 2
-            anchors.top: header.bottom
+            anchors.top: scroller.top
             width: parent.width
             height: 34
             color: ui.theme.ground
@@ -278,7 +379,8 @@ ApplicationWindow {
         }
     }
 
-    Toast {}
-    BusyBar {}
     Sheet {}
+    // Above the sheet, so a window too small for one can still be made
+    // bigger with it open.
+    ResizeGrip { z: 10 }
 }

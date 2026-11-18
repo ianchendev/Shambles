@@ -103,6 +103,8 @@ class FakeService:
         self.snap = snapshot or standard()
         self.calls = []
         self.theme = "system"
+        #: What window_place() returns: None, or a stored place.
+        self.place = None
         self.migrations = ()
         self.opens = True
         #: action name -> ActionResult to return instead of success.
@@ -118,6 +120,9 @@ class FakeService:
 
     def window_theme(self):
         return self.theme
+
+    def window_place(self):
+        return self.place
 
     def run_migrations(self):
         return self.migrations
@@ -140,6 +145,9 @@ class FakeService:
         self.calls.append(("set_window_theme", theme))
         self.theme = theme
         return ActionResult(True, "set_window_theme")
+
+    def set_window_place(self, x, y, width, height, maximized=False):
+        return self._done("set_window_place", x, y, width, height, maximized)
 
     def switch(self, provider, name, *, on_wait=None):
         """Like the service: ``on_wait`` once if it has to wait. Set
@@ -206,3 +214,25 @@ class FakeService:
         _on_line, on_done = self.login
         self.login = None
         on_done(result)
+
+
+def with_usage(now_ms):
+    """Work live with a running and an old limit; Dev parked, one reset."""
+    from shambles.app.snapshot import Window
+    hour = 3_600_000
+    work = Account(name="Work", email="work@example.test", plan="max_5x",
+                   active=True, state="live", publishes_usage=True, usage=[
+                       Window("session", 27, resets_at_ms=now_ms + 2 * hour,
+                              fetched_at_ms=now_ms, severity="ok"),
+                       Window("week", 41, resets_at_ms=now_ms + 72 * hour,
+                              resets_label="Sat 21 Nov, 02:00",
+                              fetched_at_ms=now_ms - 3 * hour, stale=True,
+                              severity="ok")])
+    dev = Account(name="Dev", email="dev@example.test", plan="max_5x",
+                  state="live", publishes_usage=True, usage=[
+                      Window("session", 100, resets_at_ms=now_ms - hour,
+                             fetched_at_ms=now_ms - 7 * hour, stale=True,
+                             severity="gone"),
+                      Window("week", 85, fetched_at_ms=now_ms - 7 * hour,
+                             stale=True, severity="gone")])
+    return Snapshot(1, [group(work, dev)])

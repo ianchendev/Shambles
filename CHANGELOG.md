@@ -4,6 +4,44 @@ Notable changes per release. Dates are the tag date.
 
 ## Unreleased
 
+### Changed
+
+- **A limit that has reset says so.** A saved reading carries its reset
+  time. Once that time has passed the window shows the limit as reset
+  instead of an old 100%, with the old figure on hover. Reset times under
+  a day read as a countdown ("Resets in 1h 52m"), with the exact date on
+  hover. An hour-old reading is marked by the bar's look and its tooltip
+  instead of an "as of 7h ago" line. The window redraws every 30 seconds
+  so a countdown stays true while it sits open; that redraw reads nothing.
+- **No more "running sessions keep their login".** The window, the
+  terminal UI, the classic window and the README said a session already
+  running keeps the login it started with, and to start a new one after a
+  switch or sign-in. Claude Code 2.1.300 re-reads a changed login at its
+  next request, so for current Claude Code that was wrong. Shambles now
+  says nothing either way until the behaviour is confirmed for older
+  versions and for Codex.
+- **Claude accounts show their plan, not an internal code.** Rows read
+  "Default ai" and "Default raven", which are Claude's rate-limit tiers.
+  They now read Pro, Max 5x, Max 20x, Team, Team Premium or Enterprise,
+  named the way Claude Code names them, from the organisation type and the
+  Team seat it stores. The window, the terminal UI and `shambles list` all
+  show the new names. A plan Shambles does not recognise still shows what
+  it showed before.
+
+- **Move the window by its own header, and resize it from the corner.**
+  Under WSL on a 4K screen the title bar Windows draws is tiny. Drag
+  anywhere in the window's header that is not a button to move it,
+  double-click it to maximise, and drag the grip in the bottom-right
+  corner to resize. The window opens where it was left last time, at the
+  same size; if that place is on a monitor that is no longer there, it
+  opens in the centre. The smallest size goes from 520x420 to 420x360,
+  and at narrow widths rows leave out the address line.
+- **Messages no longer cover the list.** What an action did, and the line
+  shown while a switch waits, now slide in under the header and push the
+  list down instead of sitting over its last row. An error stays until you
+  close it with its ×. The wait for Claude Code is one line, "Waiting for
+  Claude Code to finish renewing", with the reason behind its ⓘ.
+
 ### Fixed
 
 - **The sign-in link shows again when the browser does not open.** Shambles
@@ -17,6 +55,12 @@ Notable changes per release. Dates are the tag date.
   JetBrains, even when its output goes to Shambles rather than a terminal,
   and that link was lost as well. The sign-in sheet now shows Open sign-in
   page and Copy link for both vendors.
+
+- **Small windows kept buttons out of reach.** At the smallest size the
+  sign-in sheet hid Cancel and the eject sheet hid both its buttons, with
+  nothing to say there was more. A sheet's buttons now stay at its bottom
+  and its text scrolls above them, with a scroll bar on show. Opening an
+  account near the bottom of the list scrolls its details into view.
 
 ## 2.2.2 - 2026-11-15
 

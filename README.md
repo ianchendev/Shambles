@@ -370,9 +370,9 @@ runs the vendor's login command while your browser opens. This is the only
 time you wait for that account's email.
 
 **3. Switch.** Every account except the live one has a **Switch** button.
-Click it, then **start a new session**. A Claude Code process that is already
-running keeps the token it loaded at startup. In VS Code, run
-*Developer: Reload Window*.
+Click it. New sessions start on that account. If a session that was
+already running still shows the old one, start a new session; in VS Code,
+run *Developer: Reload Window*.
 
 That is the whole loop. From here on, switching takes one click or one key.
 

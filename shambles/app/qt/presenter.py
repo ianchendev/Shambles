@@ -14,6 +14,9 @@ registered type.
 """
 
 import datetime
+import time
+
+from .. import snapshot as timing
 
 #: The chip on an account that needs the user. Keys are the snapshot's
 #: ``status_label``; the wording here is the window's own.
@@ -24,6 +27,9 @@ CHIPS = {
 }
 
 USAGE_LABELS = {"session": "Session", "week": "Week"}
+
+#: What a limit is called where there is room to say what it is.
+LIMIT_NAMES = {"session": "5-hour limit", "week": "Weekly limit"}
 
 #: Notices the window draws as something other than a plain banner.
 UNSAVED = "unsaved_login"
@@ -46,15 +52,21 @@ KEYS = "123456789"
 DATE_FORMAT = "%a %d %b, %H:%M"
 
 
-def view(snapshot, *, filter_text: str = "") -> dict:
+def view(snapshot, *, filter_text: str = "", now_ms: int | None = None) -> dict:
     """The whole window, as data.
 
     ``filter_text`` narrows the accounts shown; number keys are handed out
     after filtering, so the first match is always ``1``.
+
+    ``now_ms`` is the moment the window is drawn, which can be long after the
+    snapshot was read: a limit can reset, and a reading grow old, while the
+    window sits open. Defaults to the clock.
     """
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
     needle = filter_text.strip().casefold()
     total = sum(len(g.accounts) for g in snapshot.groups)
-    groups = [_group(g, needle) for g in snapshot.groups]
+    groups = [_group(g, needle, now_ms) for g in snapshot.groups]
 
     keys = {}
     spare = iter(KEYS)
@@ -78,7 +90,7 @@ def view(snapshot, *, filter_text: str = "") -> dict:
     }
 
 
-def _group(group, needle: str) -> dict:
+def _group(group, needle: str, now_ms: int) -> dict:
     codes = {n.code for n in group.notices}
     settle_to = next((n.account for n in group.notices
                       if n.code == ELSEWHERE and n.account), None)
@@ -102,7 +114,8 @@ def _group(group, needle: str) -> dict:
     else:
         hold = ""
     accounts = [_account(group, a,
-                         hold="" if a.name == settle_to else hold)
+                         hold="" if a.name == settle_to else hold,
+                         now_ms=now_ms)
                 for a in group.accounts]
     shown = [a for a in accounts if _matches(a, needle)]
     live = next((a for a in shown if a["live"]), None)
@@ -218,12 +231,10 @@ def _matches(account: dict, needle: str) -> bool:
             or needle in account["email"].casefold())
 
 
-def _account(group, account, *, hold: str) -> dict:
+def _account(group, account, *, hold: str, now_ms: int) -> dict:
     chip_text, chip_tone = CHIPS.get(account.status_label, ("", ""))
-    usage = [_window(w, live=account.active) for w in account.usage]
-
-    stale = any(w.stale for w in account.usage)
-    age = next((w.age_label for w in account.usage if w.age_label), "")
+    usage = [_window(w, live=account.active, now_ms=now_ms)
+             for w in account.usage]
 
     # The marker alone does not make an account live. With somebody else
     # signed in, the marked account is just another saved one, and badging
@@ -279,8 +290,12 @@ def _account(group, account, *, hold: str) -> dict:
         "key": "",
         "usage": usage,
         "usageSummary": " · ".join(
-            f"{w['percent']}% {w['label'].lower()}" for w in usage),
-        "usageNote": (f"as of {age}" if stale and age else ""),
+            f"{w['label'].lower()} reset" if w["state"] == "reset"
+            else f"{w['percent']}% {w['label'].lower()}" for w in usage),
+        # How old a reading is shows in the bar's look and its tooltip (U1),
+        # not as an "as of" sentence. Kept, empty, for QML that still reads it.
+        "usageNote": "",
+        "usageTip": " ".join(w["tip"] for w in usage),
         # Blank space reads as a broken widget; saying why does not. A
         # provider that publishes nothing gets no line at all.
         "usageHint": ("" if usage or not account.publishes_usage
@@ -291,18 +306,57 @@ def _account(group, account, *, hold: str) -> dict:
     }
 
 
-def _window(window, *, live: bool) -> dict:
+def _window(window, *, live: bool, now_ms: int) -> dict:
+    """One limit, as the window draws it at ``now_ms``.
+
+    ``state`` is what the bar's look keys off: ``reset`` (the window rolled
+    over after the figure was read, so the figure is history), ``old`` (read
+    over an hour ago) or ``current``. ``tip`` says the rest in words.
+    """
     percent = window.used_percent or 0
-    # An old figure is greyed only on an account not in use. On the live one
-    # it is still the real number, just one nothing has refreshed lately.
-    tone = "dim" if (window.stale and not live) else window.severity
+    reset = window.reset or timing.has_reset(window.resets_at_ms, now_ms)
+    if window.fetched_at_ms is not None:
+        age_ms = now_ms - window.fetched_at_ms
+        old = age_ms > timing.STALE_AFTER_MS
+        age = timing.age_words(age_ms)
+    else:
+        old, age = window.stale, window.age_label
+    state = "reset" if reset else "old" if old else "current"
+
+    exact = window.resets_label or timing.date_label(window.resets_at_ms)
+    until = timing.until_label(window.resets_at_ms, now_ms) or exact
+    name = LIMIT_NAMES.get(window.label, window.label.capitalize())
+
+    if reset:
+        read = (f" when last read at "
+                f"{timing.moment_label(window.fetched_at_ms, now_ms)}"
+                if window.fetched_at_ms is not None else "")
+        when = timing.moment_label(window.resets_at_ms, now_ms)
+        tip = (f"{name}: {percent}%{read}. "
+               + (f"It reset at {when}." if when else "It has since reset."))
+        tone = "reset"
+    else:
+        tip = f"{name}: {percent}%."
+        if exact:
+            tip += f" Resets {exact}."
+        if old and age:
+            tip += f" Read {age}."
+        # An old figure is greyed only on an account not in use. On the live
+        # one it is still the real number, just one nothing has refreshed
+        # lately.
+        tone = "dim" if (old and not live) else window.severity
+
     return {
         "label": USAGE_LABELS.get(window.label, window.label.capitalize()),
         "percent": percent,
-        "fill": max(0.0, min(1.0, percent / 100.0)),
+        "fill": 0.0 if reset else max(0.0, min(1.0, percent / 100.0)),
         "tone": tone,
-        "resets": (f"Resets {window.resets_label}"
-                   if window.resets_label else ""),
+        "state": state,
+        "text": "reset" if reset else f"{percent}%",
+        "resets": "" if reset or not until else f"Resets {until}",
+        "resetsIn": "" if reset else until,
+        "resetsExact": exact,
+        "tip": tip,
     }
 
 

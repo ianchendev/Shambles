@@ -1,62 +1,82 @@
 // What is happening while a switch runs: usually a moment, but up to 15 s
-// when Claude Code is renewing its login. Said in place of the toast, which
-// takes over with the result.
+// when Claude Code is renewing its login. One line under the header, with
+// the reason behind its i; the toast takes over with the result.
 import QtQuick
 
-Rectangle {
+Item {
     id: root
-    anchors.horizontalCenter: parent.horizontalCenter
-    anchors.bottom: parent.bottom
-    anchors.bottomMargin: 44
-    width: Math.min(parent.width - 40, 580)
-    height: label.implicitHeight + 26
-    radius: 12
-    color: ui.theme.toast
-    visible: ui.busy
+    objectName: "busyBar"
+    width: parent ? parent.width : 0
+    height: ui.busy ? box.height : 0
+    clip: true
+    visible: height > 0
     Accessible.role: Accessible.StatusBar
-    Accessible.name: ui.busyText
+    Accessible.name: ui.busyText + (ui.busyDetail ? " " + ui.busyDetail : "")
 
-    Item {
-        id: spinner
-        x: 16
-        anchors.verticalCenter: parent.verticalCenter
-        width: 16
-        height: 16
-        Rectangle {
-            anchors.fill: parent
-            radius: 8
-            color: "transparent"
-            border.color: ui.theme.onToast
-            border.width: 2
-            opacity: 0.3
-        }
-        Rectangle {
-            width: 5
-            height: 5
-            radius: 2.5
-            color: ui.theme.onToast
-            x: 5.5
-            y: -1
-        }
-        RotationAnimation on rotation {
-            running: root.visible && ui.motion
-            from: 0
-            to: 360
-            duration: 1000
-            loops: Animation.Infinite
-        }
+    Behavior on height {
+        enabled: ui.motion
+        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
     }
-    Text {
-        id: label
-        anchors.left: spinner.right
-        anchors.leftMargin: 12
-        anchors.right: parent.right
-        anchors.rightMargin: 16
-        anchors.verticalCenter: parent.verticalCenter
-        text: ui.busyText
-        color: ui.theme.onToast
-        font.pixelSize: 13
-        lineHeight: 1.25
-        wrapMode: Text.WordWrap
+
+    Rectangle {
+        id: box
+        width: parent.width
+        height: 40
+        radius: 10
+        color: ui.theme.infoSurface
+        border.color: ui.theme.accentSoftBorder
+        border.width: 1
+
+        Item {
+            id: spinner
+            x: 12
+            anchors.verticalCenter: parent.verticalCenter
+            width: 16
+            height: 16
+            Rectangle {
+                anchors.fill: parent
+                radius: 8
+                color: "transparent"
+                border.color: ui.theme.accentSoftBorder
+                border.width: 2
+            }
+            Rectangle {
+                width: 5
+                height: 5
+                radius: 2.5
+                color: ui.theme.accent
+                x: 5.5
+                y: -1
+            }
+            RotationAnimation on rotation {
+                running: root.visible && ui.motion
+                from: 0
+                to: 360
+                duration: 1000
+                loops: Animation.Infinite
+            }
+        }
+        Text {
+            id: label
+            anchors.left: spinner.right
+            anchors.leftMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(implicitWidth,
+                            parent.width - spinner.width - 22 - (why.visible ? why.width + 18 : 12))
+            text: ui.busyText
+            color: ui.theme.infoText
+            font.pixelSize: 13
+            elide: Text.ElideRight
+        }
+        Info {
+            id: why
+            objectName: "busyInfo"
+            anchors.left: label.right
+            anchors.leftMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            visible: ui.busyDetail !== ""
+            tip: ui.busyDetail
+            tint: ui.theme.accentText
+        }
     }
 }

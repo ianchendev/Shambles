@@ -294,6 +294,24 @@ class ShamblesService:
                 f"Could not save the theme: {exc.strerror or exc}."))
         return ActionResult(True, "set_window_theme")
 
+    def window_place(self):
+        """Where the window was left, or None: see
+        :func:`shambles.settings.window_place`."""
+        return settings_mod.window_place(self.paths)
+
+    def set_window_place(self, x, y, width, height, maximized=False):
+        try:
+            settings_mod.set_window_place(self.paths, x, y, width, height,
+                                          maximized)
+        except ValueError as exc:
+            return ActionResult(False, "set_window_place", error=ActionError(
+                "invalid_setting", str(exc)))
+        except OSError as exc:
+            return ActionResult(False, "set_window_place", error=ActionError(
+                "unwritable",
+                f"Could not save the window's place: {exc.strerror or exc}."))
+        return ActionResult(True, "set_window_place")
+
     def sign_in_url(self, line):
         """The sign-in address in one progress line, or None.
 
@@ -469,9 +487,10 @@ class ShamblesService:
         if outcome.kind == switcher.RENEWED:
             summary = (f"Added {name} and signed in." if action == "add"
                        else f"Logged in to {name}.")
-            return self._result(True, action, summary, warnings=(
-                "Running sessions keep the login they started with. Start a "
-                "new one to use this account.",))
+            # No word on running sessions: Claude Code 2.1.300 re-reads a
+            # changed login at its next request, older versions and Codex
+            # are unconfirmed, so any claim either way could be wrong.
+            return self._result(True, action, summary)
 
         if outcome.kind == switcher.DUPLICATE:
             where = f"You are on '{outcome.owner}' now. " if outcome.owner else ""

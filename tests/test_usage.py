@@ -355,3 +355,57 @@ def test_a_profile_with_no_stored_account_never_reads_the_vendor_config(
 
     assert usage.capture_live(paths, "codex", "Work", now_ms=NOW) is False
     assert paths.claude_json not in read
+
+
+# -- U1: has a limit reset, and how long until it does ------------------------
+
+MINUTE = 60_000
+HOUR = 60 * MINUTE
+
+
+def test_a_limit_whose_reset_time_has_passed_has_reset():
+    assert usage.has_reset(NOW - 1, NOW) is True
+    assert usage.has_reset(NOW, NOW) is True
+
+
+def test_a_limit_still_running_or_with_no_known_reset_has_not():
+    assert usage.has_reset(NOW + 1, NOW) is False
+    assert usage.has_reset(None, NOW) is False
+    assert usage.has_reset("soon", NOW) is False
+
+
+def test_a_reset_under_a_day_away_reads_as_a_countdown():
+    assert usage.until_label(NOW + HOUR + 52 * MINUTE, NOW) == "in 1h 52m"
+    assert usage.until_label(NOW + 3 * HOUR, NOW) == "in 3h"
+    assert usage.until_label(NOW + 45 * MINUTE, NOW) == "in 45m"
+
+
+def test_a_countdown_rounds_up_so_it_never_says_in_0m():
+    """Rounded down, the last minute would read "in 0m" while the bar still
+    shows the old figure."""
+    assert usage.until_label(NOW + 1_000, NOW) == "in 1m"
+    assert usage.until_label(NOW + 59 * MINUTE + 1, NOW) == "in 1h"
+
+
+def test_a_reset_a_day_or_more_away_or_already_past_has_no_countdown():
+    assert usage.until_label(NOW + 24 * HOUR, NOW) is None
+    assert usage.until_label(NOW, NOW) is None
+    assert usage.until_label(None, NOW) is None
+
+
+def test_a_moment_today_is_just_the_time_and_any_other_day_says_which():
+    import datetime
+    today = datetime.datetime.now().replace(hour=14, minute=0, second=0,
+                                            microsecond=0)
+    ms = int(today.timestamp() * 1000)
+    yesterday = ms - 24 * HOUR
+
+    assert usage.moment_label(ms, ms + MINUTE) == "14:00"
+    assert usage.moment_label(yesterday, ms) == (
+        datetime.datetime.fromtimestamp(yesterday / 1000)
+        .strftime("%a %d %b, %H:%M"))
+
+
+def test_a_moment_no_calendar_reaches_is_blank():
+    assert usage.moment_label(10 ** 20, NOW) == ""
+    assert usage.moment_label(None, NOW) == ""
