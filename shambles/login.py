@@ -6,8 +6,10 @@ DD-2 concluded that login must not be implemented inside this tool, and that
 conclusion still holds completely: **no OAuth code lives here**. Both vendors
 ship a one-shot command that opens the browser itself and runs its own
 callback server, so this module starts that command, streams what it prints,
-and waits. The credential still appears on disk written by the vendor, and
-Shambles still only ever finds it there.
+and waits. The one thing it ever passes back is the code a sign-in page shows
+when the browser cannot reach this machine, typed into the vendor's own
+prompt exactly as a person at a terminal would. The credential still appears
+on disk written by the vendor, and Shambles still only ever finds it there.
 
 What DD-2 also said was that the tool "never opens a browser". That line is
 crossed deliberately -- see the design doc -- and the thing it was protecting,
@@ -20,7 +22,9 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import ShamblesError
@@ -232,17 +236,195 @@ def available(provider) -> bool:
     return shutil.which(provider.login_binary()) is not None
 
 
-def command(provider, *, email: str | None = None) -> list[str]:
+def command(provider, *, email: str | None = None,
+            device: bool = False) -> list[str]:
     """The vendor's login argv, optionally pre-filling a known address.
 
     A provider that declares no ``email_flag`` gets no address rather than a
-    guessed flag name.
+    guessed flag name. ``device`` asks for the sign-in with a one-time code
+    entered on another device, and only a provider whose spec describes one
+    (:func:`accepts_device_auth`) can give it.
     """
     argv = provider.login_command()
+    if device:
+        argv = argv + [_device_rules(provider)["flag"]]
     flag = provider.spec.get("login", {}).get("email_flag")
     if email and flag:
         argv = argv + [flag, email]
     return argv
+
+
+class CodeRejectedError(ShamblesError):
+    """A pasted sign-in code that Shambles will not pass to the vendor.
+
+    The message is always one of the fixed sentences below. It never holds
+    what was pasted: until it is used, the code from the sign-in page is as
+    good as a password.
+    """
+
+
+#: Far longer than any real code. Claude's is an authorization code and its
+#: state, around a hundred characters together. The cap also keeps a write
+#: well inside a pipe's buffer, so sending can never block the window.
+MAX_CODE_LENGTH = 1024
+
+CODE_EMPTY = "Paste the code from the browser page first."
+CODE_HIDDEN_CHARACTERS = ("That code has a line break or a hidden character "
+                          "in it. Copy it again from the browser page.")
+CODE_INCOMPLETE = ("That is only part of the code. Copy all of it from the "
+                   "browser page.")
+CODE_TOO_LONG = ("That is longer than a sign-in code. Copy only the code "
+                 "from the browser page.")
+CODE_NOT_TAKEN = ("{binary} does not take a pasted code. Finish signing in "
+                  "in the browser.")
+
+#: What an OAuth code or state may contain: visible ASCII and the space
+#: (RFC 6749, appendix A, VSCHAR). Nothing that ends a line, moves a cursor
+#: or hides itself on a web page gets through to the vendor's input.
+_ONE_LINE = re.compile(r"[\x20-\x7e]+")
+
+
+def _paste_rules(provider) -> dict | None:
+    rules = provider.spec.get("login", {}).get("paste_code")
+    return rules if isinstance(rules, dict) else None
+
+
+def accepts_code(provider) -> bool:
+    """Whether this provider's sign-in reads a code pasted from the browser.
+
+    From the spec rather than assumed: ``claude auth login`` does, and
+    ``codex login`` finishes through its own callback server and never asks.
+    """
+    return _paste_rules(provider) is not None
+
+
+def clean_code(provider, pasted) -> str:
+    """The code to send, or :class:`CodeRejectedError` saying why not.
+
+    Surrounding whitespace goes, since a copy from a web page often brings a
+    line break with it. Anything else that is not one line of visible
+    characters is refused rather than repaired: a code with a character
+    missing is a code that fails at the vendor with a message Shambles
+    cannot show.
+    """
+    rules = _paste_rules(provider)
+    if rules is None:
+        raise CodeRejectedError(CODE_NOT_TAKEN.format(binary=binary(provider)))
+    text = (pasted or "").strip()
+    if not text:
+        raise CodeRejectedError(CODE_EMPTY)
+    if len(text) > MAX_CODE_LENGTH:
+        raise CodeRejectedError(CODE_TOO_LONG)
+    if not _ONE_LINE.fullmatch(text):
+        raise CodeRejectedError(CODE_HIDDEN_CHARACTERS)
+    separator = rules.get("separator")
+    if separator:
+        # The vendor's own rule: both halves present, or it prints "Invalid
+        # code" where only it can see it and goes on waiting.
+        head, found, tail = text.partition(separator)
+        if not (head and found and tail):
+            raise CodeRejectedError(CODE_INCOMPLETE)
+    return text
+
+
+# -- signing in with a code on another device -------------------------------
+
+DEVICE_NOT_OFFERED = ("{binary} cannot sign in with a code from another "
+                      "device. Sign in with the browser instead.")
+
+
+def plain(line: str) -> str:
+    """``line`` without terminal escape sequences.
+
+    Codex colours its device prompt whether or not it is writing to a
+    terminal, so the link and the code each arrive wrapped in escapes.
+    """
+    return _ESCAPE.sub("", line or "")
+
+
+def _device_rules(provider) -> dict:
+    rules = provider.spec.get("login", {}).get("device_auth")
+    if not isinstance(rules, dict):
+        raise LoginUnavailableError(
+            DEVICE_NOT_OFFERED.format(binary=binary(provider)))
+    return rules
+
+
+def accepts_device_auth(provider) -> bool:
+    """Whether this provider can sign in with a code entered elsewhere."""
+    try:
+        _device_rules(provider)
+    except LoginUnavailableError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class DeviceCode:
+    """What to show for a sign-in finished on another device."""
+
+    user_code: str
+    verification_url: str
+    #: How long the vendor waits for the code to be entered.
+    expires_in_s: int
+
+
+class DeviceCodeReader:
+    """Picks the link and the one-time code out of the vendor's output.
+
+    By position, not by the English around them: the link is a line that is
+    exactly the one the spec names, and the code is the first line after it
+    that is nothing but a code. So no other address is ever offered as the
+    place to enter it, and no other line is shown as the code.
+    """
+
+    def __init__(self, provider):
+        rules = _device_rules(provider)
+        self._link = rules["verification_url"]
+        self._code = re.compile(rules["code_pattern"])
+        self._expires_in_s = int(rules.get("expires_in_s") or 0)
+        self._after_link = False
+        self._found = False
+
+    def feed(self, line: str) -> DeviceCode | None:
+        """The code, from the line that completes it; otherwise None."""
+        if self._found:
+            return None
+        text = plain(line).strip()
+        if not self._after_link:
+            self._after_link = text == self._link
+            return None
+        if not self._code.fullmatch(text):
+            return None
+        self._found = True
+        return DeviceCode(user_code=text, verification_url=self._link,
+                          expires_in_s=self._expires_in_s)
+
+
+def known_message(provider, line: str) -> str | None:
+    """Which of the vendor's fixed device sign-in messages ``line`` holds.
+
+    Returns the spec's name for it, never text from the line: what a
+    frontend shows is the spec's own copy of the sentence.
+    """
+    rules = provider.spec.get("login", {}).get("device_auth") or {}
+    text = plain(line)
+    for key, sentence in (rules.get("messages") or {}).items():
+        if sentence and sentence in text:
+            return key
+    return None
+
+
+def device_message(provider, key: str) -> str | None:
+    """The spec's copy of the vendor's fixed message ``key``."""
+    rules = provider.spec.get("login", {}).get("device_auth") or {}
+    return (rules.get("messages") or {}).get(key)
+
+
+def device_setting(provider) -> str:
+    """What has to be switched on for this provider's device sign-in."""
+    rules = provider.spec.get("login", {}).get("device_auth") or {}
+    return rules.get("setting") or ""
 
 
 def environment(provider, *, home, platform) -> dict[str, str]:
@@ -304,6 +486,54 @@ def _store_selectors(spec: dict) -> set[str]:
     return found
 
 
+#: Whether a cancel ends the vendor's whole process tree. Windows only: on
+#: POSIX the vendor is the process Shambles started (the native binary, or
+#: node for an npm install, and Codex's npm launcher forwards SIGTERM to its
+#: native binary), while a new process group to kill would also change how
+#: Ctrl+C in a terminal reaches it.
+KILL_TREE = sys.platform == "win32"
+
+#: Keeps taskkill from flashing a console window over a windowed Shambles.
+_NO_WINDOW = ({"creationflags": subprocess.CREATE_NO_WINDOW}
+              if sys.platform == "win32" else {})
+
+
+def _taskkill(which=shutil.which) -> str | None:
+    """Windows' own taskkill, from PATH or else from the system folder."""
+    found = which("taskkill")
+    if found:
+        return found
+    root = os.environ.get("SystemRoot") or os.environ.get("windir")
+    if root:
+        candidate = os.path.join(root, "System32", "taskkill.exe")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def kill_tree(pid, *, timeout: float, run=subprocess.run,
+              which=shutil.which) -> bool:
+    """End process ``pid`` and every process under it. Windows only.
+
+    ``pid`` is always Shambles' own child, which it still holds a handle to,
+    so Windows cannot have reused the number for anything else. ``/F`` is as
+    forceful as the ``TerminateProcess`` that ``Popen.terminate()`` uses;
+    Windows has nothing gentler to send a console program it did not start
+    in a group of its own. Returns whether taskkill said it succeeded, and
+    never raises: the caller falls back to ``terminate()``.
+    """
+    exe = _taskkill(which)
+    if exe is None:
+        return False
+    try:
+        result = run([exe, "/F", "/T", "/PID", str(int(pid))],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, timeout=timeout, **_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return getattr(result, "returncode", 1) == 0
+
+
 class LoginProcess:
     """One run of a vendor login command.
 
@@ -318,15 +548,25 @@ class LoginProcess:
     thread (``LoginDialog`` puts it on a ``queue.Queue`` that the window
     polls). A blocking wait on the main thread instead freezes the window and
     stops the signal pump that makes Ctrl+C work.
+
+    ``takes_input`` gives the vendor a pipe on its standard input instead of
+    an empty one, for :meth:`send_line`. Only a provider that reads a pasted
+    code asks for it (:func:`accepts_code`). For every other vendor nothing
+    changes: its input is at end of file from the start, as it always was.
     """
 
-    def __init__(self, argv, *, env=None, popen=subprocess.Popen):
+    def __init__(self, argv, *, env=None, popen=subprocess.Popen,
+                 takes_input=False):
         self._argv = list(argv)
         self._env = dict(env) if env is not None else None
         self._popen = popen
         self._process = None
         self._thread = None
         self._cancelled = False
+        self._takes_input = bool(takes_input)
+        #: Held while writing to or closing the vendor's input, so a send
+        #: racing the vendor's exit either lands whole or reports False.
+        self._input_lock = threading.Lock()
 
     @property
     def running(self) -> bool:
@@ -350,7 +590,15 @@ class LoginProcess:
                 argv,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
+                # A pipe, not a pseudo-terminal. Claude Code reads a pasted
+                # code from a pipe as readily as from a terminal, and a
+                # terminal would change what it does: it would always wrap
+                # the sign-in link in hyperlink escapes and colour (through
+                # a pipe, only when the environment suggests a terminal that
+                # shows them; find_url strips them either way), and it would
+                # start reading keystrokes in raw mode.
+                stdin=(subprocess.PIPE if self._takes_input
+                       else subprocess.DEVNULL),
                 text=True,
                 bufsize=1,
                 env=self._env,
@@ -373,7 +621,51 @@ class LoginProcess:
             # here. The exit code below is the real answer either way.
             pass
         code = self._process.wait()
+        self._close_input()
         on_exit(code)
+
+    def send_line(self, text) -> bool:
+        """Write ``text`` and a line break to the vendor's standard input.
+
+        Returns whether it was written. False, never an exception, when this
+        process takes no input, has not started, has exited, or its vendor
+        closed its end. ``text`` is a sign-in code, so it is never logged and
+        never part of an error; the caller reports a fixed sentence.
+
+        Only one line of visible characters is written: a line break inside
+        would be a second answer nobody typed. :func:`clean_code` refuses
+        such text with a reason first; this is the backstop.
+        """
+        if not self._takes_input or not _ONE_LINE.fullmatch(text or ""):
+            return False
+        with self._input_lock:
+            process = self._process
+            if process is None or process.poll() is not None:
+                return False
+            stream = process.stdin
+            if stream is None or stream.closed:
+                return False
+            try:
+                stream.write(text + "\n")
+                stream.flush()
+            except (OSError, ValueError):
+                # Its reader is gone. What the exception says is not passed
+                # on: it is about the pipe, and the caller has a sentence.
+                return False
+        return True
+
+    def _close_input(self) -> None:
+        """Close the vendor's input once it has exited. Never raises."""
+        with self._input_lock:
+            stream = getattr(self._process, "stdin", None)
+            if stream is None or stream.closed:
+                return
+            try:
+                stream.close()
+            except OSError:
+                # A flush into a pipe whose reader has exited. The stream is
+                # closed all the same.
+                pass
 
     def cancel(self, *, grace: float = 5.0) -> None:
         """Stop the vendor process.
@@ -381,10 +673,22 @@ class LoginProcess:
         SIGTERM first so it can release its callback port, SIGKILL only if it
         will not go. Leaving one running would hold that port and make the
         next attempt fail for a reason the user could not possibly guess.
+
+        On Windows the process Shambles started is often not the vendor:
+        npm installs a ``.cmd`` shim, so it is ``cmd.exe`` with the vendor
+        as its child, and ``terminate()`` ends ``cmd.exe`` alone. There the
+        whole tree under that one child ends instead (:func:`kill_tree`),
+        with ``terminate()`` as the fallback.
         """
         self._cancelled = True
         if self._process is None or self._process.poll() is not None:
             return
+        if KILL_TREE and kill_tree(self._process.pid, timeout=grace):
+            try:
+                self._process.wait(timeout=grace)
+                return
+            except subprocess.TimeoutExpired:
+                pass
         self._process.terminate()
         try:
             self._process.wait(timeout=grace)

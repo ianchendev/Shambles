@@ -155,7 +155,11 @@
     ],
     "hint": "Run 'claude auth login' in a terminal.",
     "email_flag": "--email",
-    "note": "claude auth login opens the browser and runs its own callback server. --email pre-populates the address on the login page."
+    "note": "claude auth login opens the browser and runs its own callback server. --email pre-populates the address on the login page.",
+    "paste_code": {
+      "separator": "#",
+      "note": "The link claude auth login prints (If the browser didn't open, visit: ...) is its manual one: the page ends by showing <code>#<state> to paste back. 2.1.270, 2.1.289 and 2.1.300 read it as a line on stdin with a line reader on process.stdin and no terminal check, split it at '#', and refuse a line without both halves. Read from the binaries' strings; the command was not run."
+    }
   },
   "provenance": {
     "client_versions": [

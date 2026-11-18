@@ -443,7 +443,8 @@ The service exposes these operations:
 | `refresh()` | Restash active credentials where the provider requires rotation, then snapshot. |
 | `plan_remove(provider, name)` | Read-only confirmation plan warning that the saved login is removed. |
 | `remove(plan)` | Execute only a valid removal plan; reject mismatched plans without mutation. |
-| `start_login(provider, account, on_line, on_done)` | Activate the target, start the vendor command asynchronously, and return a cancellable `LoginHandle`. |
+| `start_login(provider, account, on_line, on_done)` | Activate the target, start the vendor command asynchronously, and return a cancellable `LoginHandle`. With `device=True`, run the sign-in with a one-time code entered on another device. |
+| `offers_device_sign_in(provider)` | Whether the provider's spec describes a device-code sign-in (Codex). |
 | `plan_eject()` | Survey the installation and return a read-only confirmation plan. |
 | `eject(plan)` | Execute only a valid eject plan; reject mismatched plans without mutation. |
 
@@ -474,6 +475,35 @@ rejected before mutation with an `invalid_plan` error and no snapshot. Login
 output exposes only supported HTTPS authorization endpoints and allowed
 authorization parameters. Credential fields, userinfo, fragments and unknown
 URLs are hidden; all other output becomes `[vendor output hidden]`.
+
+A sign-in can take one thing back: the code a vendor's browser page shows
+when the browser cannot reach this machine. `LoginHandle.accepts_code` says
+whether this sign-in reads one; only a provider whose spec has
+`login.paste_code` does (Claude). `LoginHandle.send_code(code)` returns an
+`ActionResult` with no snapshot and one of three refusals: `code_not_accepted`,
+`login_not_running`, or `code_invalid` for anything that is not one line of
+visible ASCII with both halves around the spec's separator, after surrounding
+whitespace is stripped. The code is a credential: it is never in a result, an
+error or a progress line. Such a vendor gets a pipe on its standard input,
+closed when it exits; every other vendor keeps the end-of-file input it
+always had. A pipe rather than a pseudo-terminal, because Claude Code reads
+the code from either, and a terminal would change what it does: hyperlink
+escapes around the link every time, and its raw-mode keystroke capture.
+
+A device sign-in (`start_login` or `start_add` with `device=True`) runs the
+command with the spec's `login.device_auth.flag`. It is refused with
+`device_sign_in_unavailable` before anything moves if the provider has no
+such spec. `login.DeviceCodeReader` takes the link and the code out of the
+output by position, after removing terminal escapes. The link is a line that
+is exactly the spec's `verification_url`; the code is the first line after
+it that fully matches `code_pattern`. They reach the frontend once, through
+`on_device_code`, as a `DeviceSignIn(user_code, verification_url,
+expires_at_ms)`, with the deadline taken from the spec's `expires_in_s`.
+Those lines still reach `on_line` only as `[vendor output hidden]`. A failed
+device sign-in keeps the code `login_failed`. Its message quotes the vendor
+only for the spec's fixed messages, taken from the spec's copy and never from
+the output, and its recovery names the account setting device codes need,
+except when the code simply expired.
 
 The CLI is a compatibility adapter. It consumes service results but preserves
 the established human-readable output, `list --json` snapshot shape,
