@@ -52,8 +52,7 @@ Pane {
                     background: Rectangle {
                         radius: 8
                         color: choice.checked ? ui.theme.surface : "transparent"
-                        border.color: choice.visualFocus ? ui.theme.focus : "transparent"
-                        border.width: choice.visualFocus ? 2 : 0
+                        FocusRing { radius: 8; shown: choice.visualFocus }
                     }
                     contentItem: Text {
                         text: modelData.label
@@ -202,13 +201,11 @@ Pane {
                 spacing: 6
                 Btn {
                     kind: "soft"
-                    implicitHeight: 34
                     text: ui.sheet.copied ? "Copied" : "Copy"
                     tip: "Copy the sign-in link"
                     onClicked: ui.copyUrl()
                 }
                 Btn {
-                    implicitHeight: 34
                     text: "Open"
                     tip: "Open the sign-in link in your browser. It is copied too."
                     onClicked: ui.openUrl()
