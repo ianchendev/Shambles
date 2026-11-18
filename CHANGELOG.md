@@ -26,6 +26,13 @@ Notable changes per release. Dates are the tag date.
   hover. An hour-old reading is marked by the bar's look and its tooltip
   instead of an "as of 7h ago" line. The window redraws every 30 seconds
   so a countdown stays true while it sits open; that redraw reads nothing.
+- **No more "running sessions keep their login".** The window, the
+  terminal UI, the classic window and the README said a session already
+  running keeps the login it started with, and to start a new one after a
+  switch or sign-in. Claude Code 2.1.300 re-reads a changed login at its
+  next request, so for current Claude Code that was wrong. Shambles now
+  says nothing either way until the behaviour is confirmed for older
+  versions and for Codex.
 
 ## 2.2.2 - 2026-11-15
 

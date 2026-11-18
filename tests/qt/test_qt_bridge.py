@@ -115,8 +115,7 @@ def test_switching_goes_through_the_service_and_says_what_to_do_next(make):
 
     assert service.named("switch") == [("switch", "claude", "Personal")]
     assert seen == ["claude/Personal"]
-    assert ui.toast["text"] == \
-        "Switched to Personal. Start a new session to pick it up."
+    assert ui.toast["text"] == "Switched to Personal."
 
 
 def test_a_refused_switch_says_why_and_confirms_nothing(make):
@@ -215,7 +214,7 @@ def test_a_renewed_login_closes_the_sheet_and_confirms_the_account(make):
 
     assert ui.sheet == {}
     assert seen == ["claude/Old"]
-    assert "Old is signed in and live" in ui.toast["text"]
+    assert ui.toast["text"] == "Old is signed in and in use."
 
 
 def test_a_login_for_the_wrong_account_is_explained_and_can_be_retried(make):

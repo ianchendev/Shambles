@@ -23,10 +23,13 @@ from ... import __version__
 from ..service import ActionError, ActionResult, waiting_for_refresh
 from . import presenter, theme
 
-SWITCHED = "Switched to {name}. Start a new session to pick it up."
-SETTLED = ("{name} is the account in use, and its login is saved. Start a "
-           "new session if one was running as another account.")
-SIGNED_IN = "{name} is signed in and live. Start a new session to pick it up."
+# None of these says what a running session does after the change. Claude
+# Code 2.1.300 re-reads a changed login at its next request; older versions
+# and Codex are unconfirmed, so a claim either way could be wrong. See
+# tests/test_wording.py.
+SWITCHED = "Switched to {name}."
+SETTLED = "{name} is the account in use, and its login is saved."
+SIGNED_IN = "{name} is signed in and in use."
 NO_BROWSER = ("No browser could be launched from here, which is usual under "
               "WSL and over SSH. The link is on your clipboard.")
 UNREADABLE = "Could not read your accounts. Press Refresh to try again."

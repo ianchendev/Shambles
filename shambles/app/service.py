@@ -469,9 +469,10 @@ class ShamblesService:
         if outcome.kind == switcher.RENEWED:
             summary = (f"Added {name} and signed in." if action == "add"
                        else f"Logged in to {name}.")
-            return self._result(True, action, summary, warnings=(
-                "Running sessions keep the login they started with. Start a "
-                "new one to use this account.",))
+            # No word on running sessions: Claude Code 2.1.300 re-reads a
+            # changed login at its next request, older versions and Codex
+            # are unconfirmed, so any claim either way could be wrong.
+            return self._result(True, action, summary)
 
         if outcome.kind == switcher.DUPLICATE:
             where = f"You are on '{outcome.owner}' now. " if outcome.owner else ""
