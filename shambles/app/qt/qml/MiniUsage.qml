@@ -22,37 +22,11 @@ Item {
                 readonly property var limit: root.usage[index] || ({})
                 readonly property bool reset: limit.state === "reset"
                 spacing: 6
-                Item {
+                BarFill {
                     width: 58
                     height: 4
                     anchors.verticalCenter: parent.verticalCenter
-                    clip: true
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 2
-                        color: ui.theme.track
-                        visible: !parent.parent.reset
-                    }
-                    Rectangle {
-                        visible: !parent.parent.reset
-                        height: parent.height
-                        radius: 2
-                        width: Math.max((parent.parent.limit.fill || 0) > 0 ? 3 : 0,
-                                        parent.width * (parent.parent.limit.fill || 0))
-                        color: parent.parent.limit.tone === "gone" ? ui.theme.barGone
-                            : parent.parent.limit.tone === "soon" ? ui.theme.barSoon
-                            : parent.parent.limit.tone === "dim" ? ui.theme.barDim
-                            : ui.theme.barOk
-                    }
-                    Row {
-                        // Hatched: the bar has emptied since the figure.
-                        visible: parent.parent.reset
-                        spacing: 3
-                        Repeater {
-                            model: 10
-                            Rectangle { width: 3; height: 4; radius: 1; color: ui.theme.okDot; opacity: 0.6 }
-                        }
-                    }
+                    limit: parent.limit
                 }
                 Text {
                     width: 32

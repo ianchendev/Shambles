@@ -10,7 +10,7 @@ Rectangle {
     readonly property string who: deadline.account || ""
     readonly property string said: deadline.text || ""
     implicitHeight: 40
-    radius: 10
+    radius: 12
     color: ui.theme.warnSurface
     border.color: ui.theme.warnBorder
     border.width: 1

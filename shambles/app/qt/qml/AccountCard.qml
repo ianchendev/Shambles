@@ -133,7 +133,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             Chip {
                                 visible: root.live
-                                text: "Live"
+                                text: "In use"
                                 tone: "ok"
                                 dot: true
                             }

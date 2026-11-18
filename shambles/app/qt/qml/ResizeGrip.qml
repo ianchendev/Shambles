@@ -18,6 +18,11 @@ MouseArea {
     cursorShape: Qt.SizeFDiagCursor
     hoverEnabled: true
 
+    Tip {
+        text: "Drag to resize"
+        visible: root.containsMouse && !root.pressed
+    }
+
     onPressed: (mouse) => {
         pressedAt = Qt.point(mouse.x, mouse.y)
         moving = false

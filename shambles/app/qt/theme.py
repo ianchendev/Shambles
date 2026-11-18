@@ -4,15 +4,17 @@ One flat mapping per scheme with the same keys in both, so the QML reads
 ``ui.theme.surface`` and never asks which scheme it is in. A key missing
 from one scheme would draw as transparent in that scheme only, which is the
 kind of fault nobody sees until a user in the other mode reports it --
-``tests/qt/test_theme.py`` holds the two key sets equal, and holds body text
-to a 4.5:1 contrast against the surfaces it sits on.
+``tests/qt/test_qt_theme.py`` holds the two key sets equal, body text to a
+4.5:1 contrast against the surfaces it sits on, and outlines to 3:1 (D12).
+The focus ring is violet, apart from the blue of buttons, the live card and
+anything selected, and is drawn with a gap of ``focusGap`` inside it.
 """
 
 LIGHT = {
     "ground": "#f4f5f7",
     "surface": "#ffffff",
     "sunken": "#f4f5f7",
-    "border": "#dfe2e8",
+    "border": "#868d98",
     "hairline": "#eceef2",
     "text": "#15171c",
     "muted": "#5b6270",
@@ -21,7 +23,7 @@ LIGHT = {
     "accentHover": "#1d4fd0",
     "accentText": "#1d4fc4",
     "accentSoft": "#f2f6ff",
-    "accentSoftBorder": "#c9d6f5",
+    "accentSoftBorder": "#6488dc",
     "onAccent": "#ffffff",
     "liveBorder": "#2563eb",
     "liveAvatar": "#e6efff",
@@ -32,11 +34,11 @@ LIGHT = {
     "okDot": "#1c8a52",
     "warnBg": "#fff1cc",
     "warnText": "#7a4a00",
-    "warnBorder": "#e2b23c",
+    "warnBorder": "#b07d12",
     "warnSurface": "#fff8e6",
     "badBg": "#fde8e6",
     "badText": "#9b1c16",
-    "badBorder": "#e3b5b1",
+    "badBorder": "#cc5f56",
     "badSurface": "#fff5f4",
     "infoSurface": "#f2f6ff",
     "infoText": "#1c2a4a",
@@ -49,14 +51,15 @@ LIGHT = {
     "sheet": "#ffffff",
     "toast": "#1b1e25",
     "onToast": "#f4f5f7",
-    "focus": "#2563eb",
+    "focus": "#6d28d9",
+    "focusGap": "#ffffff",
 }
 
 DARK = {
     "ground": "#0f1218",
     "surface": "#181c24",
     "sunken": "#12151c",
-    "border": "#2a303b",
+    "border": "#687080",
     "hairline": "#262b35",
     "text": "#eef0f4",
     "muted": "#a3abb8",
@@ -65,7 +68,7 @@ DARK = {
     "accentHover": "#356ce4",
     "accentText": "#a9c4ff",
     "accentSoft": "#18233f",
-    "accentSoftBorder": "#2f4374",
+    "accentSoftBorder": "#5878cc",
     "onAccent": "#ffffff",
     "liveBorder": "#5b8dff",
     "liveAvatar": "#1b2a4d",
@@ -80,7 +83,7 @@ DARK = {
     "warnSurface": "#2a2210",
     "badBg": "#421c1c",
     "badText": "#ffa69e",
-    "badBorder": "#6b2a2c",
+    "badBorder": "#b05052",
     "badSurface": "#2b161c",
     "infoSurface": "#18233f",
     "infoText": "#d6e2ff",
@@ -93,7 +96,8 @@ DARK = {
     "sheet": "#1b202a",
     "toast": "#eef0f4",
     "onToast": "#15171c",
-    "focus": "#7aa7ff",
+    "focus": "#c4b5fd",
+    "focusGap": "#0f1218",
 }
 
 

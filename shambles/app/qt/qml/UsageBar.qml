@@ -2,17 +2,12 @@
 // window.state is "current", "old" or "reset"; window.text is "85%" or
 // "reset"; window.tip says the rest (the old figure, the exact date, its age).
 import QtQuick
-import QtQuick.Controls.Basic
 
 Column {
     id: root
     property var window: ({})
     property bool showResets: true
     spacing: 6
-
-    readonly property color fill: window.tone === "gone" ? ui.theme.barGone
-        : window.tone === "soon" ? ui.theme.barSoon
-        : window.tone === "dim" ? ui.theme.barDim : ui.theme.barOk
 
     Item {
         width: parent.width
@@ -31,21 +26,10 @@ Column {
             font.weight: Font.DemiBold
         }
     }
-    Rectangle {
+    BarFill {
         width: parent.width
         height: 6
-        radius: 3
-        color: ui.theme.track
-        Rectangle {
-            height: 6
-            radius: 3
-            color: root.fill
-            width: Math.max(root.window.fill > 0 ? 6 : 0, parent.width * (root.window.fill || 0))
-            Behavior on width {
-                enabled: ui.motion
-                NumberAnimation { duration: 420; easing.type: Easing.OutCubic }
-            }
-        }
+        limit: root.window
     }
     Text {
         visible: root.showResets && text !== ""
@@ -55,7 +39,8 @@ Column {
     }
 
     HoverHandler { id: hover }
-    ToolTip.visible: hover.hovered && (root.window.tip || "") !== ""
-    ToolTip.text: root.window.tip || ""
-    ToolTip.delay: 500
+    Tip {
+        text: root.window.tip || ""
+        visible: text !== "" && hover.hovered
+    }
 }

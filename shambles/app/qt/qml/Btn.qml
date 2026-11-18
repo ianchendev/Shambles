@@ -14,7 +14,8 @@ T.Button {
     property string tip: ""
     readonly property bool iconOnly: text === ""
 
-    implicitHeight: 38
+    // D9: 36 in the header and on sheets, 32 on rows.
+    implicitHeight: 36
     implicitWidth: iconOnly ? implicitHeight : row.implicitWidth + 30
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
@@ -50,21 +51,14 @@ T.Button {
         border.color: control.edge
         border.width: control.kind === "primary" || control.kind === "ghost" ? 0 : 1
         opacity: control.down ? 0.8 : 1
-        Rectangle {
-            // The focus ring. Outside the button so it reads on any fill.
-            anchors.fill: parent
-            anchors.margins: -3
-            radius: parent.radius + 3
-            color: "transparent"
-            border.color: ui.theme.focus
-            border.width: 2
-            visible: control.visualFocus
-        }
+        FocusRing { radius: 10; shown: control.visualFocus }
     }
 
     Tip {
-        text: control.tip
-        visible: control.tip !== "" && (control.hovered || control.visualFocus)
+        // An icon alone says nothing to a mouse user: its tooltip is the
+        // name a screen reader already reads (D9).
+        text: control.tip !== "" ? control.tip : (control.iconOnly ? control.hint : "")
+        visible: text !== "" && (control.hovered || control.visualFocus)
     }
 
     contentItem: Item {

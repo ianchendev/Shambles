@@ -179,7 +179,7 @@ ApplicationWindow {
             objectName: "header"
             z: 2
             width: parent.width
-            height: 68
+            height: 64
             color: ui.theme.ground
 
             WindowMover {
@@ -211,9 +211,11 @@ ApplicationWindow {
                 color: ui.theme.muted
                 font.pixelSize: 12
                 HoverHandler { id: updatedHover }
-                ToolTip.visible: updatedHover.hovered
-                ToolTip.text: ui.updatedTip
-                ToolTip.delay: 500
+                // The window's one tooltip look (D9).
+                Tip {
+                    text: ui.updatedTip
+                    visible: text !== "" && updatedHover.hovered
+                }
             }
 
             Row {
@@ -224,18 +226,18 @@ ApplicationWindow {
                 spacing: 10
                 Btn {
                     glyph: "refresh"
-                    hint: "Refresh. Re-reads local files only."
+                    hint: "Read your accounts again"
                     // U2: what is re-read by itself, and that this reads all.
                     tip: ui.updatedTip
                     enabled: !ui.busy
-                    implicitHeight: 40
+                    implicitHeight: 36
                     onClicked: ui.refresh()
                 }
                 Btn {
                     id: moreButton
                     glyph: "more"
                     hint: "Theme and more"
-                    implicitHeight: 40
+                    implicitHeight: 36
                     onClicked: mainMenu.open()
                     MenuPop {
                         id: mainMenu
@@ -262,7 +264,7 @@ ApplicationWindow {
                     text: win.narrow ? "Add" : "Add account"
                     hint: "Add account"
                     enabled: !ui.busy
-                    implicitHeight: 40
+                    implicitHeight: 36
                     onClicked: ui.openAdd("")
                 }
             }

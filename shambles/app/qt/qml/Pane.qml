@@ -10,7 +10,11 @@ Item {
     property alias spacing: bodyColumn.spacing
     // A rule above the buttons even when nothing scrolls.
     property bool rule: false
-    readonly property bool scrolls: scroll.contentHeight > scroll.height + 1
+    // From the height the sheet wants against the height it was given, not
+    // from the scrolling area: the rule drawn when it scrolls takes room
+    // from that area, and measured there a sheet that scrolled once, while
+    // its text was still being laid out, kept scrolling for good.
+    readonly property bool scrolls: implicitHeight > height + 1
     readonly property int gap: 16
     implicitHeight: bodyColumn.implicitHeight + gap + footerSlot.height
                     + (rule ? gap + 1 : 0)

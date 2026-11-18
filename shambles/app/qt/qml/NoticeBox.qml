@@ -6,7 +6,7 @@ Rectangle {
     property var notice: ({})
     property bool open: !notice.collapsed
     implicitHeight: col.implicitHeight + 28
-    radius: 14
+    radius: 12
     color: notice.tone === "bad" ? ui.theme.badSurface
         : notice.tone === "warn" ? ui.theme.warnSurface : ui.theme.infoSurface
     border.width: 1
@@ -52,7 +52,7 @@ Rectangle {
             kind: root.notice.action === "signin" ? "primary" : "plain"
             text: root.notice.actionLabel || ""
             enabled: !ui.busy
-            implicitHeight: 34
+            implicitHeight: 32
             onClicked: root.notice.action === "signin"
                        ? ui.signIn(root.notice.provider, root.notice.account)
                        : ui.forgetMarker(root.notice.provider)

@@ -1,6 +1,6 @@
 """Structured data exchanged by the application service boundary."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import os
 import threading
 
@@ -64,6 +64,9 @@ class ActionPlan:
     requires_confirmation: bool
     prompt: str
     warnings: tuple[str, ...] = ()
+    #: The same plan in parts, for a frontend that lays it out rather than
+    #: printing ``warnings``. Optional; ``warnings`` always says it all.
+    details: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,9 @@ class MigrationNotice:
     code: str
     message: str
     ok: bool = True
+    #: The facts ``message`` is written from, for a frontend that lays them
+    #: out (a path on its own line, say). Optional.
+    details: dict = field(default_factory=dict)
 
 
 #: Why a pasted code was not passed on, for the codes :meth:`LoginHandle.
@@ -586,7 +592,10 @@ class ShamblesService:
                         "lets Shambles hold Codex accounts alongside Claude "
                         f"ones. Nothing was deleted. The old {moved.source} "
                         "is still there, and you can remove it once you are "
-                        "satisfied."))
+                        "satisfied.",
+                        details={"count": len(moved.profiles),
+                                 "dest": str(moved.dest),
+                                 "source": str(moved.source)}))
         return tuple(notices)
 
     def window_theme(self):
@@ -1056,6 +1065,18 @@ class ShamblesService:
              "the login it has now and goes back to being an ordinary "
              "install. Nothing is deleted.",
              "Afterwards:\n" + eject_mod.summary(plan)),
+            details={
+                # The providers eject_mod.summary speaks of, in its order.
+                "keeps": [{"provider": entry.display_name,
+                           "account": entry.active or "",
+                           "signedIn": bool(entry.credentials_kept)}
+                          for entry in plan.providers
+                          if entry.credentials_kept or entry.other_profiles
+                          or entry.active],
+                "parked": sorted({name for entry in plan.providers
+                                  for name in entry.other_profiles}),
+                "store": str(plan.store) if plan.store else "",
+            },
         )
 
     def eject(self, plan):
