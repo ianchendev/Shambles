@@ -62,6 +62,20 @@ class ActionPlan:
 
 
 @dataclass(frozen=True)
+class ActionOffer:
+    """One next step a frontend may offer beside a result, never take.
+
+    ``action`` names the service call it stands for (``switch``), on
+    ``provider``/``account``; ``label`` is the button's text.
+    """
+
+    action: str
+    provider: str
+    account: str | None
+    label: str
+
+
+@dataclass(frozen=True)
 class ActionResult:
     ok: bool
     action: str
@@ -69,6 +83,7 @@ class ActionResult:
     warnings: tuple[str, ...] = ()
     snapshot: Snapshot | None = None
     error: ActionError | None = None
+    offer: ActionOffer | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -79,6 +94,7 @@ class ActionResult:
             "snapshot": (snapshot_mod.to_dict(self.snapshot)
                          if self.snapshot else None),
             "error": (asdict(self.error) if self.error else None),
+            "offer": (asdict(self.offer) if self.offer else None),
         }
 
 
@@ -122,6 +138,16 @@ class LoginHandle:
 #: content: three of these in a row is the normal shape of a working login,
 #: and repeating the literal text at the user reads as a malfunction.
 HIDDEN_LINE = "[vendor output hidden]"
+
+
+def _day_month(ms) -> str:
+    """``ms`` as ``18 Dec`` in local time, or ``""``."""
+    import datetime
+    try:
+        when = datetime.datetime.fromtimestamp(ms / 1000)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+    return f"{when.day} {when.strftime('%b')}"
 
 
 def _safe_login_line(line):
@@ -405,9 +431,13 @@ class ShamblesService:
         def finish(exit_code):
             try:
                 outcome = settle(exit_code == 0 and not cancelled.is_set())
-                result = self._login_result(action, provider, outcome,
-                                            exit_code=exit_code,
-                                            cancelled=cancelled.is_set())
+                if (outcome.kind == switcher.RENEWED
+                        and prepared.get("renewing")):
+                    result = self._renewed(provider, outcome)
+                else:
+                    result = self._login_result(action, provider, outcome,
+                                                exit_code=exit_code,
+                                                cancelled=cancelled.is_set())
             except ShamblesError as exc:
                 result = self._failure(action, exc)
             except Exception:
@@ -443,9 +473,15 @@ class ShamblesService:
                     self.paths, provider, account, platform=self.platform)
                 email = None
             else:
+                # Decided before anything moves: whether this is a renewal
+                # of a parked account that still works (D11), to be put back
+                # afterwards, or a sign-in to use it.
+                renewing = self._renewal(provider, account)
                 prepared["previous"] = switcher.begin_relogin(
                     self.paths, provider, account, platform=self.platform)
                 prepared["account"] = account
+                prepared["renewing"] = (renewing and bool(prepared["previous"])
+                                        and prepared["previous"] != account)
                 email = state.profile_email(self.paths, provider, account)
             process = login.LoginProcess(login.command(provider, email=email),
                                          env=env)
@@ -460,6 +496,56 @@ class ShamblesService:
                     "login_failed", "Could not prepare the vendor login.",
                     "Check the login configuration and retry.")))
         return LoginHandle(process, completed, cancelled)
+
+    def _renewal(self, provider, name) -> bool:
+        """Whether signing ``name`` in now is a renewal (D11).
+
+        Yes when it is parked and its saved login still works: the user is
+        signing in early to keep it, not to use it. A lapsed login, or the
+        account already in use, is not.
+        """
+        if self._live_profile(provider) in (None, name):
+            return False
+        try:
+            blob = self.paths.credentials(provider.id, name).read_bytes()
+        except OSError:
+            return False
+        try:
+            return (bool(blob) and provider.has_login(blob)
+                    and not provider.liveness(
+                        blob, now_ms=self.clock_ms()).needs_login)
+        except Exception:
+            return False
+
+    def _renewed(self, provider, outcome):
+        """A renewal saved under its account. Now put the user back.
+
+        The ordinary switch, so the account set aside comes back exactly as
+        it was kept. The new login is already filed by then, so a switch
+        back that is refused costs nothing but the move: the user stays on
+        the renewed account and is told so.
+        """
+        name, previous = outcome.profile, outcome.previous
+        until = ""
+        try:
+            blob = self.paths.credentials(provider.id, name).read_bytes()
+            expires = provider.liveness(blob,
+                                        now_ms=self.clock_ms()).expires_at_ms
+            until = _day_month(expires) if expires else ""
+        except Exception:
+            pass
+        renewed = (f"{name} renewed until {until}." if until
+                   else f"{name} renewed.")
+        try:
+            switcher.switch(self.paths, provider, previous,
+                            platform=self.platform, now_ms_fn=self.clock_ms)
+        except ShamblesError:
+            return self._result(True, "login", f"{renewed} You're on {name} "
+                                f"now; switch back to {previous} when you "
+                                "like.")
+        return self._result(
+            True, "login", f"{renewed} You're still on {previous}.",
+            offer=ActionOffer("switch", provider.id, name, f"Use {name}"))
 
     @staticmethod
     def _unwind(prepared, settle):
@@ -633,7 +719,8 @@ class ShamblesService:
         return self._result(False, action,
                             error=ActionError(code, message, recovery))
 
-    def _result(self, ok, action, summary="", *, error=None, warnings=()):
+    def _result(self, ok, action, summary="", *, error=None, warnings=(),
+                offer=None):
         """A failed read cannot erase an operation that already finished."""
         try:
             fresh = self.snapshot()
@@ -642,6 +729,6 @@ class ShamblesService:
                 ok, action, summary,
                 warnings=(*warnings,
                           "Account status is unavailable. Refresh to retry."),
-                error=error)
+                error=error, offer=offer)
         return ActionResult(ok, action, summary, warnings=tuple(warnings),
-                            snapshot=fresh, error=error)
+                            snapshot=fresh, error=error, offer=offer)

@@ -93,6 +93,13 @@ Notable changes per release. Dates are the tag date.
   nothing to say there was more. A sheet's buttons now stay at its bottom
   and its text scrolls above them, with a scroll bar on show. Opening an
   account near the bottom of the list scrolls its details into view.
+- **Renewing a parked account keeps you where you were.** Signing in an
+  account you are not using, before its login runs out, has to make it live
+  while Claude Code writes the new login. Shambles then left you on it. Now,
+  once the new login is saved, it switches you back to the account you were
+  on and says so: "Admin renewed until 18 Dec. You're still on Personal."
+  Signing in an account whose login has lapsed, to use it, still leaves you
+  on it.
 
 ## 2.2.2 - 2026-11-15
 

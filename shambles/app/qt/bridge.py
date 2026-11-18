@@ -542,6 +542,12 @@ class Bridge(QObject):
         if login is None:
             return
         name, provider = login["name"], login["provider"]
+        if result.ok and result.offer is not None:
+            # D11: a renewal. The service put the user back where they were
+            # and says so; nothing became live, so nothing pulses.
+            self._set_sheet({})
+            self._say(result.summary)
+            return
         if result.ok:
             self._set_sheet({})
             self._say(" ".join((SIGNED_IN.format(name=name),)))
