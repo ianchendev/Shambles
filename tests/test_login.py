@@ -86,11 +86,20 @@ def test_cancelling_terminates_the_child(codex, fake_vendor):
     """A user who closes the dialog must not leave a vendor process holding a
     callback port open."""
     fake_vendor("codex", linger=30)
-    done, codes = threading.Event(), []
+    done, codes, lines = threading.Event(), [], []
+    started = threading.Event()
+
+    def seen(line):
+        lines.append(line)
+        started.set()
 
     process = login.LoginProcess(login.command(codex))
-    process.start(on_line=lambda _line: None,
+    process.start(on_line=seen,
                   on_exit=lambda code: (codes.append(code), done.set()))
+    # Cancel a vendor that is running, not one still starting: cancelled
+    # before its first line, the stand-in's shell could die before it ever
+    # started the long wait, and this test passed on timing alone.
+    assert started.wait(timeout=10), "the stand-in never started"
     process.cancel(grace=2.0)
 
     # Ten seconds against the fake's thirty-second sleep is the real

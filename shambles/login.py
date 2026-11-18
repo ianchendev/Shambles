@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -304,6 +305,54 @@ def _store_selectors(spec: dict) -> set[str]:
     return found
 
 
+#: Whether a cancel ends the vendor's whole process tree. Windows only: on
+#: POSIX the vendor is the process Shambles started (the native binary, or
+#: node for an npm install, and Codex's npm launcher forwards SIGTERM to its
+#: native binary), while a new process group to kill would also change how
+#: Ctrl+C in a terminal reaches it.
+KILL_TREE = sys.platform == "win32"
+
+#: Keeps taskkill from flashing a console window over a windowed Shambles.
+_NO_WINDOW = ({"creationflags": subprocess.CREATE_NO_WINDOW}
+              if sys.platform == "win32" else {})
+
+
+def _taskkill(which=shutil.which) -> str | None:
+    """Windows' own taskkill, from PATH or else from the system folder."""
+    found = which("taskkill")
+    if found:
+        return found
+    root = os.environ.get("SystemRoot") or os.environ.get("windir")
+    if root:
+        candidate = os.path.join(root, "System32", "taskkill.exe")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def kill_tree(pid, *, timeout: float, run=subprocess.run,
+              which=shutil.which) -> bool:
+    """End process ``pid`` and every process under it. Windows only.
+
+    ``pid`` is always Shambles' own child, which it still holds a handle to,
+    so Windows cannot have reused the number for anything else. ``/F`` is as
+    forceful as the ``TerminateProcess`` that ``Popen.terminate()`` uses;
+    Windows has nothing gentler to send a console program it did not start
+    in a group of its own. Returns whether taskkill said it succeeded, and
+    never raises: the caller falls back to ``terminate()``.
+    """
+    exe = _taskkill(which)
+    if exe is None:
+        return False
+    try:
+        result = run([exe, "/F", "/T", "/PID", str(int(pid))],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, timeout=timeout, **_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return getattr(result, "returncode", 1) == 0
+
+
 class LoginProcess:
     """One run of a vendor login command.
 
@@ -381,10 +430,22 @@ class LoginProcess:
         SIGTERM first so it can release its callback port, SIGKILL only if it
         will not go. Leaving one running would hold that port and make the
         next attempt fail for a reason the user could not possibly guess.
+
+        On Windows the process Shambles started is often not the vendor:
+        npm installs a ``.cmd`` shim, so it is ``cmd.exe`` with the vendor
+        as its child, and ``terminate()`` ends ``cmd.exe`` alone. There the
+        whole tree under that one child ends instead (:func:`kill_tree`),
+        with ``terminate()`` as the fallback.
         """
         self._cancelled = True
         if self._process is None or self._process.poll() is not None:
             return
+        if KILL_TREE and kill_tree(self._process.pid, timeout=grace):
+            try:
+                self._process.wait(timeout=grace)
+                return
+            except subprocess.TimeoutExpired:
+                pass
         self._process.terminate()
         try:
             self._process.wait(timeout=grace)

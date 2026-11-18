@@ -17,6 +17,12 @@ Notable changes per release. Dates are the tag date.
   JetBrains, even when its output goes to Shambles rather than a terminal,
   and that link was lost as well. The sign-in sheet now shows Open sign-in
   page and Copy link for both vendors.
+- **Cancelling a sign-in on Windows stops Claude Code or Codex.** An npm
+  install starts them through a `.cmd` file, so what Shambles ran was
+  `cmd.exe` and the vendor was its child. Cancel ended `cmd.exe` only: the
+  vendor kept running, holding its sign-in port, and the window waited on
+  "Cancelling" until it gave up by itself. Cancel now ends the vendor too,
+  with Windows' own `taskkill`. Nothing else is touched.
 
 ## 2.2.2 - 2026-11-15
 
