@@ -487,7 +487,7 @@ def test_startup_migrations_are_said_once_over_the_accounts(make):
     ui, _, _ = make(service)
 
     assert ui.sheet["kind"] == "notice"
-    assert ui.sheet["messages"] == ["Your profiles moved."]
+    assert [m["text"] for m in ui.sheet["messages"]] == ["Your profiles moved."]
     assert ui.view["count"] == 3, "the accounts were not read behind it"
 
 

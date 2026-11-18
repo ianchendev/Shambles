@@ -813,7 +813,7 @@ class Bridge(QObject):
         if self._occupied():
             return
         self._report(self._service.forget_marker(provider),
-                     "Forgot the missing profile.")
+                     "Forgot the missing account.")
 
     @Slot()
     def confirm(self):

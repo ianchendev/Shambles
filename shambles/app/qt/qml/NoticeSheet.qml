@@ -14,8 +14,20 @@ Pane {
         }
     }
     Repeater {
+        // {text, path, tip}: a path on its own line, the why behind an i.
         model: ui.sheet.messages || []
-        SheetText { text: modelData }
+        Column {
+            width: parent.width
+            spacing: 6
+            TipText {
+                text: modelData.text || ""
+                tip: modelData.tip || ""
+            }
+            FolderPath {
+                visible: (modelData.path || "") !== ""
+                text: modelData.path || ""
+            }
+        }
     }
     footer: Btn {
         id: okButton

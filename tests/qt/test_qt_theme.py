@@ -51,3 +51,34 @@ def test_an_unknown_system_scheme_reads_as_light():
     assert theme.is_dark("system", True) is True
     assert theme.is_dark("light", True) is False
     assert theme.is_dark("dark", False) is True
+
+
+#: D12: an outline that marks where a control or card ends, then what it is
+#: drawn against. 3:1 is the usual floor for parts of a control.
+OUTLINES = [
+    ("border", "ground"), ("border", "surface"), ("border", "sheet"),
+    ("accentSoftBorder", "surface"), ("accentSoftBorder", "accentSoft"),
+    ("accentSoftBorder", "ground"), ("badBorder", "sheet"),
+    ("badBorder", "badSurface"), ("warnBorder", "warnSurface"),
+    ("warnBorder", "ground"), ("focus", "ground"), ("focus", "surface"),
+    ("focus", "sheet"), ("focus", "focusGap"),
+]
+
+
+@pytest.mark.parametrize("scheme", ["LIGHT", "DARK"])
+@pytest.mark.parametrize("line,paper", OUTLINES)
+def test_outlines_meet_3_to_1_on_what_they_sit_on(scheme, line, paper):
+    colours = getattr(theme, scheme)
+    ratio = contrast(colours[line], colours[paper])
+    assert ratio >= 3.0, f"{line} on {paper} in {scheme} is {ratio:.2f}:1"
+
+
+@pytest.mark.parametrize("scheme", ["LIGHT", "DARK"])
+def test_the_focus_ring_is_not_the_blue_of_buttons_and_the_live_card(scheme):
+    """D12: where the keyboard is must not look like a button, a selection
+    or the live card."""
+    colours = getattr(theme, scheme)
+    taken = {colours[key] for key in ("accent", "accentHover", "accentText",
+                                      "liveBorder", "accentSoftBorder")}
+
+    assert colours["focus"] not in taken

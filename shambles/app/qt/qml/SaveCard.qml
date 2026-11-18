@@ -5,10 +5,10 @@ Rectangle {
     id: root
     property var save: ({})
     implicitHeight: col.implicitHeight + 36
-    radius: 14
+    radius: 12
     color: ui.theme.warnSurface
     border.color: ui.theme.warnBorder
-    border.width: 2
+    border.width: 1
 
     Rectangle {
         id: badge
@@ -69,7 +69,6 @@ Rectangle {
                 kind: "primary"
                 text: "Save login"
                 enabled: !ui.busy
-                implicitHeight: 40
                 onClicked: ui.saveCurrent(root.save.provider, nameField.text)
             }
         }

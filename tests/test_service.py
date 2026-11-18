@@ -1117,6 +1117,21 @@ def test_the_eject_plan_says_what_eject_does_before_asking(paths):
     assert "Nothing is deleted" in first
 
 
+def test_the_eject_plan_also_says_it_in_parts_a_window_can_lay_out(paths):
+    """D7: the window says who each tool stays signed in as, and puts the
+    store's path on a line of its own, instead of one long paragraph."""
+    make_profile(paths, "claude", "Work", active=True)
+    make_profile(paths, "claude", "Spare")
+    make_live_claude_login(paths)
+
+    details = service(paths).plan_eject().details
+
+    assert details["keeps"][0]["provider"] == "Claude Code"
+    assert details["keeps"][0]["account"] == "Work"
+    assert details["parked"] == ["Spare"]
+    assert details["store"] == str(paths.library_dir)
+
+
 # -- what a window needs beyond the terminal UI --------------------------------
 
 
@@ -1174,6 +1189,8 @@ def test_a_v1_store_is_moved_and_the_move_is_reported(paths):
     assert [n.code for n in notices] == ["store_moved"]
     assert notices[0].ok and "2" in notices[0].message
     assert "Nothing was deleted" in notices[0].message
+    assert notices[0].details["count"] == 2
+    assert notices[0].details["dest"] and notices[0].details["source"]
 
 
 def test_a_migration_that_cannot_run_is_reported_not_raised(paths,

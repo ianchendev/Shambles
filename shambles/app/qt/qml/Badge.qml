@@ -30,15 +30,7 @@ T.AbstractButton {
             : control.tone === "warn" ? ui.theme.warnBg : ui.theme.accentSoft
         border.width: control.acts && control.hovered ? 1 : 0
         border.color: control.ink
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: -3
-            radius: height / 2
-            color: "transparent"
-            border.color: ui.theme.focus
-            border.width: 2
-            visible: control.visualFocus
-        }
+        FocusRing { radius: 11; shown: control.visualFocus }
     }
     contentItem: Item {
         Row {

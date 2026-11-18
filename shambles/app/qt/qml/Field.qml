@@ -5,7 +5,7 @@ import QtQuick.Templates as T
 T.TextField {
     id: control
     property string label: ""
-    implicitHeight: 40
+    implicitHeight: 36
     implicitWidth: 220
     leftPadding: 12
     rightPadding: 12
@@ -33,7 +33,10 @@ T.TextField {
     background: Rectangle {
         radius: 10
         color: ui.theme.surface
-        border.color: control.activeFocus ? ui.theme.focus : ui.theme.border
-        border.width: control.activeFocus ? 2 : 1
+        border.color: ui.theme.border
+        border.width: 1
+        // A text field shows where the caret is on any focus, not only
+        // keyboard focus: typing goes there either way.
+        FocusRing { radius: 10; shown: control.activeFocus }
     }
 }

@@ -7,6 +7,26 @@ Pane {
     Component.onCompleted: keepButton.forceActiveFocus()
     SheetHeading { text: ui.sheet.title || "" }
     SheetText { text: ui.sheet.message || "" }
+    Column {
+        // What each tool is left on, a line each (D7).
+        visible: (ui.sheet.lines || []).length > 0
+        width: parent.width
+        spacing: 2
+        Repeater {
+            model: ui.sheet.lines || []
+            SheetText { text: modelData }
+        }
+    }
+    Column {
+        visible: (ui.sheet.path || "") !== ""
+        width: parent.width
+        spacing: 6
+        TipText {
+            text: ui.sheet.pathLabel || ""
+            tip: ui.sheet.pathTip || ""
+        }
+        FolderPath { text: ui.sheet.path || "" }
+    }
     footer: Row {
         anchors.right: parent.right
         spacing: 10

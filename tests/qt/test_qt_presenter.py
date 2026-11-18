@@ -210,7 +210,7 @@ def test_the_group_summary_counts_accounts_and_those_needing_sign_in():
         "1 account"
     assert only(view(group(account("A", active=True), lapsed,
                            account("C"))))["summary"] == \
-        "3 accounts · 1 needs sign-in"
+        "3 accounts · 1 signed out"
 
 
 def test_an_unsaved_login_becomes_a_save_card_with_a_name_suggested():
@@ -432,7 +432,7 @@ def test_the_login_line_gives_the_date_and_what_to_do():
 
     assert presenter.login_line(account("A", state="closed",
                                         expires_at_ms=when)) == \
-        f"Expired {date}. Sign in again to renew it."
+        f"Signed out since {date}. Sign in to use it again."
     assert presenter.login_line(account("A", state="absent")) == \
         "No login saved yet. Sign in to fill it."
 
@@ -453,11 +453,11 @@ def test_only_an_account_renewed_by_use_is_told_that_using_it_keeps_it():
          "date. Sign in again before then to keep it.")
     assert presenter.login_line(account("A", state="closing",
                                         **codex_like)) == \
-        f"Expires {date}. Switch to it before then to keep it."
+        f"Switch to it by {date} to keep it."
     assert presenter.login_line(account("A", state="closing",
                                         **claude_like)) == \
-        (f"Expires {date}. Using the account does not move this date. Sign "
-         "in again before then to keep it.")
+        (f"Sign in by {date} to keep it. Using the account does not move "
+         "this date.")
     for state in ("live", "closing"):
         line = presenter.login_line(account("A", state=state, **claude_like))
         assert "renews" not in line and "Switch to it" not in line
@@ -600,6 +600,92 @@ def test_eject_says_what_the_service_plan_says_and_only_once():
     assert presenter.eject_sheet(SimpleNamespace(warnings=()))["message"] == \
         presenter.EJECT_FALLBACK
 
+
+
+# -- D7: shorter sheets ---------------------------------------------------------------
+
+
+def eject_plan(parked=("Admin", "client")):
+    return SimpleNamespace(
+        warnings=("Shambles will stop managing your accounts. Nothing is "
+                  "deleted.", "Afterwards:\nPersonal stays on disk."),
+        details={"keeps": [{"provider": "Claude Code", "account": "work",
+                            "signedIn": True},
+                           {"provider": "Codex", "account": "",
+                            "signedIn": False}],
+                 "parked": list(parked),
+                 "store": "/home/example/.shambles"})
+
+
+def test_eject_says_who_each_tool_stays_on_and_puts_the_path_on_its_own():
+    """D7: 90 words with a path split over three lines, before."""
+    sheet = presenter.eject_sheet(eject_plan())
+
+    assert sheet["lines"] == ["Claude Code stays signed in as work.",
+                              "Codex will ask you to sign in."]
+    assert sheet["path"] == "/home/example/.shambles"
+    assert sheet["pathLabel"] == "Saved logins for Admin and client stay in"
+    assert "verification email" in sheet["pathTip"]
+    said = " ".join([sheet["message"], *sheet["lines"], sheet["pathLabel"]])
+    assert len(said.split()) <= 40
+    assert "Nothing is deleted" in sheet["message"]
+
+
+def test_eject_with_nothing_parked_says_the_folder_can_go():
+    sheet = presenter.eject_sheet(eject_plan(parked=()))
+
+    assert sheet["pathLabel"] == "You can delete this folder afterwards"
+    assert sheet["pathTip"] == ""
+
+
+def test_the_store_move_notice_is_short_with_its_paths_on_their_own():
+    moved = SimpleNamespace(
+        ok=True, code="store_moved", message="Your profiles moved...",
+        details={"count": 2, "dest": "/home/example/.shambles/claude",
+                 "source": "/home/example/.shambles-v1"})
+
+    items = presenter.notice_sheet([moved])["messages"]
+
+    assert [i["path"] for i in items] == ["/home/example/.shambles/claude",
+                                          "/home/example/.shambles-v1"]
+    assert items[0]["text"] == "2 accounts are now kept by provider, in"
+    assert "Codex accounts alongside Claude" in items[0]["tip"]
+    assert sum(len(i["text"].split()) for i in items) <= 25
+
+
+def test_a_notice_without_details_is_said_as_the_service_wrote_it():
+    plain = SimpleNamespace(ok=True, code="history_merged",
+                            message="Your history was merged.")
+
+    assert presenter.notice_sheet([plain])["messages"] == [
+        {"text": "Your history was merged.", "path": "", "tip": ""}]
+
+
+def test_a_failed_sign_in_does_not_repeat_its_title_or_its_button():
+    """D7: "Sign-in did not finish" over "The vendor's sign-in did not
+    finish.", and "Sign in to try again" right above Try again."""
+    result = ActionResult(False, "login", error=ActionError(
+        "login_failed", "The vendor's sign-in did not finish.",
+        "You are back on 'work'. Nothing was lost. Sign in to 'client' to "
+        "try again."))
+
+    sheet = presenter.result_sheet(result, name="client")
+
+    assert sheet["title"] == "Sign-in did not finish"
+    assert sheet["message"] == ""
+    assert sheet["remedy"] == "You are back on 'work'. Nothing was lost."
+    assert sheet["retry"] is True
+
+
+def test_a_message_that_adds_to_the_title_is_kept():
+    result = ActionResult(False, "login", error=ActionError(
+        "login_not_written", "The vendor did not write a usable login.",
+        "'client' still needs a sign-in. Sign in to 'client' to try again."))
+
+    sheet = presenter.result_sheet(result, name="client")
+
+    assert sheet["message"] == "The vendor did not write a usable login."
+    assert sheet["remedy"] == "'client' still needs a sign-in."
 
 
 # -- a saved account signed in under the wrong marker ------------------------------

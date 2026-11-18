@@ -14,6 +14,7 @@ registered type.
 """
 
 import datetime
+import re
 import time
 
 from .. import snapshot as timing
@@ -192,7 +193,7 @@ def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
         if notice.code == MISSING:
             # A marker for a deleted profile can simply be dropped. Offered
             # beside the notice, never instead of saving a live login.
-            action, action_label = "forget", "Forget that profile"
+            action, action_label = "forget", "Forget the missing account"
         else:
             action, action_label = "", ""
         notices.append({
@@ -322,8 +323,8 @@ def _summary(group, attention: int) -> str:
         return "Not signed in" if group.can_sign_in else "Not installed"
     text = f"{count} account" + ("" if count == 1 else "s")
     if attention:
-        text += f" · {attention} need" + ("s" if attention == 1 else "")
-        text += " sign-in"
+        # D9: one word for a login that has ended, everywhere.
+        text += f" · {attention} signed out"
     if not group.can_sign_in:
         text += " · Not installed"
     return text
@@ -480,6 +481,9 @@ def _window(window, *, live: bool, now_ms: int) -> dict:
         "percent": percent,
         "fill": 0.0 if reset else max(0.0, min(1.0, percent / 100.0)),
         "tone": tone,
+        # What the figure means, kept when ``tone`` says "dim": an old bar
+        # is drawn striped in this colour, not greyed (D12).
+        "severity": window.severity,
         "state": state,
         "text": "reset" if reset else f"{percent}%",
         "resets": "" if reset or not until else f"Resets {until}",
@@ -532,6 +536,7 @@ def _left(ms, now_ms) -> str:
 #: days). The same words as the Tk window, so the two cannot disagree.
 FIXED_DEADLINE = ("Using the account does not move this date. Sign in again "
                   "before then to keep it.")
+FIXED_USE = "Using the account does not move this date."
 
 
 def login_line(account) -> str:
@@ -547,14 +552,15 @@ def login_line(account) -> str:
         return ("This login was cleared, so it cannot sign in. The account "
                 "and its details are intact. Sign in again to restore it.")
     if state == "closed":
-        return (f"Expired {when}. Sign in again to renew it." if when
-                else "Expired. Sign in again to renew it.")
+        return (f"Signed out since {when}. Sign in to use it again." if when
+                else "Signed out. Sign in to use it again.")
     if state == "closing":
         if account.renewed_by_use:
-            return (f"Expires {when}. Switch to it before then to keep it."
-                    if when else "Expires soon. Switch to it to keep it.")
-        return (f"Expires {when}. {FIXED_DEADLINE}" if when
-                else f"Expires soon. {FIXED_DEADLINE}")
+            return (f"Switch to it by {when} to keep it." if when
+                    else "Switch to it soon to keep it.")
+        # D9: "sign in by", the window's one phrase for a deadline.
+        return (f"Sign in by {when} to keep it. {FIXED_USE}" if when
+                else f"Sign in soon to keep it. {FIXED_USE}")
     if when:
         if account.renewed_by_use:
             return f"Healthy. Good until {when}. Using the account renews it."
@@ -642,18 +648,42 @@ def login_started(sheet: dict) -> dict:
     return {**sheet, "steps": steps}
 
 
+def _words(text: str) -> list:
+    return [w.strip(".,;:'\"").casefold() for w in text.split()]
+
+
+def _restates(title: str, message: str) -> bool:
+    """Whether ``message`` only says ``title`` again, in a few more words."""
+    said, again = _words(title), _words(message)
+    return bool(said) and all(w in again for w in said) \
+        and len(again) <= len(said) + 2
+
+
 def result_sheet(result, *, name: str) -> dict:
-    """A sign-in that ended some way other than working."""
+    """A sign-in that ended some way other than working.
+
+    D7: the body does not repeat the title, and "Sign in to try again" is
+    not said right above the Try again button.
+    """
     error = result.error
     code = error.code if error else ""
+    title = LOGIN_TITLES.get(code, "Sign-in did not finish")
+    retry = code != "login_unavailable"
+    message = error.message if error else ""
+    if _restates(title, message):
+        message = ""
+    remedy = error.recovery if error else ""
+    if retry:
+        remedy = re.sub(rf"\s*Sign in to '{re.escape(name)}' to try again\.\s*$",
+                        "", remedy)
     return {
         "kind": "result",
         "tone": "warn" if code in ("login_other_account",
                                    "login_duplicate") else "bad",
-        "title": LOGIN_TITLES.get(code, "Sign-in did not finish"),
-        "message": error.message if error else "",
-        "remedy": error.recovery if error else "",
-        "retry": code != "login_unavailable",
+        "title": title,
+        "message": message,
+        "remedy": remedy,
+        "retry": retry,
         "retryLabel": "Try again",
         "name": name,
     }
@@ -682,17 +712,60 @@ EJECT_FALLBACK = ("Every account keeps its current login, history and "
                   "Nothing is deleted.")
 
 
+#: D7: eject in a few lines, where the plan comes in parts.
+EJECT_SHORT = ("Each tool goes back to being an ordinary install. Nothing is "
+               "deleted.")
+PARKED_TIP = ("They are kept because each one is only recoverable through a "
+              "new verification email. Delete the folder yourself once you "
+              "are sure.")
+
+
+def _names(names) -> str:
+    """``A``, ``A and B``, ``A, B and C``."""
+    names = list(names)
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def eject_sheet(plan) -> dict:
     parts = [part.strip() for part in plan.warnings if part and part.strip()]
-    return {
+    sheet = {
         "kind": "confirm",
         "action": "eject",
         "title": "Stop using Shambles?",
         "message": "\n\n".join(parts) if parts else EJECT_FALLBACK,
+        "lines": [],
+        "path": "",
+        "pathLabel": "",
+        "pathTip": "",
         "confirmLabel": "Eject",
         "provider": "",
         "name": "",
     }
+    details = getattr(plan, "details", None) or {}
+    if not details.get("keeps") and not details.get("store"):
+        return sheet
+    lines = []
+    for keep in details.get("keeps") or []:
+        if keep.get("signedIn") and keep.get("account"):
+            lines.append(f"{keep['provider']} stays signed in as "
+                         f"{keep['account']}.")
+        elif keep.get("signedIn"):
+            lines.append(f"{keep['provider']} stays signed in.")
+        else:
+            lines.append(f"{keep['provider']} will ask you to sign in.")
+    parked = details.get("parked") or []
+    store = details.get("store") or ""
+    if parked:
+        label = f"Saved logins for {_names(parked)} stay in"
+    elif store:
+        label = "You can delete this folder afterwards"
+    else:
+        label = ""
+    sheet.update(message=EJECT_SHORT, lines=lines, path=store,
+                 pathLabel=label, pathTip=PARKED_TIP if parked else "")
+    return sheet
 
 
 def add_sheet(view_model: dict, *, provider: str = "", error: str = "",
@@ -731,6 +804,29 @@ def rename_sheet(account: dict, *, error: str = "") -> dict:
     }
 
 
+#: Why the store moved, behind the i on the short version (D7).
+STORE_MOVED_TIP = ("That is what lets Shambles hold Codex accounts alongside "
+                   "Claude ones. Nothing was deleted.")
+
+
+def _notice_items(notice) -> list:
+    """What one migration notice says, as ``{text, path, tip}`` lines. A
+    path goes on a line of its own; the why goes behind an i."""
+    details = getattr(notice, "details", None) or {}
+    if getattr(notice, "code", "") == "store_moved" and details.get("dest"):
+        count = details.get("count", 0)
+        many = count != 1
+        return [
+            {"text": f"{count} account{'s' if many else ''} "
+                     f"{'are' if many else 'is'} now kept by provider, in",
+             "path": details["dest"], "tip": STORE_MOVED_TIP},
+            {"text": "The old folder is still there. Remove it when you are "
+                     "ready",
+             "path": details.get("source", ""), "tip": ""},
+        ]
+    return [{"text": notice.message, "path": "", "tip": ""}]
+
+
 def notice_sheet(notices) -> dict:
     """Startup migrations, said once."""
     return {
@@ -739,7 +835,7 @@ def notice_sheet(notices) -> dict:
                   if all(n.ok for n in notices)
                   else "An update to your account store could not finish"),
         "tone": "ok" if all(n.ok for n in notices) else "bad",
-        "messages": [n.message for n in notices],
+        "messages": [item for n in notices for item in _notice_items(n)],
     }
 
 

@@ -97,9 +97,32 @@ Notable changes per release. Dates are the tag date.
   longer move when a switch or a lapsed login changes the rows. A bare
   digit used to switch accounts at a stray key press. Hold Ctrl to see
   every account's number; the Switch tooltip says it too.
+- **Shorter sheets.** The eject sheet says, a line each, which account
+  every tool stays signed in as, and puts the folder that keeps the other
+  logins on a line of its own, with why behind ⓘ: about 35 words where it
+  was 90. The notice after a storage move does the same. A failed sign-in
+  no longer repeats its title in its text, or says "Sign in to try again"
+  right above the Try again button.
+- **Every icon button says what it does** on hover and on keyboard focus,
+  using the name a screen reader already reads. One word for each thing:
+  "In use" for the account a tool is on (was "Live"), "signed out" for a
+  login that has ended (was "needs sign-in" and "Expired"), and "sign in
+  by" for a deadline. One look per action and one warning design; buttons
+  are 36 px in the header and on sheets, 32 px on rows. The Refresh
+  tooltip no longer claims it reads local files only, which is not true
+  on macOS, where it reads the Keychain.
+- **Easier to see where the keyboard is.** The focus ring is violet with a
+  gap inside it, apart from the blue of buttons, the live card and
+  selections. Card, button and field outlines are darker, at least 3:1
+  against what they sit on. An old reading on an account not in use is
+  drawn as a striped bar instead of a pale grey that barely showed.
 
 ### Fixed
 
+- **A sheet with room to spare could still scroll.** A sheet whose text
+  was still being laid out when it opened could decide it scrolled, and
+  the rule it then drew above its buttons took away exactly the room that
+  would have shown the rest, so it kept a scroll bar it did not need.
 - **A row due a sign-in lost its menu.** With Sign in beside Switch, the
   row's ▾ was pushed off the card and its ⋯ menu, which holds Rename and
   Remove, went out of reach, from 640 px wide down or with a name longer

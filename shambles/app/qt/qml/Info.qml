@@ -25,14 +25,8 @@ T.AbstractButton {
             color: control.tint
         }
     }
-    background: Rectangle {
-        anchors.fill: parent
-        anchors.margins: -3
-        radius: width / 2
-        color: "transparent"
-        border.color: ui.theme.focus
-        border.width: 2
-        visible: control.visualFocus
+    background: Item {
+        FocusRing { radius: 9; shown: control.visualFocus }
     }
     Tip {
         objectName: "infoTip"

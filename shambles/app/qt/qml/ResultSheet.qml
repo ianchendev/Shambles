@@ -13,7 +13,7 @@ Pane {
             text: ui.sheet.title || ""
         }
     }
-    SheetText { text: ui.sheet.message || "" }
+    SheetText { visible: text !== ""; text: ui.sheet.message || "" }
     SheetCallout { visible: text !== ""; text: ui.sheet.remedy || "" }
     footer: Row {
         anchors.right: parent.right

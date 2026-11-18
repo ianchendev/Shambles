@@ -36,9 +36,9 @@ Pane {
                 background: Rectangle {
                     radius: 12
                     color: option.enabled ? ui.theme.surface : ui.theme.sunken
-                    border.color: option.checked ? ui.theme.accent
-                        : option.visualFocus ? ui.theme.focus : ui.theme.border
-                    border.width: option.checked || option.visualFocus ? 2 : 1
+                    border.color: option.checked ? ui.theme.accent : ui.theme.border
+                    border.width: option.checked ? 2 : 1
+                    FocusRing { radius: 12; shown: option.visualFocus }
                 }
                 contentItem: Column {
                     leftPadding: 14

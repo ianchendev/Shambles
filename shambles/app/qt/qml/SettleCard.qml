@@ -6,10 +6,10 @@ Rectangle {
     id: root
     property var settle: ({})
     implicitHeight: col.implicitHeight + 36
-    radius: 14
+    radius: 12
     color: ui.theme.warnSurface
     border.color: ui.theme.warnBorder
-    border.width: 2
+    border.width: 1
 
     Rectangle {
         x: 18
@@ -43,10 +43,10 @@ Rectangle {
             wrapMode: Text.WordWrap
         }
         Btn {
-            kind: "primary"
+            // A switch, so it looks like every other Switch (D9).
+            kind: "soft"
             text: root.settle.label || ""
             enabled: !ui.busy
-            implicitHeight: 40
             onClicked: ui.settle(root.settle.provider)
         }
     }
