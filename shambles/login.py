@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -217,6 +218,92 @@ NOT_ON_PATH = (
     "Shambles does not sign you in itself — it runs {binary}, which opens "
     "your browser. Install it first, then try again."
 )
+
+
+# -- programs already running (M1) ---------------------------------------------
+
+#: How long ``ps`` may take before the answer is "unknown".
+PS_TIMEOUT_S = 5
+
+
+def running_programs(name, *, platform=sys.platform, proc=Path("/proc"),
+                     run=None):
+    """The argv of every running process whose program is ``name``.
+
+    Matched on the program itself, never its arguments, so ``vim codex`` is
+    not Codex and a ``node .../codex.js`` launcher is not counted twice
+    beside the binary it starts. Linux and WSL read ``/proc`` and start
+    nothing. macOS asks ``ps``, which is why this lives here: this module is
+    the only one that starts a process. Returns None where the answer is
+    unknown -- native Windows, or ``ps`` failing -- and a caller then says
+    nothing rather than guess.
+
+    Only ever looks. Nothing is signalled, stopped or restarted.
+    """
+    if platform.startswith("linux"):
+        return _from_proc(name, proc)
+    if platform == "darwin":
+        return _from_ps(name, run or subprocess.run)
+    return None
+
+
+def _from_proc(name, proc):
+    found = []
+    try:
+        entries = list(Path(proc).iterdir())
+    except OSError:
+        return None
+    me = str(os.getpid())
+    for entry in entries:
+        if not entry.name.isdigit() or entry.name == me:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue  # gone since the listing, or not ours to read
+        argv = [part.decode("utf-8", "replace")
+                for part in raw.split(b"\0") if part]
+        if argv and _is_program(argv[0], name):
+            found.append(argv)
+    return found
+
+
+def _from_ps(name, run):
+    """Two listings joined by pid: ``comm`` is the program's path, which may
+    hold spaces (``Visual Studio Code.app``); ``args`` is the whole line."""
+    try:
+        programs = _ps_column(run, "pid=,comm=")
+        lines = _ps_column(run, "pid=,args=")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    found = []
+    for pid, program in programs.items():
+        if pid == os.getpid() or not _is_program(program, name):
+            continue
+        line = lines.get(pid, program)
+        rest = line[len(program):] if line.startswith(program) else ""
+        found.append([program, *rest.split()])
+    return found
+
+
+def _ps_column(run, columns):
+    done = run(["ps", "-axww", "-o", columns], capture_output=True, text=True,
+               timeout=PS_TIMEOUT_S)
+    if done.returncode != 0:
+        raise ValueError("ps failed")
+    table = {}
+    for line in done.stdout.splitlines():
+        pid, _, value = line.strip().partition(" ")
+        if pid.isdigit():
+            table[int(pid)] = value.strip()
+    return table
+
+
+def _is_program(path, name) -> bool:
+    base = path.replace("\\", "/").rsplit("/", 1)[-1]
+    if base.lower().endswith(".exe"):
+        base = base[:-4]
+    return base == name
 
 
 def binary(provider) -> str:

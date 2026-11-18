@@ -6,6 +6,7 @@ import threading
 from .. import eject as eject_mod
 from .. import login
 from .. import migrate as migrate_mod
+from .. import reach
 from .. import settings as settings_mod
 from .. import state
 from .. import switcher
@@ -168,7 +169,7 @@ class ShamblesService:
             switcher.switch(self.paths, provider, account,
                             platform=self.platform, on_wait=on_wait)
             return self._result(True, "switch", f"Switched to {account}.",
-                                warnings=self._switch_warnings(provider))
+                                warnings=self._switch_warnings(provider, account))
         except ShamblesError as exc:
             return self._failure("switch", exc)
 
@@ -471,7 +472,7 @@ class ShamblesService:
         except Exception:
             pass
 
-    def _switch_warnings(self, provider):
+    def _switch_warnings(self, provider, account):
         """What a successful switch did not reach.
 
         A terminal whose environment points the vendor somewhere else keeps
@@ -479,14 +480,32 @@ class ShamblesService:
         it on exactly that one. Said with the result, because that is when a
         person acts on it.
         """
+        said = []
         override = state.config_dir_override(
             provider, home=self.paths.home, env=getattr(provider, "env", None))
-        if not override:
-            return ()
-        variable = (provider.spec.get("config_dir") or {}).get("env", "")
-        return (f"{variable} is set in this environment, so a terminal started "
-                f"from here reads its login from {override}, not the one "
-                "Shambles just switched. VS Code is unaffected.",)
+        if override:
+            variable = (provider.spec.get("config_dir") or {}).get("env", "")
+            said.append(
+                f"{variable} is set in this environment, so a terminal "
+                f"started from here reads its login from {override}, not the "
+                "one Shambles just switched. VS Code is unaffected.")
+        # M1. Only Codex is asked about running processes: its code keeps a
+        # loaded login until restarted, where Claude Code re-reads a changed
+        # one at its next request.
+        running = None
+        if provider.id == "codex":
+            try:
+                running = login.running_programs(
+                    login.binary(provider), platform=self.platform)
+            except Exception:
+                running = None
+        try:
+            said += reach.after_switch(
+                provider, account, home=self.paths.home,
+                env=getattr(provider, "env", None), running=running)
+        except Exception:
+            pass  # what a switch did not reach is advice, never a failure
+        return tuple(said)
 
     def _live_profile(self, provider):
         """The saved profile that is live right now, if there is one."""
