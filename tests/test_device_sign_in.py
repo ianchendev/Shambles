@@ -12,13 +12,14 @@ the code each arrive wrapped in escapes. The failure lines are
 ``finish_login`` in ``codex-rs/cli/src/login.rs``.
 """
 
+import json
 import sys
 import textwrap
 
 import pytest
 
 from conftest import posix_only
-from helpers import make_profile
+from helpers import healthy_ms, make_live_codex_login, make_profile
 from shambles import login, providers, state
 from shambles.app.service import HIDDEN_LINE, DeviceSignIn, ShamblesService
 
@@ -371,3 +372,99 @@ def test_end_to_end_with_a_codex_stand_in_on_path(paths, fake_vendor,
     assert [o.verification_url for o in offers] == [LINK]
     assert set(lines) == {HIDDEN_LINE}
     assert "device code login is not enabled" in done[0].error.message
+
+
+# -- with D11: switching method keeps a renewal a renewal ----------------------
+
+
+@pytest.fixture
+def deferred(monkeypatch):
+    """The vendor, finished or cancelled by the test. Disk stays real."""
+    runs = []
+
+    class Deferred:
+        running = False
+
+        def __init__(self, argv, **kwargs):
+            self.argv = list(argv)
+            runs.append(self)
+
+        def start(self, *, on_line, on_exit):
+            self.running = True
+            self.on_exit = on_exit
+
+        def finish(self, code=0):
+            self.running = False
+            self.on_exit(code)
+
+        def cancel(self):
+            if self.running:
+                self.finish(-15)
+
+    monkeypatch.setattr("shambles.app.service.login.LoginProcess", Deferred)
+    monkeypatch.setattr("shambles.app.service.login.available",
+                        lambda provider: True)
+    return runs
+
+
+def _real_clock_service(paths):
+    # Liveness is judged against the real clock (see helpers.healthy_ms).
+    return ShamblesService(paths=paths,
+                           providers=providers.all_providers(env={}),
+                           platform="linux")
+
+
+def _cancelled_then_device(paths, deferred, name, *, adding):
+    """What the window does on "Another device": cancel, settle, restart."""
+    app = _real_clock_service(paths)
+    first = []
+    start = app.start_add if adding else app.start_login
+    handle = start("codex", name, lambda line: None, first.append)
+    handle.cancel()
+    assert handle.wait(timeout=10)
+    assert first[0].error.code == "login_cancelled"
+    assert state.read_active(paths, "codex") == "Main"
+
+    done = []
+    handle = app.start_login("codex", name, lambda line: None, done.append,
+                             device=True)
+    assert deferred[-1].argv[-1] == "--device-auth"
+    live = make_live_codex_login(paths, email=f"{name.lower()}@example.test",
+                                 exp_ms=healthy_ms(30))
+    # A new sign-in, not the old login refreshed: a refresh token of its own
+    # (as in test_switch's test_a_codex_sign_in_again_to_the_same_account).
+    fresh = json.loads(live.read_text())
+    fresh["tokens"]["refresh_token"] = "r-signed-in-on-another-device"
+    live.write_text(json.dumps(fresh))
+    deferred[-1].finish(0)
+    assert handle.wait(timeout=10)
+    return done[0]
+
+
+def _main_live(paths):
+    make_profile(paths, "codex", "Main", email="main@example.test",
+                 active=True)
+    make_live_codex_login(paths, email="main@example.test")
+
+
+def test_a_renewal_restarted_on_another_device_still_puts_you_back(
+        paths, deferred):
+    _main_live(paths)
+    make_profile(paths, "codex", "Spare", email="spare@example.test")
+
+    result = _cancelled_then_device(paths, deferred, "Spare", adding=False)
+
+    assert result.ok, result.error
+    assert state.read_active(paths, "codex") == "Main"
+    assert "You're still on Main" in result.summary
+
+
+def test_an_add_restarted_on_another_device_ends_on_the_new_account(
+        paths, deferred):
+    """Its account has no login yet, so the restart is no renewal."""
+    _main_live(paths)
+
+    result = _cancelled_then_device(paths, deferred, "Third", adding=True)
+
+    assert result.ok, result.error
+    assert state.read_active(paths, "codex") == "Third"

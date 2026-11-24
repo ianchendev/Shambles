@@ -602,38 +602,82 @@ LOGIN_TITLES = {
 LOGIN_CODES = frozenset(LOGIN_TITLES) | {"login_cancelled"}
 
 
+#: The two ways into a provider that offers a device code (S2).
+SIGN_IN_METHODS = (
+    {"id": "browser", "label": "This browser"},
+    {"id": "device", "label": "Another device"},
+)
+
+LINK_WAITING = "Your browser should open by itself."
+LINK_SHOWN = "Browser didn't open? Use this link."
+CODE_TIP = ("Only needed when the page shows a code instead of saying you're "
+            "signed in. That happens when you open the link on another "
+            "device, or the browser can't reach this machine.")
+DEVICE_SHOWN = "Open the link on any device and enter this code:"
+DEVICE_TIP = ("Works only if your account allows sign-in with a code. Enter "
+              "it only for a sign-in you started here, never for a code "
+              "someone else gave you.")
+
+
 def login_sheet(*, provider_title: str, name: str, email: str,
-                previous: str, adding: bool) -> dict:
-    """The sheet shown while the vendor's sign-in runs."""
+                previous: str, adding: bool, method: str = "browser",
+                offers_device: bool = False) -> dict:
+    """The sheet shown while the vendor's sign-in runs.
+
+    D7: one labelled progress line instead of four sentences. Each label
+    keeps its sentence as a tooltip, and the advice about which browser
+    profile to use sits behind the link's ⓘ.
+    """
+    device = method == "device"
     steps = []
     if previous and previous != name:
-        steps.append({"text": f"{previous} is saved and set aside",
-                      "state": "done"})
+        steps.append({"label": "Saved", "state": "done",
+                      "tip": f"{previous} is saved and set aside."})
     steps += [
-        {"text": f"{provider_title}'s sign-in is starting", "state": "active"},
-        {"text": "Waiting for you to finish in your browser", "state": "todo"},
-        {"text": f"Save the new login to {name}", "state": "todo"},
+        {"label": "Ready", "state": "active",
+         "tip": f"{provider_title}'s sign-in is starting."},
+        ({"label": "Other device", "state": "todo",
+          "tip": "Waiting for the code to be entered on the other device."}
+         if device else
+         {"label": "Your browser", "state": "todo",
+          "tip": "Waiting for you to finish in your browser."}),
+        {"label": "Save", "state": "todo",
+         "tip": f"Then the new login is saved to {name}."},
     ]
     if email:
-        who = (f"Sign in as {email}. If your browser is already signed in as "
-               "someone else, use a private window.")
+        link_tip = (f"Open it in the browser profile that is signed in as "
+                    f"{email}, or in a private window.")
     else:
-        who = ("Sign in as the account you want to add. If your browser is "
-               "already signed in as a different one, use a private window.")
+        link_tip = ("Open it in a browser profile signed in as the account "
+                    "you want to add, or in a private window.")
     if previous and previous != name:
-        cancel = f"Cancel puts you back on {previous}. Nothing is lost."
+        cancel = f"Cancel puts you back on {previous}."
     elif adding:
-        cancel = f"Cancel keeps {name} as an empty account you can sign in later."
+        cancel = f"Cancel keeps {name}, signed out."
     else:
         cancel = "Cancel leaves everything as it was."
     return {
         "kind": "login",
         "title": f"Sign in to {name}",
         "subtitle": " · ".join(p for p in (provider_title, email) if p),
-        "who": who,
         "steps": steps,
         "url": "",
         "copied": False,
+        "linkHint": LINK_WAITING,
+        "linkTip": link_tip,
+        "acceptsCode": False,
+        "codeTip": CODE_TIP,
+        "codeError": "",
+        "codeSent": False,
+        "methods": [dict(m) for m in SIGN_IN_METHODS] if offers_device else [],
+        "method": "device" if device else "browser",
+        "device": {"code": "", "url": "", "expiresAtMs": 0},
+        "deviceHint": f"Getting a code from {provider_title}.",
+        "deviceTip": DEVICE_TIP,
+        "expiresIn": "",
+        "codeCopied": False,
+        #: Between choosing the other method and its sign-in starting.
+        "restarting": False,
         "cancelNote": cancel,
     }
 
@@ -642,12 +686,61 @@ def login_started(sheet: dict) -> dict:
     """The same sheet once the vendor has said anything at all."""
     steps = [dict(step) for step in sheet["steps"]]
     for index, step in enumerate(steps):
-        if step["state"] == "active" and index + 1 < len(steps):
+        if step["label"] == "Ready" and step["state"] == "active":
             step["state"] = "done"
-            step["text"] = step["text"].replace("is starting", "is ready")
+            step["tip"] = step["tip"].replace("is starting", "is ready")
             steps[index + 1]["state"] = "active"
-            break
-    return {**sheet, "steps": steps}
+            return {**sheet, "steps": steps}
+    return sheet
+
+
+def login_link(sheet: dict, url: str) -> dict:
+    """The sheet with the vendor's sign-in link, if it has none yet."""
+    if not url or sheet.get("url"):
+        return sheet
+    return {**sheet, "url": url, "linkHint": LINK_SHOWN}
+
+
+def login_takes_code(sheet: dict, accepts: bool) -> dict:
+    """S1: whether to draw the field for the code from the browser page."""
+    return {**sheet, "acceptsCode": bool(accepts), "codeError": "",
+            "codeSent": False}
+
+
+def login_code_result(sheet: dict, result) -> dict:
+    """What became of a pasted code. The code itself is never kept here."""
+    if result.ok:
+        return {**sheet, "codeSent": True, "codeError": ""}
+    message = result.error.message if result.error else ""
+    return {**sheet, "codeSent": False, "codeError": message}
+
+
+def expiry_label(expires_at_ms: int, now_ms: int) -> str:
+    """``expires in 14:32``, ``expired``, or nothing without a deadline."""
+    if not expires_at_ms:
+        return ""
+    left = expires_at_ms - now_ms
+    if left <= 0:
+        return "expired"
+    seconds = -(-left // 1000)
+    return f"expires in {seconds // 60}:{seconds % 60:02d}"
+
+
+def login_device(sheet: dict, offer, *, now_ms: int) -> dict:
+    """S2: the one-time code and its link, once the vendor shows them."""
+    device = {"code": offer.user_code, "url": offer.verification_url,
+              "expiresAtMs": int(offer.expires_at_ms)}
+    return {**login_started(sheet), "device": device,
+            "deviceHint": DEVICE_SHOWN,
+            "expiresIn": expiry_label(device["expiresAtMs"], now_ms)}
+
+
+def login_tick(sheet: dict, *, now_ms: int) -> dict:
+    """The device sheet a second later: only the countdown moves."""
+    label = expiry_label(sheet.get("device", {}).get("expiresAtMs", 0), now_ms)
+    if label == sheet.get("expiresIn"):
+        return sheet
+    return {**sheet, "expiresIn": label}
 
 
 def _words(text: str) -> list:

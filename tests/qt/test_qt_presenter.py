@@ -479,18 +479,44 @@ def test_plans_read_as_words():
 # -- sheets -----------------------------------------------------------------------
 
 
-def test_the_login_sheet_names_who_to_sign_in_as_and_where_cancel_goes():
-    sheet = presenter.login_sheet(provider_title="Claude Code",
-                                  name="Personal",
-                                  email="personal@example.test",
-                                  previous="Work", adding=False)
+def _claude_sheet(**kwargs):
+    base = dict(provider_title="Claude Code", name="Personal",
+                email="personal@example.test", previous="Work", adding=False)
+    return presenter.login_sheet(**{**base, **kwargs})
+
+
+def test_the_login_sheet_is_a_labelled_progress_line():
+    """D7: four words in a line, the sentences behind them on hover."""
+    sheet = _claude_sheet()
 
     assert sheet["title"] == "Sign in to Personal"
-    assert "personal@example.test" in sheet["who"]
-    assert sheet["steps"][0] == {"text": "Work is saved and set aside",
-                                 "state": "done"}
-    assert sheet["cancelNote"] == \
-        "Cancel puts you back on Work. Nothing is lost."
+    assert sheet["subtitle"] == "Claude Code · personal@example.test"
+    assert [(s["label"], s["state"]) for s in sheet["steps"]] == [
+        ("Saved", "done"), ("Ready", "active"), ("Your browser", "todo"),
+        ("Save", "todo")]
+    assert sheet["steps"][0]["tip"] == "Work is saved and set aside."
+    assert sheet["steps"][3]["tip"] == \
+        "Then the new login is saved to Personal."
+    assert sheet["cancelNote"] == "Cancel puts you back on Work."
+
+
+def test_who_to_sign_in_as_moves_behind_the_link_s_i():
+    sheet = _claude_sheet()
+    assert "who" not in sheet
+    assert sheet["linkTip"] == (
+        "Open it in the browser profile that is signed in as "
+        "personal@example.test, or in a private window.")
+
+    added = _claude_sheet(name="Spare", email="", adding=True, previous="")
+    assert "private window" in added["linkTip"]
+    assert "the account you want to add" in added["linkTip"]
+
+
+def test_nothing_is_set_aside_when_nobody_was_in_use():
+    sheet = _claude_sheet(name="Team", email="", previous="", adding=True)
+    assert [s["label"] for s in sheet["steps"]] == ["Ready", "Your browser",
+                                                    "Save"]
+    assert sheet["cancelNote"] == "Cancel keeps Team, signed out."
 
 
 def test_the_login_sheet_advances_once_the_vendor_speaks():
@@ -501,7 +527,116 @@ def test_the_login_sheet_advances_once_the_vendor_speaks():
 
     assert [s["state"] for s in sheet["steps"]] == ["active", "todo", "todo"]
     assert [s["state"] for s in moved["steps"]] == ["done", "active", "todo"]
-    assert moved["steps"][0]["text"] == "Codex's sign-in is ready"
+    assert moved["steps"][0]["tip"] == "Codex's sign-in is ready."
+    # Once only: a second call changes nothing.
+    assert presenter.login_started(moved) == moved
+
+
+def test_the_link_line_says_what_to_do_in_a_few_words():
+    sheet = _claude_sheet()
+    assert sheet["url"] == ""
+    assert sheet["linkHint"] == "Your browser should open by itself."
+
+    with_link = presenter.login_link(sheet, "https://claude.com/cai/x")
+
+    assert with_link["url"] == "https://claude.com/cai/x"
+    assert with_link["linkHint"] == "Browser didn't open? Use this link."
+    # The first link stays: a later line cannot swap what was offered.
+    assert presenter.login_link(with_link, "https://claude.com/cai/y") \
+        == with_link
+
+
+# -- S1: the code from the browser page --------------------------------------------
+
+
+def test_a_code_field_appears_only_where_the_sign_in_takes_one():
+    sheet = _claude_sheet()
+    assert sheet["acceptsCode"] is False
+
+    taking = presenter.login_takes_code(sheet, True)
+
+    assert taking["acceptsCode"] is True
+    assert taking["codeTip"].startswith("Only needed when the page shows a code")
+    assert taking["codeError"] == "" and taking["codeSent"] is False
+
+
+def test_a_sent_code_is_marked_and_a_refused_one_says_why_without_it():
+    sheet = presenter.login_takes_code(_claude_sheet(), True)
+    code = "SECRETcode#STATEvalue"
+
+    refused = presenter.login_code_result(sheet, ActionResult(
+        False, "send_code", error=ActionError(
+            "code_invalid", "That is only part of the code. Copy all of it "
+                            "from the browser page.")))
+    assert refused["codeError"].startswith("That is only part of the code")
+    assert refused["codeSent"] is False
+
+    sent = presenter.login_code_result(refused,
+                                       ActionResult(True, "send_code"))
+    assert sent["codeSent"] is True
+    assert sent["codeError"] == ""
+    for state in (refused, sent):
+        assert "SECRET" not in repr(state)
+
+
+# -- S2: a code for another device ---------------------------------------------------
+
+
+def _codex_sheet(**kwargs):
+    base = dict(provider_title="Codex", name="Spare",
+                email="spare@example.test", previous="Main", adding=False,
+                offers_device=True)
+    return presenter.login_sheet(**{**base, **kwargs})
+
+
+def test_codex_offers_this_browser_or_another_device():
+    sheet = _codex_sheet()
+    assert sheet["methods"] == [
+        {"id": "browser", "label": "This browser"},
+        {"id": "device", "label": "Another device"}]
+    assert sheet["method"] == "browser"
+    # Claude has one way in, so no choice is drawn.
+    assert _claude_sheet()["methods"] == []
+
+
+def test_the_device_sheet_waits_for_its_code_on_the_other_device():
+    sheet = _codex_sheet(method="device")
+    assert sheet["method"] == "device"
+    assert [s["label"] for s in sheet["steps"]] == [
+        "Saved", "Ready", "Other device", "Save"]
+    assert sheet["device"] == {"code": "", "url": "", "expiresAtMs": 0}
+    assert sheet["deviceHint"] == "Getting a code from Codex."
+    # Codex's own warning, kept: a code from someone else is a trap.
+    assert "never for a code someone else gave you" in sheet["deviceTip"]
+
+
+def test_the_code_arrives_with_its_countdown():
+    now = 1_800_000_000_000
+    sheet = _codex_sheet(method="device")
+    offer = SimpleNamespace(user_code="CODE-12345",
+                            verification_url="https://auth.openai.com/codex/device",
+                            expires_at_ms=now + 15 * 60_000)
+
+    shown = presenter.login_device(sheet, offer, now_ms=now)
+
+    assert shown["device"] == {"code": "CODE-12345",
+                               "url": "https://auth.openai.com/codex/device",
+                               "expiresAtMs": now + 15 * 60_000}
+    assert shown["deviceHint"] == \
+        "Open the link on any device and enter this code:"
+    assert shown["expiresIn"] == "expires in 15:00"
+
+    later = presenter.login_tick(shown, now_ms=now + 28_000)
+    assert later["expiresIn"] == "expires in 14:32"
+
+
+def test_the_countdown_reads_minutes_and_seconds_then_expired():
+    now = 1_000_000
+    assert presenter.expiry_label(now + 61_000, now) == "expires in 1:01"
+    assert presenter.expiry_label(now + 999, now) == "expires in 0:01"
+    assert presenter.expiry_label(now, now) == "expired"
+    assert presenter.expiry_label(now - 5_000, now) == "expired"
+    assert presenter.expiry_label(0, now) == ""
 
 
 def test_a_wrong_account_result_is_a_warning_that_can_be_retried():

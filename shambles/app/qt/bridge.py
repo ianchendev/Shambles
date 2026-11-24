@@ -59,6 +59,9 @@ OUTSIDE_TEXT = "Changed outside Shambles · Refresh"
 OUTSIDE_TIP = ("{message} The window still shows what it read before. Press "
                "Refresh to read the new login; Shambles reads the Keychain "
                "or Credential Manager only when you ask.")
+#: How often a device code's countdown moves. It redraws the sheet only,
+#: never the rows, and runs only while a code is on screen.
+COUNTDOWN_MS = 1_000
 
 
 class Bridge(QObject):
@@ -78,6 +81,7 @@ class Bridge(QObject):
 
     _lineArrived = Signal(str)
     _loginSettled = Signal(object)
+    _deviceCodeArrived = Signal(object)
     _switchWaited = Signal()
     _switchFinished = Signal(object)
 
@@ -104,6 +108,9 @@ class Bridge(QObject):
         #: Set when an automatic read found a login changed outside
         #: Shambles; cleared by the next full read.
         self._outside = ""
+        self._countdown = QTimer(self)
+        self._countdown.setInterval(COUNTDOWN_MS)
+        self._countdown.timeout.connect(self.countDown)
         #: How a switch is run off the window's thread. A test passes one
         #: that runs it inline; the window uses a thread of its own.
         self._runner = runner or self._in_thread
@@ -135,6 +142,7 @@ class Bridge(QObject):
         self._eject_plan = None
         self._lineArrived.connect(self._on_line)
         self._loginSettled.connect(self._on_settled)
+        self._deviceCodeArrived.connect(self._on_device_code)
         self._place = self._opening_place(screens)
         #: D4: deadline lines closed, ``{"provider/account": day}``. Read
         #: with the accounts, not on every redraw.
@@ -231,7 +239,16 @@ class Bridge(QObject):
 
     def _set_sheet(self, sheet):
         self._sheet = sheet or {}
+        if not self._counting():
+            self._countdown.stop()
         self.sheetChanged.emit()
+
+    def _counting(self):
+        """Whether the open sheet shows a device code that has not expired."""
+        sheet = self._sheet
+        return (sheet.get("kind") == "login"
+                and bool(sheet.get("device", {}).get("expiresAtMs"))
+                and sheet.get("expiresIn") != "expired")
 
     def _say(self, text, tone="ok", action=None):
         """Show ``text``. ``action`` is ``(label, callable)`` for a button
@@ -633,19 +650,31 @@ class Bridge(QObject):
         self._begin(provider, name.strip(), adding=True, email="",
                     title=group["title"])
 
-    def _begin(self, provider, name, *, adding, email, title):
+    def _begin(self, provider, name, *, adding, email, title, device=False):
         self._login = {"provider": provider, "name": name, "adding": adding,
-                       "started": False}
+                       "started": False, "email": email, "title": title,
+                       "restart": None}
         self._set_sheet(presenter.login_sheet(
             provider_title=title, name=name, email=email,
-            previous=self._live_name(provider), adding=adding))
+            previous=self._live_name(provider), adding=adding,
+            method="device" if device else "browser",
+            offers_device=self._offers_device(provider)))
         start = (self._service.start_add if adding
                  else self._service.start_login)
         # The callbacks arrive on the vendor's thread; emitting is all they do.
         handle = start(provider, name, self._lineArrived.emit,
-                       self._loginSettled.emit)
+                       self._loginSettled.emit, device=device,
+                       on_device_code=self._deviceCodeArrived.emit)
         if self._login is not None:
             self._handle = handle
+            if getattr(handle, "accepts_code", False):
+                self._set_sheet(presenter.login_takes_code(self._sheet, True))
+
+    def _offers_device(self, provider):
+        try:
+            return bool(self._service.offers_device_sign_in(provider))
+        except Exception:
+            return False
 
     @Slot(str)
     def _on_line(self, line):
@@ -655,15 +684,83 @@ class Bridge(QObject):
         if not self._login["started"]:
             self._login["started"] = True
             sheet = presenter.login_started(sheet)
-        url = self._service.sign_in_url(line)
-        if url and not sheet["url"]:
-            sheet = {**sheet, "url": url}
+        sheet = presenter.login_link(sheet, self._service.sign_in_url(line))
         if sheet is not self._sheet:
             self._set_sheet(sheet)
 
     @Slot(object)
+    def _on_device_code(self, offer):
+        """S2: the one-time code arrived. Shown only on a device sheet."""
+        sheet = self._sheet
+        if (sheet.get("kind") != "login" or self._login is None
+                or sheet.get("method") != "device"
+                or sheet.get("device", {}).get("code")):
+            return
+        self._login["started"] = True
+        self._set_sheet(presenter.login_device(sheet, offer,
+                                               now_ms=self._clock_ms()))
+        if self._counting():
+            self._countdown.start()
+
+    @Slot()
+    def countDown(self):
+        """Move the device code's countdown. The sheet only, never the rows."""
+        if self._sheet.get("kind") != "login":
+            self._countdown.stop()
+            return
+        moved = presenter.login_tick(self._sheet, now_ms=self._clock_ms())
+        if moved is not self._sheet:
+            self._set_sheet(moved)
+
+    @Slot(str)
+    def submitCode(self, code):
+        """S1: pass the code from the browser page to the running sign-in.
+
+        The text goes to the service and nowhere else. What the sheet keeps
+        is whether it was sent, or the fixed reason it was refused.
+        """
+        sheet = self._sheet
+        if (self._handle is None or sheet.get("kind") != "login"
+                or not sheet.get("acceptsCode") or sheet.get("codeSent")):
+            return
+        result = self._handle.send_code(code)
+        self._set_sheet(presenter.login_code_result(self._sheet, result))
+
+    @Slot(str)
+    def chooseMethod(self, method):
+        """S2: switch between this browser and another device.
+
+        The running sign-in is cancelled and the other one started once it
+        has settled; :meth:`_on_settled` does not report that cancel.
+        """
+        sheet = self._sheet
+        login = self._login
+        offered = {m["id"] for m in sheet.get("methods") or ()}
+        if (login is None or self._handle is None
+                or method not in offered or method == sheet.get("method")
+                or sheet.get("cancelling") or sheet.get("restarting")):
+            return
+        login["restart"] = method
+        self._set_sheet({**presenter.login_sheet(
+            provider_title=login["title"], name=login["name"],
+            email=login["email"], previous=self._live_name(login["provider"]),
+            adding=login["adding"], method=method,
+            offers_device=True), "restarting": True})
+        self._handle.cancel()
+
+    @Slot(object)
     def _on_settled(self, result):
         login, self._login, self._handle = self._login, None, None
+        code = result.error.code if result.error else ""
+        if login is not None and login.get("restart") and \
+                code == "login_cancelled":
+            # The cancel chooseMethod asked for. An add made its account
+            # before the vendor ran, so the new start is a sign-in to it.
+            self._take(result)
+            self._begin(login["provider"], login["name"], adding=False,
+                        email=login["email"], title=login["title"],
+                        device=login["restart"] == "device")
+            return
         self._take(result)
         if login is None:
             return
@@ -708,8 +805,16 @@ class Bridge(QObject):
     @Slot()
     def cancelLogin(self):
         if self._handle is not None:
-            self._set_sheet({**self._sheet, "cancelling": True})
+            if self._login is not None:
+                # A cancel, even halfway through switching method.
+                self._login["restart"] = None
+            self._set_sheet({**self._sheet, "cancelling": True,
+                             "restarting": False})
             self._handle.cancel()
+        elif self._login is not None and self._login.get("restart"):
+            self._login["restart"] = None
+            self._set_sheet({**self._sheet, "cancelling": True,
+                             "restarting": False})
 
     @Slot()
     def retry(self):
@@ -740,9 +845,20 @@ class Bridge(QObject):
 
     @Slot()
     def copyUrl(self):
-        url = self._sheet.get("url")
+        url = self._sheet.get("url") or \
+            (self._sheet.get("device") or {}).get("url")
         if url:
             self._copy(url)
+
+    @Slot()
+    def copyCode(self):
+        """S2: the one-time code, for typing on the other device."""
+        code = (self._sheet.get("device") or {}).get("code")
+        if not code:
+            return
+        if self._clipboard is not None:
+            self._clipboard.setText(code)
+        self._set_sheet({**self._sheet, "codeCopied": True})
 
     def _copy(self, url):
         if self._clipboard is not None:

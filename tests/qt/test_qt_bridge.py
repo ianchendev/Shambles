@@ -168,9 +168,8 @@ def test_sign_in_runs_the_vendor_and_shows_who_to_sign_in_as(make):
 
     assert service.named("start_login") == [("start_login", "claude", "Old")]
     assert ui.sheet["kind"] == "login"
-    assert "old@example.test" in ui.sheet["who"]
-    assert ui.sheet["cancelNote"] == \
-        "Cancel puts you back on Work. Nothing is lost."
+    assert "old@example.test" in ui.sheet["linkTip"]
+    assert ui.sheet["cancelNote"] == "Cancel puts you back on Work."
 
 
 def test_only_one_sign_in_runs_at_a_time(make):
