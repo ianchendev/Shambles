@@ -155,11 +155,11 @@ def make_live_codex_login(paths, **kwargs):
 
 def make_codex_session(paths, *, used_5h=2.0, used_week=4.0,
                        timestamp="2026-09-08T12:00:00.000Z",
-                       extra_events=None):
+                       extra_events=None, name="rollout-test.jsonl"):
     """A ~/.codex/sessions jsonl with a ``token_count`` rate_limits event."""
     sessions = paths.home / ".codex" / "sessions" / "2026" / "09" / "08"
     sessions.mkdir(parents=True, exist_ok=True)
-    path = sessions / "rollout-test.jsonl"
+    path = sessions / name
     event = {
         "timestamp": timestamp,
         "payload": {

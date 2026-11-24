@@ -173,11 +173,15 @@ Notable changes per release. Dates are the tag date.
 - **Parked Codex accounts keep their last usage.** Claude accounts showed
   their last figures after you switched away; Codex accounts said "No
   usage recorded yet" forever. Codex keeps no usage file per account, only
-  session logs that every account shares, so at each switch Shambles now
-  keeps the newest reading taken while the outgoing account was in use.
-  The account in use no longer shows the previous account's figures as
-  its own either: until it has run a session it shows its own last
-  reading, or nothing.
+  session logs that every account shares, so Shambles now keeps the newest
+  reading taken while an account is in use, each time the window re-reads
+  and at each switch. An account left outside Shambles, by signing out in
+  the Codex extension or running `codex login`, keeps its figures too, and
+  a new Codex session that has not reported usage yet no longer blanks the
+  account in use. A reading is kept only while the login in use provably
+  is that account's. The account in use no longer shows the previous
+  account's figures as its own either: until it has run a session it
+  shows its own last reading, or nothing.
 - **A row due a sign-in lost its menu.** With Sign in beside Switch, the
   row's ▾ was pushed off the card and its ⋯ menu, which holds Rename and
   Remove, went out of reach, from 640 px wide down or with a name longer

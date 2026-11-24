@@ -221,33 +221,6 @@ def stash_live_login(paths, provider, name, *, platform=sys.platform,
                                  now_ms_fn())
 
 
-def _keep_usage_reading(paths, provider, name) -> None:
-    """Keep the outgoing account's last usage reading beside its login.
-
-    For a provider with no usage cache of its own to stash, which is Codex:
-    its figures live on session logs that every account shares, and once
-    another account is in use they stop being this one's. Only a reading
-    taken since ``name`` became the account in use is kept, so only while
-    the marker names it; a stray older one would be someone else's.
-
-    Best effort. Losing a usage reading costs a blank bar, and nothing about
-    it is worth stopping a switch for.
-    """
-    if provider.id != "codex" or state.read_active(paths, provider.id) != name:
-        return
-    from .providers import spec as specmod
-    try:
-        reading = usage_mod.codex_reading_since(
-            specmod.config_dir(provider.spec, home=paths.home,
-                               env=getattr(provider, "env", None)),
-            state.marked_since_ms(paths, provider.id))
-        if reading:
-            configjson.write_atomic(paths.usage(provider.id, name),
-                                    usage_mod.to_cache(reading))
-    except (OSError, ShamblesError):
-        pass
-
-
 def _write_credential(paths, provider, name, blob: bytes, *, sleep) -> None:
     """Write a credential into a profile, 0600, atomically.
 
@@ -328,7 +301,10 @@ def switch(paths, provider, target_name: str, *, platform=sys.platform,
             stash_live_login(paths, provider, outgoing, platform=platform,
                              now_ms_fn=lambda: stamp, sleep=sleep)
         if outgoing:
-            _keep_usage_reading(paths, provider, outgoing)
+            # Codex keeps no usage cache to stash with the login, so its
+            # newest reading is kept beside it. Best effort: nothing about a
+            # blank bar is worth stopping a switch for.
+            usage_mod.keep_codex_reading(paths, provider, outgoing)
 
         _vouch(held)
 

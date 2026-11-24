@@ -386,7 +386,7 @@ class ShamblesService:
         guessing "empty" would show the live account as signed out, so this
         then returns no snapshot at all.
 
-        Writes nothing but the usage sidecar, as :meth:`refresh` does: no
+        Writes nothing but usage readings, as :meth:`refresh` does: no
         adoption, no re-stash. Those read the live store and move bytes, and
         stay behind an explicit action.
         """
@@ -417,15 +417,21 @@ class ShamblesService:
                     real if _reads_only_files(real) or outcome is None
                     else _Remembered(real, outcome))))
 
-        for provider in self.providers:
+        self._find_session_logs()
+        for provider, files_only in zip(self.providers, wrapped):
             try:
                 usage_mod.capture_live(
                     self.paths, provider.id,
                     state.read_active(self.paths, provider.id),
                     now_ms=self.clock_ms(), provider=provider)
+                # Whose login is live is asked of the store as this refresh
+                # answers it, and the reading comes from the log just found:
+                # this runs on every turn of a Codex session in use.
+                usage_mod.capture_codex(
+                    self.paths, files_only, platform=self.platform,
+                    log=self._session_logs.get(provider.id))
             except Exception:
                 pass  # display only; the next read tries again
-        self._find_session_logs()
         try:
             fresh = snapshot_mod.build(paths=self.paths, providers=wrapped,
                                        platform=self.platform,
@@ -531,6 +537,8 @@ class ShamblesService:
                 self.paths, provider.id,
                 state.read_active(self.paths, provider.id),
                 now_ms=self.clock_ms())
+            usage_mod.capture_codex(self.paths, provider,
+                                    platform=self.platform)
         return self._result(True, "refresh")
 
     def forget_marker(self, provider_id):
