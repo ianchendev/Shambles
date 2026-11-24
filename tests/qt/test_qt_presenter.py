@@ -1083,3 +1083,74 @@ def test_most_room_needs_more_room_than_the_live_account_has():
                        account("Dev", usage=limits(90, 90))))
 
     assert only(model)["others"][0]["badge"]["kind"] == ""
+
+
+# -- a device sign-in that failed (S2 follow-up) -----------------------------------
+
+SETTING = ("Signing in with a code needs device code login turned on in your "
+           "ChatGPT security settings, or allowed in your workspace's "
+           "permissions by its admin.")
+
+
+def _device_failure(code, message, recovery):
+    result = ActionResult(False, "login", error=ActionError(
+        code, message, recovery))
+    return presenter.result_sheet(result, name="Spare",
+                                  provider_title="Codex",
+                                  names=["Main", "Spare"])
+
+
+def test_device_codes_off_offers_this_browser_instead():
+    """Trying the same way again cannot work, so the button is the other way."""
+    sheet = _device_failure(
+        "device_sign_in_off",
+        'Codex said: "device code login is not enabled for this Codex '
+        'server. Use the browser login or verify the server URL."',
+        f"You are back on 'Main'. Nothing was lost. {SETTING} Then sign in "
+        "to 'Spare' again.")
+
+    assert sheet["title"] == "Sign-in with a code is off"
+    assert sheet["retry"] is True
+    assert sheet["retryLabel"] == "Use this browser"
+    assert sheet["retryMethod"] == "browser"
+    assert "device code login is not enabled" in sheet["message"]
+    assert sheet["remedy"] == f"You are back on Main. Nothing was lost. {SETTING}"
+
+
+def test_a_failed_device_sign_in_does_not_repeat_its_button():
+    sheet = _device_failure(
+        "login_failed", "Codex's sign-in did not finish.",
+        f"You are back on 'Main'. Nothing was lost. {SETTING} Then sign in "
+        "to 'Spare' again.")
+
+    assert sheet["retryLabel"] == "Try again"
+    assert sheet["retryMethod"] == ""
+    assert sheet["remedy"] == f"You are back on Main. Nothing was lost. {SETTING}"
+
+
+def test_an_expired_code_does_not_repeat_its_button_either():
+    sheet = _device_failure(
+        "login_failed", "The code expired before it was entered.",
+        "You are back on 'Main'. Nothing was lost. Sign in to 'Spare' again "
+        "for a new code.")
+
+    assert sheet["message"] == "The code expired before it was entered."
+    assert sheet["remedy"] == "You are back on Main. Nothing was lost."
+    assert sheet["retryLabel"] == "Try again"
+
+
+def test_advice_before_signing_in_again_is_kept():
+    """A wrong account: sign out first, then sign in again. That is the way
+    out, not a repeat of the button."""
+    result = ActionResult(False, "login", error=ActionError(
+        "login_duplicate",
+        "You signed in as main@example.test, which is already saved as "
+        "'Main'. Nothing was saved under 'Spare'.",
+        "To add a different account, sign out in your browser or use a "
+        "private window, then sign in to 'Spare' again."))
+
+    sheet = presenter.result_sheet(result, name="Spare",
+                                   provider_title="Codex",
+                                   names=["Main", "Spare"])
+
+    assert sheet["remedy"].endswith("then sign in to Spare again.")

@@ -622,6 +622,9 @@ class Bridge(QObject):
 
     @Slot(str, str)
     def signIn(self, provider, name):
+        self._sign_in(provider, name)
+
+    def _sign_in(self, provider, name, *, device=False):
         account = self._account(provider, name)
         # Wherever the presenter offers it: the row's own action for a lapsed
         # login, or a second button beside Switch for one that is due.
@@ -629,7 +632,8 @@ class Bridge(QObject):
                 or not account["signInEnabled"] or self._occupied()):
             return
         self._begin(provider, name, adding=False, email=account["email"],
-                    title=account["providerTitle"])
+                    title=account["providerTitle"],
+                    device=device and self._offers_device(provider))
 
     @Slot(str)
     def openAdd(self, provider):
@@ -653,7 +657,7 @@ class Bridge(QObject):
     def _begin(self, provider, name, *, adding, email, title, device=False):
         self._login = {"provider": provider, "name": name, "adding": adding,
                        "started": False, "email": email, "title": title,
-                       "restart": None}
+                       "restart": None, "device": bool(device)}
         self._set_sheet(presenter.login_sheet(
             provider_title=title, name=name, email=email,
             previous=self._live_name(provider), adding=adding,
@@ -800,6 +804,11 @@ class Bridge(QObject):
                 result, name=name, provider_title=group.get("title", ""),
                 names=[a["name"] for a in accounts])
             sheet["provider"] = provider
+            # Try again signs in the way that just failed, unless the
+            # presenter says that cannot work and names the other way.
+            if not sheet.get("retryMethod"):
+                sheet["retryMethod"] = ("device" if login.get("device")
+                                        else "browser")
             self._set_sheet(sheet)
 
     @Slot()
@@ -827,7 +836,8 @@ class Bridge(QObject):
         # a retry is a sign-in to it either way.
         account = self._account(sheet["provider"], sheet["name"])
         if account and account["signIn"]:
-            self.signIn(sheet["provider"], sheet["name"])
+            self._sign_in(sheet["provider"], sheet["name"],
+                          device=sheet.get("retryMethod") == "device")
 
     @Slot()
     def openUrl(self):

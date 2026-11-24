@@ -500,10 +500,13 @@ it that fully matches `code_pattern`. They reach the frontend once, through
 `on_device_code`, as a `DeviceSignIn(user_code, verification_url,
 expires_at_ms)`, with the deadline taken from the spec's `expires_in_s`.
 Those lines still reach `on_line` only as `[vendor output hidden]`. A failed
-device sign-in keeps the code `login_failed`. Its message quotes the vendor
-only for the spec's fixed messages, taken from the spec's copy and never from
-the output, and its recovery names the account setting device codes need,
-except when the code simply expired.
+device sign-in keeps the code `login_failed`, except when the vendor says the
+account cannot sign in with a code (the spec's `unavailable` message): that is
+`device_sign_in_off`, so a frontend can offer the browser instead of the same
+attempt again. Its message quotes the vendor only for the spec's fixed
+messages, taken from the spec's copy and never from the output, and its
+recovery names the account setting device codes need, except when the code
+simply expired.
 
 The CLI is a compatibility adapter. It consumes service results but preserves
 the established human-readable output, `list --json` snapshot shape,

@@ -31,7 +31,7 @@ Notable changes per release. Dates are the tag date.
   from a phone or any other browser. The ChatGPT account has to allow
   sign-in with a code (device code login, in its security settings or its
   workspace's permissions). If it does not, the sheet says so and where to
-  turn it on.
+  turn it on, and its button signs in with this browser instead.
 
 ### Changed
 

@@ -595,7 +595,21 @@ LOGIN_TITLES = {
     "login_failed": "Sign-in did not finish",
     "login_not_written": "Sign-in did not finish",
     "login_unavailable": "The sign-in command is missing",
+    # S2: the vendor says this account cannot sign in with a code.
+    "device_sign_in_off": "Sign-in with a code is off",
 }
+
+#: Where trying the same way again cannot work: the button offers the other
+#: way in, and the sign-in it starts uses it ("browser" or "device").
+RETRY_INSTEAD = {
+    "device_sign_in_off": ("Use this browser", "browser"),
+}
+
+#: Codes whose closing "sign in again" only repeats the button below it.
+#: Not a wrong account or a saved one: there it follows the way out ("sign
+#: out first, then sign in again") and stays.
+_REPEATS_THE_BUTTON = frozenset({"login_failed", "login_not_written",
+                                 "device_sign_in_off"})
 
 #: Codes that mean the sign-in itself ran and ended, as opposed to a refusal
 #: before anything started (a bad name, say), which belongs on the form.
@@ -793,6 +807,13 @@ def result_sheet(result, *, name: str, provider_title: str = "",
     if retry:
         remedy = re.sub(rf"\s*Sign in to '{re.escape(name)}' to try again\.\s*$",
                         "", remedy)
+        if code in _REPEATS_THE_BUTTON:
+            # A device sign-in's endings (#68): after the setting, and after
+            # a code that expired. The button below does either.
+            remedy = re.sub(
+                rf"\s*(?:Then sign|Sign) in to '{re.escape(name)}' again"
+                r"(?: for a new code)?\.\s*$", "", remedy)
+    label, method = RETRY_INSTEAD.get(code, ("Try again", ""))
     names = {name, *names}
     message = as_the_window_says(message, tool=provider_title, names=names)
     remedy = as_the_window_says(remedy, tool=provider_title, names=names)
@@ -804,7 +825,9 @@ def result_sheet(result, *, name: str, provider_title: str = "",
         "message": message,
         "remedy": remedy,
         "retry": retry,
-        "retryLabel": "Try again",
+        "retryLabel": label,
+        #: How Try again signs in: "" for the way that just failed.
+        "retryMethod": method,
         "name": name,
     }
 

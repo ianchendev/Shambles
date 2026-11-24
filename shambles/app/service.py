@@ -1001,6 +1001,11 @@ class ShamblesService:
             message, recovery = self._device_failure(
                 provider, notice, name=name, where=where, message=message,
                 recovery=recovery)
+            if notice == "unavailable":
+                # The vendor says this account cannot sign in with a code,
+                # so trying the same way again cannot work. A code of its
+                # own lets a frontend offer the browser instead.
+                code = "device_sign_in_off"
         return self._result(False, action, error=ActionError(
             code, message, recovery))
 
