@@ -84,6 +84,14 @@ _AUTH_PARAMETERS = frozenset({
     "id_token_add_organizations", "codex_cli_simplified_flow", "originator",
     "allowed_workspace_id", "current_workspace_id", "connection",
 })
+#: The short sign-in link Claude Code 2.1.330 prints by default (``tZe``):
+#: claude.ai's authorize address, then one bare field, the known scopes as a
+#: base64url bitmask (one or two characters) followed by the 43-character
+#: PKCE challenge, then named fields as usual. Nothing in it is a secret; it
+#: stands for the full link above, which the server rebuilds.
+_SHORT_LINK_ENDPOINT = "https://claude.ai/oauth/authorize"
+_SHORT_LINK_FIELD = re.compile(r"[A-Za-z0-9_-]{44,45}")
+
 #: Parameters held to a narrower value than the general rule below.
 _AUTH_VALUES = {
     # In every other OAuth message ``code`` carries an authorization code.
@@ -113,8 +121,14 @@ def authorization_url(line: str) -> str | None:
     endpoint, _, query = url.partition("?")
     if endpoint not in _AUTH_ENDPOINTS:
         return None
+    fields = query.split("&") if query else []
+    if (endpoint == _SHORT_LINK_ENDPOINT and fields
+            and "=" not in fields[0]):
+        if not _SHORT_LINK_FIELD.fullmatch(fields[0]):
+            return None
+        fields = fields[1:]
     seen = set()
-    for field in query.split("&") if query else ():
+    for field in fields:
         key, separator, value = field.partition("=")
         if key not in _AUTH_PARAMETERS or key in seen or not separator:
             return None

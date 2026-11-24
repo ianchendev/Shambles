@@ -106,3 +106,19 @@ def test_a_parked_account_is_named_from_its_own_stashed_identity(tmp_path):
     assert plans == {"Personal": "Pro", "Admin": "Team Premium"}
     assert [presenter.plan_label(plans[n]) for n in ("Personal", "Admin")] \
         == ["Pro", "Team Premium"]
+
+
+@pytest.mark.parametrize("seat, plan", [
+    ("team_tier_1", "Team Premium"),
+    ("team_labs_premium", "Team Premium"),
+    ("team_bendep_nonprofit_premium", "Team Premium"),
+    ("team_standard", "Team"),
+    ("team_labs_standard", "Team"),
+    ("team_bendep_nonprofit_standard", "Team"),
+])
+def test_every_team_seat_claude_code_names_is_named_its_class(
+        tmp_path, seat, plan):
+    """Claude Code 2.1.330 sorts seat tiers into premium and standard itself
+    (a map of seatTier to class in the binary). Labs and nonprofit seats
+    are Team seats of one class or the other, not plain Team."""
+    assert identity_plan(tmp_path, {**TEAM_STANDARD, "seatTier": seat}) == plan

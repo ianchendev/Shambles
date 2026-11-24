@@ -152,6 +152,13 @@ Notable changes per release. Dates are the tag date.
   newhire@example.test", then "Not saved yet", with why saving matters
   behind ⓘ. Notices and the settle card write account names without
   quotes, as the rest of the window does.
+- **The sign-in link shows with Claude Code 2.1.330.** That version prints
+  a shortened sign-in link (`claude.ai/oauth/authorize?` followed by one
+  code) on a line of its own, and Shambles did not recognise it as a
+  sign-in link, so the sheet showed no link to open or copy.
+- **Premium Team seats on Labs and nonprofit plans read Team Premium.**
+  They read plain Team. Claude Code 2.1.330 names which seats are premium,
+  and Shambles now follows it.
 - **A sheet with room to spare could still scroll.** A sheet whose text
   was still being laid out when it opened could decide it scrolled, and
   the rule it then drew above its buttons took away exactly the room that
