@@ -1,3 +1,3 @@
 """Switch between Claude Code accounts without waiting for a verification email."""
 
-__version__ = "2.2.2"
+__version__ = "2.3.0"
