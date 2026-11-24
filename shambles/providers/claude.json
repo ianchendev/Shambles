@@ -162,7 +162,8 @@
         "address",
         "verification_code"
       ],
-      "refuses_note": "2.1.330 checks a pasted line before using it: it wants code#state, and it refuses a localhost or web address and a 4 to 10 digit verification code, with the reason on stderr, which Shambles shows only as [vendor output hidden]. So the same pastes are refused before they are sent, each with its own reason. From the review lane's reading of the 2.1.330 binary; not installed on the platforms lane's machine.",
+      "refuses_note": "2.1.330 checks a pasted line before using it (GRe): http(s):// or /magic-link# anywhere is a web address, http(s):// to localhost, 127.0.0.1 or [::1] is an address on this machine, and 4 to 10 digits once spaces and dashes are removed is a verification code; each is refused with a reason on stderr, which Shambles shows only as [vendor output hidden]. So the same pastes are refused before they are sent, each with its own reason, and so are addresses without a scheme, which 2.1.330 would take for a code and then fail on. Read from the strings of the 2.1.330 binary in the VS Code extension; not run.",
+
       "note": "The link claude auth login prints (If the browser didn't open, visit: ...) is its manual one: the page ends by showing <code>#<state> to paste back. 2.1.270, 2.1.289 and 2.1.300 read it as a line on stdin with a line reader on process.stdin and no terminal check, split it at '#', and refuse a line without both halves. Read from the binaries' strings; the command was not run."
     }
   },

@@ -423,9 +423,10 @@ def test_the_code_never_comes_back_as_progress_even_if_the_vendor_echoes_it(
 
 # -- what Claude Code 2.1.330 refuses, refused here with a reason ------------
 #
-# 2.1.330 checks a pasted line before using it: it wants code#state, and it
-# refuses a localhost or web address and a 4-10 digit verification code,
-# saying why on stderr (the review lane's reading of its binary). Shambles
+# 2.1.330 checks a pasted line before using it (GRe, read from the strings
+# of its binary): it wants code#state, and it refuses a web address or one
+# on this machine anywhere in the paste, and a 4-10 digit verification code
+# (spaces and dashes removed), saying why on stderr. Shambles
 # shows stderr only as "[vendor output hidden]", so a paste it passed on
 # would sit there unexplained. The same refusals happen here first, each
 # with a sentence of its own that never repeats what was pasted.
@@ -436,26 +437,42 @@ REAL = ("Zq7wPLm0vB2cXk9-Tr4_YhGd8sNe1QaU3iJoF6lKpMnB"
         "#qW8eR5tY2uI0oP7aS4dF1gH6jK9lZ3xC0vB5nM2-_9")
 
 
-@pytest.mark.parametrize("pasted", [
-    "https://platform.claude.com/oauth/code/callback?code=abcMARK&state=xyz",
-    "https://platform.claude.com/oauth/code/callback?code=abcMARK#xyz",
-    "HTTPS://Claude.com/cai/oauth/authorize?code=true#MARK",
-    "http://localhost:54545/callback?code=abcMARK&state=xyz",
-    "localhost:54545/callback?code=abcMARK#xyz",
-    "localhost/callback#MARK",
-    "127.0.0.1:54545/callback?code=abc#MARK",
-    "platform.claude.com/oauth/code/callback?code=abcMARK#xyz",
-    "claude.ai/oauth/authorize#MARK",
+WEB, LOCAL = "web", "local"
+
+
+@pytest.mark.parametrize("pasted, kind", [
+    ("https://platform.claude.com/oauth/code/callback?code=abcMARK&state=xyz",
+     WEB),
+    ("https://platform.claude.com/oauth/code/callback?code=abcMARK#xyz", WEB),
+    ("HTTPS://Claude.com/cai/oauth/authorize?code=true#MARK", WEB),
+    # 2.1.330 looks anywhere in the paste, not only at its start.
+    ("abcMARK#https://example.test/x", WEB),
+    ("see https://example.test/MARK", WEB),
+    ("example.test/magic-link#MARK", WEB),
+    # Without a scheme: 2.1.330 would take these for a code and fail.
+    ("platform.claude.com/oauth/code/callback?code=abcMARK#xyz", WEB),
+    ("claude.ai/oauth/authorize#MARK", WEB),
+    # This machine's own addresses get their own reason.
+    ("http://localhost:54545/callback?code=abcMARK&state=xyz", LOCAL),
+    ("http://127.0.0.1:54545/callback?code=abc#MARK", LOCAL),
+    ("http://[::1]:54545/callback?code=abc#MARK", LOCAL),
+    ("localhost:54545/callback?code=abcMARK#xyz", LOCAL),
+    ("localhost/callback#MARK", LOCAL),
+    ("127.0.0.1:54545/callback?code=abc#MARK", LOCAL),
 ])
-def test_a_page_address_is_refused_as_an_address(claude, pasted):
+def test_a_page_address_is_refused_as_an_address(claude, pasted, kind):
     with pytest.raises(login.CodeRejectedError) as caught:
         login.clean_code(claude, pasted)
-    assert str(caught.value) == login.CODE_IS_ADDRESS
+    assert str(caught.value) == (login.CODE_IS_LOCAL_ADDRESS if kind == LOCAL
+                                 else login.CODE_IS_ADDRESS)
     assert "MARK" not in str(caught.value) + repr(caught.value)
 
 
 @pytest.mark.parametrize("pasted", ["1234", "482913", " 482913\n",
-                                    "1234567890"])
+                                    "1234567890",
+                                    # As 2.1.330: spaces and dashes inside
+                                    # it do not make it anything else.
+                                    "482-913", "482 913"])
 def test_a_verification_code_is_refused_as_one(claude, pasted):
     with pytest.raises(login.CodeRejectedError) as caught:
         login.clean_code(claude, pasted)
