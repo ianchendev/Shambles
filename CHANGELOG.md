@@ -141,6 +141,14 @@ Notable changes per release. Dates are the tag date.
   was still being laid out when it opened could decide it scrolled, and
   the rule it then drew above its buttons took away exactly the room that
   would have shown the rest, so it kept a scroll bar it did not need.
+- **Parked Codex accounts keep their last usage.** Claude accounts showed
+  their last figures after you switched away; Codex accounts said "No
+  usage recorded yet" forever. Codex keeps no usage file per account, only
+  session logs that every account shares, so at each switch Shambles now
+  keeps the newest reading taken while the outgoing account was in use.
+  The account in use no longer shows the previous account's figures as
+  its own either: until it has run a session it shows its own last
+  reading, or nothing.
 - **A row due a sign-in lost its menu.** With Sign in beside Switch, the
   row's ▾ was pushed off the card and its ⋯ menu, which holds Rename and
   Remove, went out of reach, from 640 px wide down or with a name longer
