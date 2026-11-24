@@ -2,7 +2,7 @@
 
 The view model in the MVVM sense, and deliberately a plain function rather
 than an object: a menu bar panel is rebuilt each time it opens, so there is no
-view state to hold. That is the same discipline the Tk window already follows.
+view state to hold.
 
 Everything a shell displays is decided **here**, in Python, where it is
 tested. A shell must not re-derive any of it: if Swift computes "can I switch

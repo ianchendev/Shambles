@@ -517,9 +517,9 @@ class Bridge(QObject):
 
         A switch can wait up to 15 s for Claude Code to finish renewing its
         login. Run here, on the window's thread, that is 15 s of a window
-        that draws nothing and answers no clicks -- which is what the Tk
-        window does. The worker only ever emits signals; Qt queues them onto
-        this thread, where all state lives.
+        that draws nothing and answers no clicks -- which is what the classic
+        Tk window did. The worker only ever emits signals; Qt queues them
+        onto this thread, where all state lives.
         """
         self._switching = {"provider": provider, "name": name,
                            "success": success}

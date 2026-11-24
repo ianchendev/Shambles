@@ -194,9 +194,8 @@ sudo apt install libegl1 libgl1 libfontconfig1 libfreetype6 \
   libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
 ```
 
-Until it has them, `shambles gui` opens the classic window instead, which
-needs `python3-tk`, and names the missing libraries. `shambles gui --new`
-prints the whole fix.
+Until it has them, `shambles gui` names the missing libraries, prints this
+list and exits. `shambles`, the terminal dashboard, needs none of them.
 
 **A binary from [Releases](https://github.com/ianchendev/Shambles/releases).**
 One file, nothing to install. Same unsigned caveat.
@@ -389,7 +388,6 @@ usage and changes nothing.
 | `shambles` | The terminal dashboard, on a real terminal |
 | `shambles tui` | The terminal dashboard, always |
 | `shambles gui` | The desktop window |
-| `shambles gui --classic` | The previous Tk window |
 | `shambles list` | Every account and its state, as text |
 | `shambles list --json` | The same thing, for scripts |
 | `shambles switch <provider> <account>` | Switch without opening anything |
@@ -533,7 +531,7 @@ python -m pip install 'PySide6-Essentials>=6.8,<6.10'
 
 Shambles is not on PyPI, so `pip install shambles` fetches nothing of
 ours. Installed either way on a bare Linux or WSL machine, Qt needs these
-system libraries, and `shambles gui --new` names any that are missing:
+system libraries, and `shambles gui` names any that are missing:
 
 ```bash
 sudo apt install libegl1 libgl1 libfontconfig1 libfreetype6 \
@@ -560,15 +558,14 @@ calls it: the window loads only files that ship with it, and the rule that
 no Python module in the package imports a network module is still enforced
 by `tests/test_login.py`.
 
-**The classic window.** `shambles gui --classic` opens the previous Tk
-window. It is also what `shambles gui` opens when the new window is not
-installed, with a line saying so. It will be removed in a later release.
-[docs/how-it-works.md](docs/how-it-works.md) still describes it.
+**The classic window** was retired in 2.3.0. In that release
+`shambles gui --classic` says so and exits with an error, so a script or
+shortcut that names it does not fail silently.
 
 ### The terminal dashboard
 
 `shambles` opens a keyboard dashboard instead of the window whenever you run
-it on a real terminal. No `DISPLAY`, no Tk, and it works the same over SSH.
+it on a real terminal. No `DISPLAY`, no Qt, and it works the same over SSH.
 
 | Key | Action |
 |---|---|
@@ -699,7 +696,7 @@ Session history, plugins and settings are shared and live elsewhere.
 | Symptom | Cause and fix |
 |---|---|
 | `No module named 'textual'` | A clone whose dependencies were never installed. Run `pip install -e .` in the checkout, or use pipx |
-| `Shambles needs Tkinter` | Only the window needs it. Run `sudo apt install python3-tk`, or use `shambles tui` instead |
+| `The Shambles window needs PySide6 (Qt)` or `could not start` | The window is the optional `[gui]` extra. The message gives the command that adds it and, on Linux, the libraries Qt is missing. `shambles` opens the terminal dashboard, which needs neither |
 | `shambles: command not found` after the install script | `~/.local/bin` is not on your PATH. The script prints the line to add |
 | Switching seems to do nothing | A session that was already running keeps its old token. Start a new one, or run *Developer: Reload Window* in VS Code |
 | Switching does nothing, even in new sessions | Run `shambles doctor`. The usual causes are an environment variable supplying its own login, `CLAUDE_CONFIG_DIR` set in one place and not another, or Shambles 2.1.2 or older on Windows. See [the support table](#will-it-work-for-you) |
@@ -758,7 +755,7 @@ asserts that `Work → Personal → Work` leaves the credential byte-identical,
 refresh token and expiry included. If it regresses, the tool stops solving the
 problem it exists for.
 
-Developed on WSL2 Ubuntu with WSLg, Python 3.12, Tk 8.6. macOS and native
+Developed on WSL2 Ubuntu with WSLg, Python 3.12, Qt 6.9. macOS and native
 Windows are exercised by the `real-machine` workflow and by nobody's daily
 use yet; see [the support table](#will-it-work-for-you) for exactly what
 that does and does not establish.

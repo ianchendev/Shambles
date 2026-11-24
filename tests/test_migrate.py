@@ -438,23 +438,29 @@ def test_a_swap_that_cannot_be_undone_says_where_the_files_are(paths,
 
 
 # ---- migration happens on sight, not on request -------------------------
+#
+# Every interface runs ShamblesService.run_migrations before it reads a
+# thing: the window and the terminal UI as they open, the CLI before each
+# command (test_migrations_everywhere.py). These were the classic window's
+# startup tests; this is where that startup lives now.
 
-def test_app_migrates_on_startup_without_asking(paths, make_app, monkeypatch):
+def _opening(paths):
+    """What opening any interface does to the store, and what it says."""
+    from shambles.app.service import ShamblesService
+
+    return ShamblesService(paths=paths,
+                           providers=_providers.all_providers(env={}),
+                           platform="linux",
+                           clock_ms=lambda: NOW).run_migrations()
+
+
+def test_opening_migrates_without_asking(paths):
     """The old layout hid session history. There is no version of that anyone
-    wants, so opening the window fixes it rather than offering to."""
-    from shambles import gui
-
-    shown = []
-    monkeypatch.setattr(gui.messagebox, "showinfo",
-                        lambda *a, **k: shown.append(a))
-    monkeypatch.setattr(gui.messagebox, "showerror",
-                        lambda *a, **k: shown.append(a))
-
+    wants, so opening Shambles fixes it rather than offering to."""
     _legacy_setup(paths)
     assert migrate.needed(paths)
 
-    app = make_app(paths)
-    app.update()
+    _opening(paths)
 
     assert not migrate.needed(paths), "startup left the broken layout in place"
     assert paths.claude_dir.is_dir() and not paths.claude_dir.is_symlink()
@@ -464,36 +470,25 @@ def test_app_migrates_on_startup_without_asking(paths, make_app, monkeypatch):
     assert state.inspect(paths, CLAUDE, platform="linux").kind == state.MANAGED
 
 
-def test_startup_migration_reports_what_it_did(paths, make_app, monkeypatch):
-    from shambles import gui
-
-    shown = []
-    monkeypatch.setattr(gui.messagebox, "showinfo",
-                        lambda *a, **k: shown.append(" ".join(str(x) for x in a)))
+def test_opening_says_what_the_migration_did(paths):
     _legacy_setup(paths)
-    app = make_app(paths)
-    app.update()
 
-    assert shown, "migration happened silently"
-    assert "2" in shown[0], "did not say how many sessions it merged"
+    notices = _opening(paths)
+
+    merged = [n for n in notices if n.code == "history_merged"]
+    assert merged, "migration happened silently"
+    assert merged[0].ok
+    assert "2 files" in merged[0].message, \
+        "did not say how many sessions it merged"
 
 
-def test_startup_is_untouched_when_no_migration_is_needed(paths, make_app,
-                                                          monkeypatch):
-    from shambles import gui
-    from helpers import make_claude_json, make_live_claude_login, make_profile
-
-    shown = []
-    monkeypatch.setattr(gui.messagebox, "showinfo",
-                        lambda *a, **k: shown.append(a))
+def test_opening_says_nothing_when_no_migration_is_needed(paths):
     make_profile(paths, "claude", "Work", email="work@example.com", active=True)
     make_claude_json(paths, email="work@example.com")
     make_live_claude_login(paths)
 
-    app = make_app(paths)
-    app.update()
-
-    assert not shown, "showed a migration dialog with nothing to migrate"
+    assert _opening(paths) == (), \
+        "announced a migration with nothing to migrate"
 
 
 # ---- everything machine-scoped comes across, not just projects/ ---------

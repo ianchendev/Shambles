@@ -174,8 +174,8 @@ def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
             continue
         if notice.code == ELSEWHERE and notice.account:
             # Drawn as a card with the one button that settles it, where the
-            # save card would be: this is that state's next step, and the
-            # Tk window no longer offers Save here at all.
+            # save card would be: this is that state's next step, and Save
+            # is not offered here at all.
             settle = {
                 "provider": group.provider,
                 "account": notice.account,
@@ -552,7 +552,7 @@ def _left(ms, now_ms) -> str:
 
 
 #: For a login whose deadline is fixed at sign-in (Claude's, about thirty
-#: days). The same words as the Tk window, so the two cannot disagree.
+#: days).
 FIXED_DEADLINE = ("Using the account does not move this date. Sign in again "
                   "before then to keep it.")
 FIXED_USE = "Using the account does not move this date."

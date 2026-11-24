@@ -137,8 +137,24 @@ Notable changes per release. Dates are the tag date.
   against what they sit on. An old reading on an account not in use is
   drawn as a striped bar instead of a pale grey that barely showed.
 
+### Removed
+
+- **The classic Tk window.** `shambles gui` opens the Qt window and nothing
+  else. Where Qt is missing or cannot start, it says what to install (the
+  pipx `[gui]` command, or on Linux the apt packages Qt is missing), says
+  that `shambles` opens the terminal UI, and exits 1, instead of opening
+  the old window. `shambles gui --classic` says the window was retired and
+  exits with an error, so a script or shortcut that names it does not fail
+  silently; that notice goes in a later release. `--new` still works and
+  changes nothing. Nothing needs `python3-tk` any more.
+
 ### Fixed
 
+- **Open opens the sign-in page on Windows and macOS.** The window's Open
+  button and the terminal UI's `o` tried only the Linux and WSL openers,
+  so on native Windows and macOS they never opened a browser, and the link
+  was only copied. There they now hand it to the system's own browser
+  handler, as the classic window did.
 - **A switch on Windows no longer fails as Claude Code lets go of its
   login lock.** Windows refuses to create a folder another program is still
   removing, and says "Access is denied". A switch that waited for Claude

@@ -549,10 +549,9 @@ class ShamblesService:
     def run_migrations(self):
         """Bring an older store up to date, and say what was done.
 
-        Unprompted, for the reason the Tk window gives: the old layouts
-        either hid session history or cannot hold a second provider, and
-        neither is something anyone would choose to keep. Both steps are
-        additive, so there is nothing to undo.
+        Unprompted, because the old layouts either hid session history or
+        cannot hold a second provider, and neither is something anyone would
+        choose to keep. Both steps are additive, so there is nothing to undo.
 
         Returns one :class:`MigrationNotice` per step that ran or could not;
         an up-to-date home returns none. Never raises a
@@ -669,7 +668,7 @@ class ShamblesService:
         openers report success while doing nothing -- callers are expected to
         put the link on the clipboard regardless rather than trust this.
         """
-        return login.open_url(url)
+        return login.open_sign_in_page(url, platform=self.platform)
 
     def offers_device_sign_in(self, provider_id):
         """Whether this provider can sign in with a code from another device.

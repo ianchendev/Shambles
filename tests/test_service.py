@@ -859,6 +859,24 @@ def test_open_sign_in_url_does_not_claim_success_when_no_opener_worked(
     assert service(paths).open_sign_in_url("https://example.test/x") is False
 
 
+def test_open_sign_in_url_falls_back_to_webbrowser_off_linux(paths,
+                                                            monkeypatch):
+    """Native Windows and macOS have none of the openers, so without this
+    the window's Open button would never open anything there."""
+    import webbrowser
+
+    opened = []
+    monkeypatch.setattr(login, "open_url", lambda url: False)
+    monkeypatch.setattr(webbrowser, "open",
+                        lambda url: opened.append(url) or True)
+    on_windows = ShamblesService(paths=paths,
+                                 providers=providers.all_providers(env={}),
+                                 platform="win32", clock_ms=lambda: NOW)
+
+    assert on_windows.open_sign_in_url("https://example.test/x") is True
+    assert opened == ["https://example.test/x"]
+
+
 # --- Signing in puts you back when it comes to nothing --------------------
 #
 # Reproduced in the terminal UI against a synthetic home: pressing l on a

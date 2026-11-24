@@ -39,7 +39,8 @@ def test_console_script_points_at_a_real_callable():
 
 
 def test_declares_textual_as_the_only_runtime_dependency():
-    """Tkinter ships with Python and is not installable from PyPI."""
+    """The window's Qt is the optional [gui] extra, so the terminal UI's
+    Textual is all that every install needs."""
     assert _pyproject()["project"].get("dependencies", []) == ["textual>=8.2,<9"]
 
 
@@ -136,10 +137,10 @@ def test_version_does_not_claim_success_on_an_unsupported_interpreter():
 def test_a_missing_textual_is_named_rather_than_traced(monkeypatch, capsys):
     """Textual is a dependency, so a clone that was never installed has none.
 
-    The interpreter is new enough, Tkinter is beside the point, and the only
-    thing wrong is one uninstalled package -- which a traceback out of an
-    import three modules deep does not say. Tk already has TK_MISSING for the
-    same situation; this is its counterpart.
+    The interpreter is new enough and the only thing wrong is one
+    uninstalled package -- which a traceback out of an import three modules
+    deep does not say. The window has QT_MISSING for the same situation; this
+    is its counterpart.
     """
     from shambles.app import cli
 

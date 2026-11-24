@@ -109,7 +109,6 @@ def test_without_qt_the_cli_hands_over_to_an_installed_bundle(
     monkeypatch.setattr(
         launch, "replace_with_window",
         lambda path, args, **kw: handed.update(path=path, args=args))
-    monkeypatch.setattr("shambles.gui.run", lambda paths=None: 0)
 
     cli.main(["--no-motion", "gui", *flag, "--home", str(home)])
 
@@ -121,7 +120,7 @@ def test_without_qt_or_a_bundle_the_cli_explains(monkeypatch, capsys, home):
     monkeypatch.setattr(cli, "_window_entry", no_qt)
     monkeypatch.setattr(launch, "window_bundle", lambda **kw: None)
 
-    assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
     assert "PySide6-Essentials" in capsys.readouterr().err
 
 
@@ -139,9 +138,8 @@ def entry():
 def test_the_bundle_opens_the_window_by_default_and_passes_options_on():
     arguments = entry().arguments
 
-    assert arguments([]) == ["gui", "--new"]
-    assert arguments(["--home", "/tmp/x"]) == ["gui", "--new", "--home",
-                                               "/tmp/x"]
+    assert arguments([]) == ["gui"]
+    assert arguments(["--home", "/tmp/x"]) == ["gui", "--home", "/tmp/x"]
 
 
 @pytest.mark.parametrize("flag", ["--version", "-V", "--help", "-h"])

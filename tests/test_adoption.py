@@ -155,14 +155,26 @@ def test_restash_does_not_file_a_login_when_the_address_is_unreadable(paths):
         state.DRIFTED, "a copy made on no evidence would now hide the drift"
 
 
-def test_opening_the_window_files_nothing_on_an_unreadable_address(
-        paths, make_app):
+def opening(paths):
+    """What any interface does as it opens: migrate, then read everything.
+
+    These were the classic window's startup tests. The window and the
+    terminal UI now both open through the service, so this is that startup.
+    """
+    from shambles.app.service import ShamblesService
+
+    service = ShamblesService(paths=paths,
+                              providers=[claude()], platform="linux")
+    service.run_migrations()
+    assert service.refresh().ok
+
+
+def test_opening_files_nothing_on_an_unreadable_address(paths):
     work = two_accounts(paths)
     set_live(paths, login("ap", "rp-new", healthy_ms(29)))
     paths.claude_json.write_text('{"numStartups": 4', encoding="utf-8")
 
-    app = make_app(paths)
-    app.update()
+    opening(paths)
 
     assert paths.credentials("claude", "Work").read_bytes() == work
 
@@ -329,11 +341,10 @@ def test_switching_back_to_work_works_and_loses_nothing(paths):
     assert kept_somewhere(paths, "Personal", personal_now)
 
 
-def test_the_window_files_nothing_over_work_after_that(paths, make_app):
+def test_opening_files_nothing_over_work_after_that(paths):
     work, _ = _session_outlived_the_switch(paths)
 
-    app = make_app(paths)
-    app.update()
+    opening(paths)
 
     assert state.read_active(paths, "claude") == "Personal"
     assert paths.credentials("claude", "Work").read_bytes() == work

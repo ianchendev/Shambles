@@ -1,11 +1,11 @@
-"""`shambles gui --new`: reaching the Qt window, and failing politely."""
+"""`shambles gui`: reaching the Qt window, and failing politely."""
 
 import pytest
 
 from shambles.app import cli
 
 
-def test_gui_new_opens_the_window_on_the_requested_home(monkeypatch, home):
+def test_gui_opens_the_window_on_the_requested_home(monkeypatch, home):
     seen = {}
 
     def run_window(service, *, motion=True):
@@ -14,16 +14,16 @@ def test_gui_new_opens_the_window_on_the_requested_home(monkeypatch, home):
 
     monkeypatch.setattr(cli, "_window_entry", lambda: run_window)
 
-    assert cli.main(["gui", "--new", "--home", str(home)]) == 0
+    assert cli.main(["gui", "--home", str(home)]) == 0
     assert seen == {"home": home, "motion": True}
 
 
-def test_gui_new_passes_no_motion_through(monkeypatch, home):
+def test_gui_passes_no_motion_through(monkeypatch, home):
     seen = {}
     monkeypatch.setattr(cli, "_window_entry", lambda: (
         lambda service, *, motion=True: seen.update(motion=motion) or 0))
 
-    cli.main(["--no-motion", "gui", "--new", "--home", str(home)])
+    cli.main(["--no-motion", "gui", "--home", str(home)])
 
     assert seen == {"motion": False}
 
@@ -44,88 +44,56 @@ def test_a_window_that_cannot_load_says_why_and_what_to_do(
     monkeypatch.setattr(cli, "_window_entry", missing)
     monkeypatch.setattr(cli.sys, "platform", "linux")
 
-    assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
     err = capsys.readouterr().err
     assert advice in err
     if advice == "libegl1":
         assert str(problem) in err
 
 
-def test_plain_gui_opens_the_new_window_when_it_can(monkeypatch, home):
-    from shambles import gui
-
+@pytest.mark.parametrize("flag", [[], ["--new"]])
+def test_gui_opens_the_window_and_new_is_the_same_thing(monkeypatch, home,
+                                                        flag):
     seen = {}
     monkeypatch.setattr(cli, "_window_entry", lambda: (
         lambda service, *, motion=True: seen.update(home=service.paths.home)
         or 0))
-    monkeypatch.setattr(gui, "run",
-                        lambda paths=None: pytest.fail("opened the Tk window"))
 
-    assert cli.main(["gui", "--home", str(home)]) == 0
+    assert cli.main(["gui", *flag, "--home", str(home)]) == 0
     assert seen == {"home": home}
 
 
-def test_plain_gui_falls_back_to_the_classic_window_and_says_so(
-        monkeypatch, capsys, home):
-    """A bare pip install has no Qt and no bundle, and must still open."""
-    from shambles import gui
+def test_gui_without_qt_explains_instead_of_opening_anything(monkeypatch,
+                                                             capsys, home):
+    """A bare pip install has no Qt and no bundle. There is no other window
+    to open, so it says what to install and fails where a script can see."""
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
 
-    opened = []
-    monkeypatch.setattr(gui, "run",
-                        lambda paths=None: opened.append(paths.home) or 0)
-
-    assert cli.main(["gui", "--home", str(home)]) == 0
-    assert opened == [home]
     err = capsys.readouterr().err
-    assert "classic window" in err and "shambles gui --new" in err
-
-
-def test_classic_is_always_the_tk_window_even_where_qt_is_installed(
-        monkeypatch, capsys, home):
-    from shambles import gui
-
-    opened = []
-    monkeypatch.setattr(cli, "_window_entry",
-                        lambda: pytest.fail("opened the new window"))
-    monkeypatch.setattr(gui, "run",
-                        lambda paths=None: opened.append(paths.home) or 0)
-
-    assert cli.main(["gui", "--classic", "--home", str(home)]) == 0
-    assert opened == [home]
-    assert capsys.readouterr().err == ""
-
-
-def test_new_never_falls_back_so_a_missing_qt_is_explained(monkeypatch,
-                                                           capsys, home):
-    from shambles import gui
-
-    monkeypatch.setattr(gui, "run",
-                        lambda paths=None: pytest.fail("fell back to Tk"))
-
-    assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
     # The root conftest's stand-in, quoted as the reason.
-    assert "switched off under test" in capsys.readouterr().err
+    assert "switched off under test" in err
+    assert err.endswith("Run shambles for the terminal UI.\n")
 
 
-def test_the_window_package_ships_its_qml_and_fonts():
-    """Read from disk at runtime; undeclared, an installed copy opens blank."""
-    from pathlib import Path
+def test_classic_says_it_was_retired_and_opens_nothing(monkeypatch, capsys,
+                                                       home):
+    """Kept for 2.3.0 so a script or shortcut naming it fails with a reason,
+    not an unknown option, and not silently."""
+    monkeypatch.setattr(cli, "_window_entry",
+                        lambda: pytest.fail("opened the window"))
 
-    # stdlib only from 3.11, and 3.10 is still supported; the same metadata
-    # is checked on the newer jobs.
-    tomllib = pytest.importorskip("tomllib")
-    root = Path(__file__).resolve().parents[2]
-    project = tomllib.loads((root / "pyproject.toml").read_text())
-    setuptools = project["tool"]["setuptools"]
-    assert "shambles.app.qt" in setuptools["packages"]
-    declared = setuptools["package-data"]["shambles.app.qt"]
-    assert "qml/*.qml" in declared and "fonts/*.ttf" in declared
+    assert cli.main(["gui", "--classic", "--home", str(home)]) == \
+        cli.EXIT_USAGE
 
-    package = root / "shambles" / "app" / "qt"
-    assert (package / "qml" / "Main.qml").is_file()
-    assert len(list((package / "fonts").glob("*.ttf"))) == 3
-    assert (package / "fonts" / "OFL.txt").is_file(), \
-        "the typeface's licence must ship with it"
-    assert "icons/*" in declared
-    assert (package / "icons" / "shambles.png").is_file()
-    assert (root / "packaging" / "shambles.ico").is_file()
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "retired in 2.3.0" in err
+    assert "shambles gui" in err and "terminal UI" in err
+
+
+def test_neither_retired_option_is_offered_in_help(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["gui", "--help"])
+
+    out = capsys.readouterr().out
+    assert "--classic" not in out and "--new" not in out

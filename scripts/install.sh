@@ -222,7 +222,7 @@ install_window() {
 
   echo "Downloading ${name}..."
   if ! curl -fsSL -o "$archive" "${RELEASE}/${name}" 2>/dev/null; then
-    echo "This release has no window to download; 'shambles gui' opens the classic one."
+    echo "This release has no window to download; run 'shambles' for the terminal UI."
     return 0
   fi
 

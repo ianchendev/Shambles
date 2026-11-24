@@ -1,6 +1,4 @@
-import gc
 import os
-import sys
 import threading
 import time
 
@@ -54,32 +52,15 @@ def no_thread_outlives_its_test():
     ``shambles.login.LoginProcess`` pumps vendor output on a daemon thread,
     and ``fake_vendor`` can hand it a script that sleeps. A test that does not
     wait leaves that thread running, still calling back into the service, long
-    after its own assertions have passed.
-
-    The next test then drives Tk on the main thread. When the stray thread
-    garbage-collects a Tk object, Tcl is entered from the wrong thread and
-    aborts the interpreter outright:
-
-        Fatal Python error: Aborted
-
-    That kills the whole run rather than failing one test, so no retry can
-    recover it. It is timing-dependent, which is why it showed up on one
-    runner and not another.
+    after its own assertions have passed, and into whatever the next test set
+    up. With the classic Tk window that aborted the whole interpreter: Tcl
+    entered from the wrong thread.
 
     Joining is capped: a thread that will not end is left alone rather than
     hanging the suite, because a slow test is a better failure than a stuck
     one.
     """
     before = set(threading.enumerate())
-    # The other half of the same crash. A Tk object left in a reference
-    # cycle by an earlier test is freed whenever the collector next runs,
-    # and the collector runs on whichever thread happens to allocate. If
-    # that is a login worker, Tcl is entered from the wrong thread exactly
-    # as above. Collecting here, on the main thread, before this test starts
-    # any thread of its own, leaves nothing of Tk's for a worker to free.
-    # Only once Tk has been loaded: before that there is nothing to guard.
-    if "tkinter" in sys.modules:
-        gc.collect()
     yield
     deadline = time.monotonic() + 5.0
     current = threading.current_thread()
@@ -93,10 +74,9 @@ def no_thread_outlives_its_test():
 def no_real_window(monkeypatch):
     """`shambles gui` must never open the real Qt window from a test.
 
-    The Qt window is the default wherever Qt is installed, which includes
-    CI. A test that reaches ``cli.main(["gui"])`` would otherwise start a
-    real event loop and hang the run. Tests about the Qt window replace
-    these two again with stand-ins of their own.
+    Qt is installed on CI, so a test that reaches ``cli.main(["gui"])``
+    would otherwise start a real event loop and hang the run. Tests about
+    the Qt window replace these two again with stand-ins of their own.
     """
     from shambles.app import cli, launch
 
@@ -105,76 +85,6 @@ def no_real_window(monkeypatch):
 
     monkeypatch.setattr(cli, "_window_entry", unavailable)
     monkeypatch.setattr(launch, "window_bundle", lambda **_kw: None)
-
-
-#: Every native Tk dialog, and the answer that changes nothing: No, Cancel,
-#: nothing typed. "ok" is what a message box returns once dismissed.
-SAFE_ANSWERS = {
-    "tkinter.messagebox": {
-        "showinfo": "ok", "showwarning": "ok", "showerror": "ok",
-        "askquestion": "no", "askokcancel": False, "askyesno": False,
-        "askyesnocancel": None, "askretrycancel": False,
-    },
-    "tkinter.simpledialog": {
-        "askstring": None, "askinteger": None, "askfloat": None,
-    },
-}
-
-
-class RealDialogs:
-    """The native dialogs a test opened without standing in for them."""
-
-    def __init__(self):
-        self.opened = []
-
-    def verdict(self):
-        if self.opened:
-            pytest.fail(
-                "a native dialog would have opened and waited for a person; "
-                "stand in for it, as the tests that expect one do:\n"
-                + "\n".join(f"  {kind}({title!r}, {text!r})"
-                            for kind, title, text in self.opened),
-                pytrace=False)
-
-
-@pytest.fixture(autouse=True)
-def no_real_dialogs(monkeypatch):
-    """No test ever waits on a native dialog.
-
-    They are modal, and on a CI runner nobody answers one: three Windows jobs
-    sat in ``tests/test_gui_import.py`` until the six-hour job limit killed
-    them, and the one ``faulthandler_timeout`` caught was parked in
-    ``messagebox.askyesno`` behind a remove button no test had pressed (a
-    timer that outlived its card ran the button; see ``motion.later``). A
-    retry cannot rescue a hang, and the next bug that opens a dialog should
-    fail one test, not stop the run.
-
-    So every dialog answers the safe way at once, and the test that opened
-    one fails, naming it. Raising instead would not do: Tk prints an error
-    from a callback and carries on, and the test would pass. Tests that
-    expect a dialog patch it themselves, on top of this.
-    """
-    seen = RealDialogs()
-    if "tkinter" not in sys.modules:
-        try:
-            import tkinter  # noqa: F401
-        except ImportError:
-            yield seen
-            return
-    import importlib
-
-    def stand_in(kind, answer):
-        def ask(title=None, message=None, *_args, **_kwargs):
-            seen.opened.append((kind, title, message))
-            return answer
-        return ask
-
-    for module_name, answers in SAFE_ANSWERS.items():
-        module = importlib.import_module(module_name)
-        for kind, answer in answers.items():
-            monkeypatch.setattr(module, kind, stand_in(kind, answer))
-    yield seen
-    seen.verdict()
 
 
 @pytest.fixture
@@ -186,86 +96,6 @@ def home(tmp_path):
 @pytest.fixture
 def paths(home):
     return Paths.for_home(home)
-
-
-def away_from_the_real_pointer(window, margin=40):
-    """Move a test window so the real cursor is not over it.
-
-    Tests stand in for the pointer with a generated ``<Enter>``. The real
-    cursor on a CI runner sits wherever that machine left it, and over the
-    window its crossings reach the widgets too: a card got a real
-    ``<Leave>`` and rightly washed back to resting, failing its hover test
-    on one Windows run. Beside the cursor, only the test's events arrive.
-    """
-    window.update_idletasks()
-    px, py = window.winfo_pointerxy()
-    if px < 0:                      # no pointer on this screen at all
-        return
-    width = window.winfo_width()
-    x = px + margin
-    if x + width > window.winfo_screenwidth():
-        x = max(0, px - margin - width)
-    window.geometry(f"+{x}+{max(0, py - 20)}")
-    window.update()
-
-
-@pytest.fixture
-def make_app():
-    """Build a ShamblesApp, skipping when there is no usable display.
-
-    Creates exactly one Tk root. Probing with a separate throwaway root first
-    is fragile on Windows, where a second root in the same process can fail to
-    locate init.tcl. Also destroys whatever it made, so a failing assertion
-    cannot leak a window into the next test.
-    """
-    created = []
-    foreign = []
-
-    def _described(event):
-        what = (f"key {event.keysym}" if str(event.type) == "KeyPress"
-                else f"button {event.num}")
-        return f"{what} on {event.widget} at {event.x_root},{event.y_root}"
-
-    def _make(paths, *, platform="linux"):
-        """Build the window against a synthetic home.
-
-        The platform is pinned rather than inherited. These tests exercise
-        rendering, and the fake home holds file-backed credentials -- but on
-        Windows the provider spec resolves to the credential manager, so the
-        window would look past the fixture at the real machine and report the
-        user as signed out. Which store a platform picks is covered by the
-        store and provider contract suites; it is not what a rendering test
-        should be re-deciding.
-        """
-        tk = pytest.importorskip("tkinter")
-        from shambles.gui import ShamblesApp
-        try:
-            app = ShamblesApp(paths, platform=platform)
-        except tk.TclError as exc:
-            pytest.skip(f"no usable display: {exc}")
-        created.append(app)
-        away_from_the_real_pointer(app)
-        # No test presses a mouse button or a key: they call commands
-        # directly and generate only <Enter> and <Leave>. A press or a key
-        # here came from outside the process, and whatever the test then
-        # saw is not what it set up.
-        app.bind_all("<ButtonPress>", lambda e: foreign.append(_described(e)),
-                     add="+")
-        app.bind_all("<KeyPress>", lambda e: foreign.append(_described(e)),
-                     add="+")
-        return app
-
-    yield _make
-
-    for app in created:
-        try:
-            app.destroy()
-        except Exception:
-            pass
-    if foreign:
-        pytest.fail("real input reached a test window, so the test saw "
-                    "something it did not set up:\n  " + "\n  ".join(foreign),
-                    pytrace=False)
 
 
 posix_only = pytest.mark.skipif(

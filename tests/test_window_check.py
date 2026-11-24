@@ -227,14 +227,14 @@ def cannot_start(monkeypatch, problem):
     monkeypatch.setattr(cli, "_window_entry", entry)
 
 
-def test_gui_new_explains_a_missing_library_and_lists_every_package(
+def test_gui_explains_a_missing_library_and_lists_every_package(
         monkeypatch, capsys, home):
     monkeypatch.setattr(cli.sys, "platform", "linux")
     cannot_start(monkeypatch, window_check.QtCannotStart(
         "Qt's X11 plugin needs libxcb-icccm.so.4, which is not installed.",
         ["libxcb-icccm.so.4"]))
 
-    assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
 
     err = capsys.readouterr().err
     assert "needs libxcb-icccm.so.4" in err
@@ -242,13 +242,13 @@ def test_gui_new_explains_a_missing_library_and_lists_every_package(
     assert "pip install" not in err, "PySide6 is installed; that is not it"
 
 
-def test_gui_new_does_not_offer_packages_for_a_missing_display(
+def test_gui_does_not_offer_packages_for_a_missing_display(
         monkeypatch, capsys, home):
     monkeypatch.setattr(cli.sys, "platform", "linux")
     cannot_start(monkeypatch, window_check.QtCannotStart(
         "Qt could not open a window: could not connect to display"))
 
-    assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
 
     err = capsys.readouterr().err
     assert "could not connect to display" in err
@@ -261,7 +261,7 @@ def test_an_unimportable_pyside_on_linux_gets_the_package_list(
     cannot_start(monkeypatch, ImportError(
         "libEGL.so.1: cannot open shared object file: No such file"))
 
-    cli.main(["gui", "--new", "--home", str(home)])
+    cli.main(["gui", "--home", str(home)])
 
     err = capsys.readouterr().err
     assert "libEGL.so.1" in err and "libegl1" in err
@@ -272,7 +272,7 @@ def test_a_broken_pyside_elsewhere_is_told_to_reinstall(monkeypatch, capsys,
     monkeypatch.setattr(cli.sys, "platform", "win32")
     cannot_start(monkeypatch, ImportError("DLL load failed while importing"))
 
-    cli.main(["gui", "--new", "--home", str(home)])
+    cli.main(["gui", "--home", str(home)])
 
     err = capsys.readouterr().err
     assert "DLL load failed" in err
@@ -287,7 +287,7 @@ def test_a_missing_pyside_in_pipx_is_given_the_pipx_command(
     cannot_start(monkeypatch, ModuleNotFoundError(
         "No module named 'PySide6'", name="PySide6"))
 
-    cli.main(["gui", "--new", "--home", str(home)])
+    cli.main(["gui", "--home", str(home)])
 
     err = capsys.readouterr().err
     assert "not installed here" in err
@@ -295,36 +295,71 @@ def test_a_missing_pyside_in_pipx_is_given_the_pipx_command(
     assert "pip install 'shambles[gui]'" not in err
 
 
-def test_plain_gui_falls_back_and_says_why(monkeypatch, capsys, home):
-    from shambles import gui
-
-    opened = []
-    monkeypatch.setattr(gui, "run",
-                        lambda paths=None: opened.append(paths.home) or 0)
+def test_gui_has_nothing_to_fall_back_to_so_it_explains_and_fails(
+        monkeypatch, capsys, home):
+    """The classic window is gone. What is left is the reason, the fix and
+    the interface that needs neither, and a status a script can see."""
+    monkeypatch.setattr(cli.sys, "platform", "linux")
     cannot_start(monkeypatch, window_check.QtCannotStart(
         "Qt's X11 plugin needs libxcb-keysyms.so.1, which is not installed.",
         ["libxcb-keysyms.so.1"]))
 
-    assert cli.main(["gui", "--home", str(home)]) == 0
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
 
-    assert opened == [home]
     err = capsys.readouterr().err
-    assert "could not start here" in err
-    assert "libxcb-keysyms.so.1" in err
-    assert "shambles gui --new" in err
+    assert "could not start" in err and "libxcb-keysyms.so.1" in err
+    assert window_check.apt_command() in err
+    assert err.endswith("Run shambles for the terminal UI.\n")
+    assert "classic" not in err
 
 
-def test_plain_gui_without_pyside_keeps_the_short_note(monkeypatch, capsys,
-                                                        home):
-    from shambles import gui
-
-    monkeypatch.setattr(gui, "run", lambda paths=None: 0)
+def test_gui_without_pyside_gives_the_command_that_adds_it(
+        monkeypatch, capsys, home):
     cannot_start(monkeypatch, ModuleNotFoundError(
         "No module named 'PySide6'", name="PySide6"))
 
-    cli.main(["gui", "--home", str(home)])
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
 
-    assert "not installed here" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "not installed here" in err
+    assert window_check.install_command() in err
+    assert err.endswith("Run shambles for the terminal UI.\n")
+
+
+def test_a_release_binary_is_told_to_run_the_install_script(tmp_path):
+    """It cannot run pip: sys.executable is the binary itself. Its Qt is the
+    window archive, which the install script fetches."""
+    script = window_check.INSTALL_SCRIPT
+    assert window_check.install_command(prefix=tmp_path, frozen=True,
+                                        windows=False) == \
+        f"curl -fsSL {script}.sh | bash"
+    assert window_check.install_command(prefix=tmp_path, frozen=True,
+                                        windows=True) == \
+        f"irm {script}.ps1 | iex"
+
+
+def test_the_install_script_named_is_the_one_the_readme_gives():
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    for windows in (False, True):
+        assert window_check.install_command(frozen=True,
+                                            windows=windows) in readme
+
+
+def test_gui_from_a_release_binary_without_its_window_says_to_fetch_it(
+        monkeypatch, capsys, home):
+    """With the classic window gone, this is what a release binary installed
+    with SHAMBLES_NO_WINDOW=1 says, instead of a pip command it cannot run."""
+    monkeypatch.setattr(cli.sys, "frozen", True, raising=False)
+    cannot_start(monkeypatch, ModuleNotFoundError(
+        "No module named 'PySide6'", name="PySide6"))
+
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
+
+    err = capsys.readouterr().err
+    assert "install script" in err
+    assert window_check.install_command() in err
+    assert "pip" not in err
+    assert err.endswith("Run shambles for the terminal UI.\n")
 
 
 # -- one list, everywhere it is written down ---------------------------------
@@ -349,7 +384,7 @@ def apt_lists(text):
 ])
 def test_every_written_down_list_is_the_full_one(where):
     qt = set(window_check.APT_PACKAGES)
-    # Lists for anything else, `python3-tk` for the classic window, say.
+    # Lists for anything else, should one ever be written down beside it.
     lists = [packages for packages
              in apt_lists((REPO / where).read_text(encoding="utf-8"))
              if qt & set(packages)]

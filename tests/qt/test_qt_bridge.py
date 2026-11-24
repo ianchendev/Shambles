@@ -202,6 +202,35 @@ def test_the_link_appears_once_printed_and_opening_always_copies(make):
     assert ui.sheet["copied"] is True
 
 
+def test_the_address_stays_on_the_sheet_once_the_link_arrives(make):
+    """Under WSL the link arrives at once. The sheet must still name the
+    account to sign in as: the one thing that stops a browser signed in as
+    somebody else from being reused."""
+    ui, service, _ = make()
+    ui.signIn("claude", "Old")
+    service.login[0]("https://claude.ai/oauth/authorize?client_id=x")
+
+    assert ui.sheet["url"]
+    assert "old@example.test" in ui.sheet["subtitle"]
+
+
+def test_the_link_is_copied_before_any_browser_is_tried(make):
+    """explorer.exe's return code cannot tell success from failure, so the
+    clipboard is what makes "did it open?" not matter. Copied first, so a
+    browser that hangs or raises still leaves the link to paste."""
+    ui, service, clipboard = make()
+    order = []
+    clipboard.setText = lambda text: order.append("copy")
+    opens = service.open_sign_in_url
+    service.open_sign_in_url = lambda url: order.append("open") or opens(url)
+    ui.signIn("claude", "Old")
+    service.login[0]("https://claude.ai/oauth/authorize?client_id=x")
+
+    ui.openUrl()
+
+    assert order == ["copy", "open"]
+
+
 def test_when_no_browser_opens_the_window_says_the_link_was_copied(make):
     ui, service, clipboard = make()
     service.opens = False

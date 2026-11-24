@@ -11,9 +11,9 @@ The boundary is therefore observable by hand: whatever the menu bar shows,
 bug can be told apart without a debugger.
 
 Switching goes through :class:`shambles.app.service.ShamblesService`, which
-delegates to the shared switcher. The Tk window still calls the core directly
-until its migration. Sharing the switcher preserves the ordering that stops a
-failed switch destroying the account it switched away from.
+delegates to the shared switcher, as the terminal UI and the window do. Sharing
+the switcher preserves the ordering that stops a failed switch destroying the
+account it switched away from.
 """
 
 import argparse
@@ -178,13 +178,18 @@ def _window_entry():
 
 
 def _window_help(problem) -> str:
-    """What `shambles gui --new` prints when the window cannot open."""
+    """What `shambles gui` prints when the window cannot open."""
     from shambles.__main__ import (QT_BROKEN, QT_FIX_LIBRARIES,
-                                   QT_FIX_REINSTALL, QT_MISSING)
+                                   QT_FIX_REINSTALL, QT_MISSING,
+                                   WINDOW_MISSING)
 
     from . import window_check
     if window_check.not_installed(problem):
-        return QT_MISSING.format(install=window_check.install_command())
+        # A release binary has no Qt by design; its window is a separate
+        # archive, and pip is no use to it.
+        missing = (WINDOW_MISSING if getattr(sys, "frozen", False)
+                   else QT_MISSING)
+        return missing.format(install=window_check.install_command())
     if sys.platform.startswith("linux"):
         names_library = (getattr(problem, "missing", None)
                          or "shared object file" in str(problem))
@@ -193,16 +198,6 @@ def _window_help(problem) -> str:
     else:
         fix = QT_FIX_REINSTALL.format(install=window_check.install_command())
     return QT_BROKEN.format(reason=problem, fix=fix)
-
-
-def _fallback_note(problem) -> str:
-    """The line `shambles gui` prints on its way to the classic window."""
-    from shambles.__main__ import CLASSIC_FALLBACK, CLASSIC_FALLBACK_BROKEN
-
-    from . import window_check
-    if window_check.not_installed(problem):
-        return CLASSIC_FALLBACK
-    return CLASSIC_FALLBACK_BROKEN.format(reason=problem)
 
 
 def _window_options(args) -> list:
@@ -234,40 +229,32 @@ def _open_window(args):
                       motion=not getattr(args, "no_motion", False)), None
 
 
-def _classic_window(args) -> int:
-    try:
-        import tkinter  # noqa: F401
-    except ModuleNotFoundError:
-        from shambles.__main__ import TK_MISSING
-        sys.stderr.write(TK_MISSING)
-        return EXIT_FAILED
-
-    from ..gui import run
-    return run(paths=_paths(args))
-
-
 def cmd_gui(args) -> int:
-    """The window: the Qt one where it can open, else the classic one.
+    """The window, or what this install needs before it can open one.
 
-    ``--classic`` asks for the Tk window outright. ``--new`` asks for the Qt
-    one and nothing else, so a missing Qt is explained instead of papered
-    over. With neither, the Qt window is the default and the Tk window is
-    the fallback, kept for an install with no Qt and no window bundle --
-    a bare ``pip install`` -- until it is removed in a later release.
+    There is no other window to fall back to: the classic Tk one was retired
+    in 2.3.0. Where Qt is missing or cannot start, this says what to install
+    and points at the terminal UI, which needs none of it, and exits 1 so a
+    script that opens the window can tell it did not.
+
+    ``--classic`` is still accepted for 2.3.0 only, so a script or shortcut
+    that names it is told what happened instead of failing on an unknown
+    option. ``--new`` was the way to ask for the Qt window while both
+    existed, and is now the same as no option at all.
     """
+    from shambles.__main__ import CLASSIC_RETIRED, write_stream
+
     if getattr(args, "classic", False):
-        return _classic_window(args)
+        write_stream(sys.stderr, CLASSIC_RETIRED)
+        return EXIT_USAGE
 
     status, reason = _open_window(args)
     if reason is None:
         return status
-
-    if getattr(args, "new", False):
-        sys.stderr.write(_window_help(reason))
-        return EXIT_FAILED
-
-    sys.stderr.write(_fallback_note(reason))
-    return _classic_window(args)
+    # write_stream, not sys.stderr.write: the windowed Windows launcher has
+    # no stderr at all, and a crash there would say even less than this.
+    write_stream(sys.stderr, _window_help(reason))
+    return EXIT_FAILED
 
 
 def cmd_list(args) -> int:
@@ -460,12 +447,14 @@ def build_parser() -> argparse.ArgumentParser:
     terminal.set_defaults(func=cmd_tui)
 
     graphical = sub.add_parser("gui", parents=[common],
-                               help="open the graphical interface")
+                               help="open the window")
+    # Neither does anything now, so neither is offered in --help. --new
+    # asked for the Qt window while the Tk one still existed; --classic
+    # asked for the Tk one, and is kept for 2.3.0 only to say it is gone.
     graphical.add_argument("--new", action="store_true",
-                           help="open the new window, and say why if it "
-                                "cannot")
+                           help=argparse.SUPPRESS)
     graphical.add_argument("--classic", action="store_true",
-                           help="open the classic Tk window instead")
+                           help=argparse.SUPPRESS)
     graphical.set_defaults(func=cmd_gui)
 
     listing = sub.add_parser("list", parents=[common],
