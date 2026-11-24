@@ -111,7 +111,7 @@ def test_a_refresh_that_does_not_finish_refuses_the_switch(work_live,
         switcher.switch(paths, claude(), "Other", platform="linux",
                         sleep=lambda _: None)
 
-    assert "Claude Code" in str(raised.value)
+    assert str(raised.value) == switcher.REFRESH_IN_PROGRESS
     assert (paths.claude_dir / ".credentials.json").read_bytes() == before
     assert state.read_active(paths, "claude") == "Work"
     assert (paths.claude_dir / ".oauth_refresh.lock").exists(), (
@@ -713,3 +713,106 @@ def test_the_cli_says_it_is_waiting_rather_than_sitting_silent(work_live,
     assert code == 0
     assert "Waiting for Claude Code" in captured.err
     assert "Waiting" not in captured.out      # stdout stays parseable
+
+
+# -- Windows: a lock being removed refuses mkdir with "Access is denied" -----
+#
+# On Windows a directory another process is removing stays "delete pending"
+# until its last handle closes, and creating it again fails with
+# ERROR_ACCESS_DENIED -- PermissionError, not FileExistsError. Seen on
+# windows-latest: Claude Code releasing its lock as the switch retried made
+# the switch die with a bare PermissionError, outside the guard that turns
+# filesystem errors into something the window can show.
+
+def _mkdir_failing(monkeypatch, lock, errors):
+    """Path.mkdir raises each of ``errors`` in turn for ``lock``, then
+    behaves."""
+    real = type(lock).mkdir
+    pending = list(errors)
+
+    def mkdir(self, *args, **kwargs):
+        if self == lock and pending:
+            raise pending.pop(0)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(lock), "mkdir", mkdir)
+    return pending
+
+
+def test_a_lock_still_being_removed_is_waited_for(work_live, monkeypatch):
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+    pending = _mkdir_failing(monkeypatch, lock, [
+        PermissionError(13, "Access is denied", str(lock))] * 2)
+    waits = []
+
+    switcher.switch(paths, claude(), "Other", platform="linux",
+                    sleep=lambda _: None, on_wait=lambda: waits.append(1))
+
+    assert pending == []
+    assert state.read_active(paths, "claude") == "Other"
+    assert waits == [1]
+    assert not lock.exists()
+
+
+def test_a_lock_that_stays_refused_names_the_folder(work_live, monkeypatch):
+    """Still "access denied" at the deadline, it is not a renewal in
+    progress but a folder the switch cannot write in, and the refusal says
+    which, before anything has moved."""
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+    live = paths.claude_dir / ".credentials.json"
+    before = live.read_bytes()
+    _mkdir_failing(monkeypatch, lock, [
+        PermissionError(13, "Access is denied", str(lock))] * 10_000)
+    monkeypatch.setattr(switcher, "REFRESH_LOCK_WAIT_S", 0.2)
+
+    with pytest.raises(ShamblesError) as refused:
+        switcher.switch(paths, claude(), "Other", platform="linux",
+                        sleep=lambda _: None)
+
+    assert str(lock) in str(refused.value)
+    assert str(refused.value) != switcher.REFRESH_IN_PROGRESS
+    assert live.read_bytes() == before
+
+
+def test_a_lock_that_ends_up_simply_held_keeps_the_ordinary_refusal(
+        work_live, monkeypatch):
+    """The last attempt decides: denied once while Claude Code let go, then
+    held again until the deadline, it is a renewal in progress."""
+    paths = work_live
+    lock = paths.claude_dir / ".oauth_refresh.lock"
+    lock.mkdir()
+    _mkdir_failing(monkeypatch, lock, [
+        PermissionError(13, "Access is denied", str(lock))])
+    monkeypatch.setattr(switcher, "REFRESH_LOCK_WAIT_S", 0.2)
+
+    with pytest.raises(ShamblesError) as refused:
+        switcher.switch(paths, claude(), "Other", platform="linux",
+                        sleep=lambda _: None)
+
+    assert str(refused.value) == switcher.REFRESH_IN_PROGRESS
+    assert lock.exists(), "removed a lock that was not ours"
+
+
+def test_any_other_failure_to_make_a_lock_refuses_at_once(
+        work_live, monkeypatch):
+    """A read-only or full disk is not something waiting fixes. The first
+    lock, already taken, is let go."""
+    import errno
+
+    paths = work_live
+    first = paths.claude_dir / ".oauth_refresh.lock"
+    second = paths.home / ".claude.lock"
+    live = paths.claude_dir / ".credentials.json"
+    before = live.read_bytes()
+    _mkdir_failing(monkeypatch, second, [
+        OSError(errno.EROFS, "Read-only file system", str(second))])
+
+    with pytest.raises(ShamblesError) as refused:
+        switcher.switch(paths, claude(), "Other", platform="linux",
+                        sleep=lambda _: None)
+
+    assert str(second) in str(refused.value)
+    assert live.read_bytes() == before
+    assert not first.exists(), "left the first lock behind"

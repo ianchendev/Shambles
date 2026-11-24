@@ -139,6 +139,13 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **A switch on Windows no longer fails as Claude Code lets go of its
+  login lock.** Windows refuses to create a folder another program is still
+  removing, and says "Access is denied". A switch that waited for Claude
+  Code to finish renewing could hit that moment and stop with an error
+  instead of carrying on. It now waits it out like any lock in the way. A
+  folder that stays refused, or a disk that is read-only or full, is now
+  named in the message instead of appearing as an unexplained error.
 - **Narrow windows kept what matters in view.** At 420 px the deadline
   line cut off its date ("Administrator account stops …"); it now cuts the
   name instead and keeps "stops Fri 27 Nov". The add-account sheet opened

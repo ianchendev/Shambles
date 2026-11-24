@@ -374,6 +374,12 @@ REFRESH_IN_PROGRESS = (
     "Try again in a moment. Nothing was changed."
 )
 
+LOCK_NOT_MADE = (
+    "Could not create {path}, the lock Claude Code renews its login "
+    "under:\n{error}\n\nCheck that you can write to that folder, then "
+    "try again. Nothing was changed."
+)
+
 LOCK_NOT_PROVABLY_HELD = (
     "This switch took too long to be sure Claude Code was not renewing "
     "the login meanwhile.\n\n"
@@ -502,6 +508,7 @@ def _hold_refresh_locks(provider, paths, *, on_wait=None) -> list:
     try:
         for lock in provider.refresh_locks(home=paths.home):
             while True:
+                denied = None         # this attempt's "access denied"
                 try:
                     made_at = _clock()    # before, so the age errs high
                     lock.mkdir()
@@ -512,7 +519,24 @@ def _hold_refresh_locks(provider, paths, *, on_wait=None) -> list:
                         continue
                 except FileNotFoundError:
                     break                 # its directory is gone: no client
+                except PermissionError as exc:
+                    # Windows: a lock another process is removing stays
+                    # "delete pending" until its last handle closes, and
+                    # making it again is refused as access denied. Something
+                    # is in the way, as with a lock that exists -- unless it
+                    # is still refused at the deadline, which is a folder
+                    # the switch cannot write in, not a renewal.
+                    denied = exc
+                except OSError as exc:
+                    # A read-only or full disk: waiting will not fix it, and
+                    # this runs before the switch's own guard, so it must
+                    # not escape as a bare OSError the window cannot show.
+                    raise SwitchFailedError(LOCK_NOT_MADE.format(
+                        path=lock, error=exc)) from exc
                 if time.monotonic() >= deadline:
+                    if denied is not None:
+                        raise SwitchFailedError(LOCK_NOT_MADE.format(
+                            path=lock, error=denied)) from denied
                     raise SwitchFailedError(REFRESH_IN_PROGRESS)
                 if not told:
                     told = True
