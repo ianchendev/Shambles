@@ -288,14 +288,15 @@ def parse_codex_rate_limits(limits, *, fetched_at_ms: int | None = None) -> Usag
     return Usage(bars=tuple(found[lbl] for lbl in order), fetched_at_ms=fetched_at_ms)
 
 
-def read_codex_usage(config_dir: Path) -> Usage:
+def read_codex_usage(config_dir: Path, *, log: Path | None = None) -> Usage:
     """Latest 5h / week figures from the newest Codex session log.
 
     Local files only — the same discipline as Claude's
     ``cachedUsageUtilization``. A session that never emitted ``rate_limits``
     returns empty, which the UI already treats as a supported state.
+    ``log`` is that newest log, for a caller that has already walked for it.
     """
-    path = latest_codex_session(config_dir)
+    path = log if log is not None else latest_codex_session(config_dir)
     if path is None:
         return EMPTY
     try:
@@ -328,7 +329,8 @@ def read_codex_usage(config_dir: Path) -> Usage:
     return EMPTY
 
 
-def codex_reading_since(config_dir: Path, since_ms: int | None) -> Usage:
+def codex_reading_since(config_dir: Path, since_ms: int | None, *,
+                        log: Path | None = None) -> Usage:
     """The newest Codex reading, if it was taken at or after ``since_ms``.
 
     Codex writes its windows onto session logs that every account shares, so
@@ -336,14 +338,88 @@ def codex_reading_since(config_dir: Path, since_ms: int | None) -> Usage:
     the account in use became so, it is the previous account's, and EMPTY
     comes back instead. A reading with no time of its own cannot be placed
     and is treated the same way. ``since_ms`` of None asks for any reading.
+    ``log`` is as for :func:`read_codex_usage`.
     """
-    reading = read_codex_usage(config_dir)
+    reading = read_codex_usage(config_dir, log=log)
     if since_ms is None:
         return reading
     if not reading or reading.fetched_at_ms is None \
             or reading.fetched_at_ms < since_ms:
         return EMPTY
     return reading
+
+
+def keep_codex_reading(paths, provider, name, *, log=None) -> bool:
+    """Keep ``name``'s newest Codex reading beside its login; True if written.
+
+    Codex keeps no usage cache of its own, so this is the only record a
+    parked Codex row has. Only a reading taken since the marker named
+    ``name``, and only while it does: the session logs are shared, and an
+    older reading was written by whoever was signed in before. A reading the
+    same as the one kept is not written again, and an older one never
+    replaces it: resuming an old session makes its log the newest while the
+    last reading on it is older.
+
+    Best effort, and never raises: losing a reading costs a blank bar.
+    ``log`` is as for :func:`read_codex_usage`.
+    """
+    from . import state
+    from .errors import ShamblesError
+    from .providers import spec as specmod
+    try:
+        if (provider.id != "codex"
+                or state.read_active(paths, provider.id) != name):
+            return False
+        since = state.marked_since_ms(paths, provider.id)
+        if since is None:
+            return False  # the marker went meanwhile: nothing to date it by
+        reading = codex_reading_since(
+            specmod.config_dir(provider.spec, home=paths.home,
+                               env=getattr(provider, "env", None)),
+            since, log=log)
+        if not reading:
+            return False
+        where = paths.usage(provider.id, name)
+        kept = configjson.load(where)
+        before = kept.get("fetchedAtMs")
+        if isinstance(before, int) and before > reading.fetched_at_ms:
+            return False
+        fresh = to_cache(reading)
+        if kept == fresh:
+            return False
+        configjson.write_atomic(where, fresh)
+        return True
+    except (OSError, ShamblesError):
+        return False
+
+
+def capture_codex(paths, provider, *, platform, log=None) -> bool:
+    """Keep the Codex account in use's newest reading, as :func:`capture_live`
+    does for Claude. True if written.
+
+    Without this a reading was kept only at a switch made in Shambles. An
+    account left any other way, signed out of in the Codex extension or
+    replaced by ``codex login``, kept nothing, and the account in use showed
+    nothing while its newest session had no reading on it yet.
+
+    Only while the live login provably is the marked account's, by its bytes
+    or its lineage. Signed in as somebody else outside Shambles, the marker
+    stays put, and their readings are taken after it moved. ``provider``'s
+    store is read for that, so a caller running unprompted passes one that
+    reads files only.
+    """
+    from . import state
+    from .errors import ShamblesError
+    if provider.id != "codex":
+        return False
+    try:
+        name = state.read_active(paths, provider.id)
+        if not name or state.owner_of_live(
+                paths, provider, platform=platform) != name:
+            return False
+    except (OSError, ShamblesError):
+        return False
+    return keep_codex_reading(paths, provider, name, log=log)
 
 
 #: Bar labels back to the cache's ``limits`` kinds. See :data:`KINDS`.
