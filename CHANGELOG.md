@@ -24,7 +24,9 @@ Notable changes per release. Dates are the tag date.
   showing a code instead of signing you in. There was nowhere to put it,
   so those sign-ins could never finish. The sign-in sheet now has a field
   for it. The code goes straight to Claude Code; the window does not keep
-  or show it. This works on Windows too.
+  or show it. Paste the page's address or a verification code by mistake
+  and the sheet says which it was, as Claude Code 2.1.330 would. This works
+  on Windows too.
 - **Codex: sign in on another device.** The Codex sign-in sheet offers
   This browser or Another device. Another device shows a one-time code and
   its link, with Copy code, Copy link and how long the code lasts, to enter

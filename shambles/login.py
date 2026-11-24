@@ -363,6 +363,24 @@ CODE_TOO_LONG = ("That is longer than a sign-in code. Copy only the code "
                  "from the browser page.")
 CODE_NOT_TAKEN = ("{binary} does not take a pasted code. Finish signing in "
                   "in the browser.")
+CODE_IS_ADDRESS = ("That's the page address, not the code. Copy the code "
+                   "shown on the page.")
+CODE_IS_VERIFICATION = ("That's a verification code. Paste the code shown on "
+                        "the page after you sign in.")
+
+#: A page address pasted instead of the code: a scheme, localhost, or a
+#: dotted host followed by a port, a path or a query. Matched against the
+#: part before any '#' only, from its start. A real code has no '/' or ':'
+#: there, so a dot alone (``abc.def``) is never taken for an address.
+_ADDRESS = re.compile(
+    r"[A-Za-z][A-Za-z0-9+.-]*://"
+    r"|localhost(?![A-Za-z0-9_-])"
+    r"|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::[0-9]+)?[/?]"
+    r"|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+:[0-9]+",
+    re.IGNORECASE)
+
+#: The short number an email or text message gives, pasted on its own.
+_VERIFICATION = re.compile(r"[0-9]{4,10}")
 
 #: What an OAuth code or state may contain: visible ASCII and the space
 #: (RFC 6749, appendix A, VSCHAR). Nothing that ends a line, moves a cursor
@@ -403,6 +421,13 @@ def clean_code(provider, pasted) -> str:
         raise CodeRejectedError(CODE_TOO_LONG)
     if not _ONE_LINE.fullmatch(text):
         raise CodeRejectedError(CODE_HIDDEN_CHARACTERS)
+    # What the vendor itself refuses, refused here first with the reason:
+    # its own would reach the window only as hidden output.
+    refuses = set(rules.get("refuses") or ())
+    if "address" in refuses and _ADDRESS.match(text.partition("#")[0]):
+        raise CodeRejectedError(CODE_IS_ADDRESS)
+    if "verification_code" in refuses and _VERIFICATION.fullmatch(text):
+        raise CodeRejectedError(CODE_IS_VERIFICATION)
     separator = rules.get("separator")
     if separator:
         # The vendor's own rule: both halves present, or it prints "Invalid
