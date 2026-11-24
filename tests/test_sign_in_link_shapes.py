@@ -170,3 +170,90 @@ def test_the_window_gets_the_link_from_a_real_shaped_claude_login(
 
     assert handle.wait(timeout=10)
     assert CLAUDE_ACCOUNT in [service.sign_in_url(line) for line in lines]
+
+
+# -- Claude Code 2.1.330: the short sign-in link -----------------------------
+#
+# 2.1.330 (read from the VS Code extension's binary, never run) prints a
+# shortened link by default. tZe() takes the link above and, when it is the
+# Claude-account one with the default client and no prompt or orgUUID,
+# replaces client_id, scope, code_challenge, state and the fixed parameters
+# with one bare field: the known scopes as a bitmask in base64url (one or two
+# characters), then the 43-character code challenge. Unknown scopes stay as
+# ``scope``; login_hint and login_method follow. The origin is claude.ai.
+# CLAUDE_CODE_FULL_SIGN_IN_LINK, a Console sign-in, a prompt or an orgUUID
+# still print the full link. The link also moved to a line of its own, after
+# "If the browser didn't open, visit:". Built by copying tZe with the same
+# dummy challenge.
+
+SHORT = ("https://claude.ai/oauth/authorize?"
+         "D-Ch4llenge-Value_0123456789abcdefghijklmnopq")
+SHORT_SSO = SHORT + ("&login_hint=someone%2Bwork%40example.test"
+                     "&login_method=sso")
+SHORT_ALL_SCOPES = ("https://claude.ai/oauth/authorize?"
+                    "_-Ch4llenge-Value_0123456789abcdefghijklmnopq")
+SHORT_ONE_SCOPE = ("https://claude.ai/oauth/authorize?"
+                   "C" "Ch4llenge-Value_0123456789abcdefghijklmnopq")
+SHORT_EXTRA_SCOPE = SHORT + "&scope=user%3Asettings_example"
+
+
+@pytest.mark.parametrize("url", [
+    SHORT, SHORT_SSO, SHORT_ALL_SCOPES, SHORT_ONE_SCOPE, SHORT_EXTRA_SCOPE,
+], ids=["default", "sso-with-hint", "all-scopes", "one-scope",
+        "extra-scope"])
+def test_the_short_link_claude_code_2_1_330_prints_reaches_the_window(url):
+    assert _safe_login_line(url) == url
+    assert _safe_login_line(HYPERLINK.format(url)) == url
+
+
+@pytest.mark.parametrize("line", [
+    # A bare field anywhere but claude.ai's own authorize address.
+    "https://claude.com/cai/oauth/authorize?D-Ch4llenge-Value_0123456789"
+    "abcdefghijklmnopq",
+    "https://auth.openai.com/oauth/authorize?D-Ch4llenge-Value_0123456789"
+    "abcdefghijklmnopq",
+    # Too short or too long to be the bitmask and a challenge.
+    "https://claude.ai/oauth/authorize?Ch4llenge-Value_0123456789abcdefghij"
+    "klmnopq",
+    "https://claude.ai/oauth/authorize?ABCD-Ch4llenge-Value_0123456789abcde"
+    "fghijklmnopq",
+    # Anything but base64url in it, or a second bare field, or a bare field
+    # after a named one.
+    "https://claude.ai/oauth/authorize?D-Ch4llenge.Value_0123456789abcdefgh"
+    "ijklmnopq",
+    SHORT + "&D-Ch4llenge-Value_0123456789abcdefghijklmnopq",
+    "https://claude.ai/oauth/authorize?login_method=sso&D-Ch4llenge-Value_"
+    "0123456789abcdefghijklmnopq",
+    # The named fields that follow are held to the usual rules.
+    SHORT + "&code=credential-sentinel",
+    SHORT + "&access_token=credential-sentinel",
+])
+def test_the_short_link_still_fails_closed(line):
+    assert _safe_login_line(f"Visit {line}") == HIDDEN_LINE
+
+
+@posix_only
+def test_the_window_gets_the_link_from_a_2_1_330_shaped_claude_login(
+        paths, fake_vendor):
+    """2.1.330 puts the link on a line of its own and shortens it."""
+    make_profile(paths, "claude", "Personal", token=False)
+    script = fake_vendor("claude")
+    link = HYPERLINK.format(SHORT).replace("\x1b", "\\033") \
+        .replace("\x07", "\\007")
+    script.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'Opening browser to sign in...'\n"
+        "printf '%s\\n' \"If the browser didn't open, visit:\"\n"
+        f"printf '%b\\n' {shlex.quote(link)}\n"
+        "printf '%s' 'Paste code here if prompted > '\n"
+        "exit 1\n", encoding="utf-8")
+    service = ShamblesService(paths=paths,
+                              providers=providers.all_providers(env={}),
+                              platform="linux")
+    lines = []
+
+    handle = service.start_login("claude", "Personal", on_line=lines.append,
+                                 on_done=lambda result: None)
+
+    assert handle.wait(timeout=10)
+    assert SHORT in [service.sign_in_url(line) for line in lines]

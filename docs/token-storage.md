@@ -686,7 +686,11 @@ its bootstrap call and names the plan from the type (`claude_pro`, `claude_max`,
 `claude_team`, `claude_enterprise`) [SRC, the binary]. Shambles does the same:
 Max is told apart by its tier (5x, 20x), and a Team seat by `seatTier`, where
 `team_standard` is a standard seat and `team_tier_1` the premium one (it
-carries `userRateLimitTier` `default_claude_max_5x`) [OBS]. The table is
+carries `userRateLimitTier` `default_claude_max_5x`) [OBS]. Claude Code
+2.1.330 confirms it with a map of its own from seat tier to class: premium
+for `team_tier_1`, `team_labs_premium` and `team_bendep_nonprofit_premium`,
+standard for `team_standard`, `team_labs_standard` and
+`team_bendep_nonprofit_standard` [SRC, the binary]. The table is
 `identity.plan_names` in `shambles/providers/claude.json`.
 
 ## Codex agent credentials

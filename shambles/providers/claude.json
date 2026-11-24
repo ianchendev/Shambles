@@ -108,7 +108,14 @@
       "variants": {
         "claude_team": {
           "field": "oauthAccount.seatTier",
-          "names": {"team_standard": "Team", "team_tier_1": "Team Premium"}
+          "names": {
+            "team_standard": "Team",
+            "team_labs_standard": "Team",
+            "team_bendep_nonprofit_standard": "Team",
+            "team_tier_1": "Team Premium",
+            "team_labs_premium": "Team Premium",
+            "team_bendep_nonprofit_premium": "Team Premium"
+          }
         },
         "claude_max": {
           "field": "oauthAccount.organizationRateLimitTier",
@@ -118,7 +125,7 @@
           }
         }
       },
-      "note": "Claude Code 2.1.300 stores organizationType, seatTier and the rate-limit tiers in oauthAccount from its bootstrap call and names plans from the type (Claude Pro, Max, Team, Enterprise). A Team seat is told apart by seatTier: team_tier_1 is the premium seat (it carries userRateLimitTier default_claude_max_5x); a Max plan by its tier, as Claude Code checks for default_claude_max_20x. A known type with an unknown seat or tier keeps the type's name; an unknown type falls back to 'plan'."
+      "note": "Claude Code 2.1.300 stores organizationType, seatTier and the rate-limit tiers in oauthAccount from its bootstrap call and names plans from the type (Claude Pro, Max, Team, Enterprise). A Team seat is told apart by seatTier, by the premium/standard class Claude Code 2.1.330 itself gives each one (team_tier_1, which carries userRateLimitTier default_claude_max_5x, and the labs and nonprofit premium seats are premium); a Max plan by its tier, as Claude Code checks for default_claude_max_20x. A known type with an unknown seat or tier keeps the type's name; an unknown type falls back to 'plan'."
     }
   },
   "companion": {
