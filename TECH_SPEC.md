@@ -483,7 +483,15 @@ whether this sign-in reads one; only a provider whose spec has
 `ActionResult` with no snapshot and one of three refusals: `code_not_accepted`,
 `login_not_running`, or `code_invalid` for anything that is not one line of
 visible ASCII with both halves around the spec's separator, after surrounding
-whitespace is stripped. The code is a credential: it is never in a result, an
+whitespace is stripped. It also refuses what the spec's `refuses` lists, each
+with its own fixed reason, because the vendor's reason would only reach the
+window as hidden output. For Claude, as 2.1.330's own check (`GRe`) does:
+an address on this machine (`http(s)://` to `localhost`, `127.0.0.1` or
+`[::1]`), any other web address (`http(s)://` or `/magic-link#` anywhere),
+and a 4 to 10 digit verification code once spaces and dashes are removed.
+Shambles also refuses an address without its scheme (`localhost`, or a
+dotted host followed by a port, path or query, before any `#`), which
+2.1.330 would take for a code and then fail on. The code is a credential: it is never in a result, an
 error or a progress line. Such a vendor gets a pipe on its standard input,
 closed when it exits; every other vendor keeps the end-of-file input it
 always had. A pipe rather than a pseudo-terminal, because Claude Code reads

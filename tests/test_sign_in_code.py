@@ -419,3 +419,114 @@ def test_the_code_never_comes_back_as_progress_even_if_the_vendor_echoes_it(
     # It exited 0 without writing a login, so the service says so.
     assert done[0].error.code == "login_not_written"
     assert "MARKER" not in repr(done[0].to_dict())
+
+
+# -- what Claude Code 2.1.330 refuses, refused here with a reason ------------
+#
+# 2.1.330 checks a pasted line before using it (GRe, read from the strings
+# of its binary): it wants code#state, and it refuses a web address or one
+# on this machine anywhere in the paste, and a 4-10 digit verification code
+# (spaces and dashes removed), saying why on stderr. Shambles
+# shows stderr only as "[vendor output hidden]", so a paste it passed on
+# would sit there unexplained. The same refusals happen here first, each
+# with a sentence of its own that never repeats what was pasted.
+
+#: Shaped like a real paste: an authorization code, '#', a 43-character
+#: base64url state. Made up.
+REAL = ("Zq7wPLm0vB2cXk9-Tr4_YhGd8sNe1QaU3iJoF6lKpMnB"
+        "#qW8eR5tY2uI0oP7aS4dF1gH6jK9lZ3xC0vB5nM2-_9")
+
+
+WEB, LOCAL = "web", "local"
+
+
+@pytest.mark.parametrize("pasted, kind", [
+    ("https://platform.claude.com/oauth/code/callback?code=abcMARK&state=xyz",
+     WEB),
+    ("https://platform.claude.com/oauth/code/callback?code=abcMARK#xyz", WEB),
+    ("HTTPS://Claude.com/cai/oauth/authorize?code=true#MARK", WEB),
+    # 2.1.330 looks anywhere in the paste, not only at its start.
+    ("abcMARK#https://example.test/x", WEB),
+    ("see https://example.test/MARK", WEB),
+    ("example.test/magic-link#MARK", WEB),
+    # Without a scheme: 2.1.330 would take these for a code and fail.
+    ("platform.claude.com/oauth/code/callback?code=abcMARK#xyz", WEB),
+    ("claude.ai/oauth/authorize#MARK", WEB),
+    # This machine's own addresses get their own reason.
+    ("http://localhost:54545/callback?code=abcMARK&state=xyz", LOCAL),
+    ("http://127.0.0.1:54545/callback?code=abc#MARK", LOCAL),
+    ("http://[::1]:54545/callback?code=abc#MARK", LOCAL),
+    ("localhost:54545/callback?code=abcMARK#xyz", LOCAL),
+    ("localhost/callback#MARK", LOCAL),
+    ("127.0.0.1:54545/callback?code=abc#MARK", LOCAL),
+])
+def test_a_page_address_is_refused_as_an_address(claude, pasted, kind):
+    with pytest.raises(login.CodeRejectedError) as caught:
+        login.clean_code(claude, pasted)
+    assert str(caught.value) == (login.CODE_IS_LOCAL_ADDRESS if kind == LOCAL
+                                 else login.CODE_IS_ADDRESS)
+    assert "MARK" not in str(caught.value) + repr(caught.value)
+
+
+@pytest.mark.parametrize("pasted", ["1234", "482913", " 482913\n",
+                                    "1234567890",
+                                    # As 2.1.330: spaces and dashes inside
+                                    # it do not make it anything else.
+                                    "482-913", "482 913"])
+def test_a_verification_code_is_refused_as_one(claude, pasted):
+    with pytest.raises(login.CodeRejectedError) as caught:
+        login.clean_code(claude, pasted)
+    assert str(caught.value) == login.CODE_IS_VERIFICATION
+    assert pasted.strip() not in str(caught.value)
+
+
+@pytest.mark.parametrize("pasted", ["123", "12345678901"])
+def test_digits_that_are_no_verification_code_are_only_part_of_one(
+        claude, pasted):
+    with pytest.raises(login.CodeRejectedError) as caught:
+        login.clean_code(claude, pasted)
+    assert str(caught.value) == login.CODE_INCOMPLETE
+
+
+@pytest.mark.parametrize("pasted", [
+    REAL,
+    f"  {REAL}\n",
+    CODE,
+    # A code with a dot in it is not an address: no path, port or query.
+    "abc.def-GHI#" + "s" * 43,
+    # Digits before the '#' are a code, not a verification code.
+    "482913#" + "s" * 43,
+])
+def test_a_real_code_and_state_still_pass(claude, pasted):
+    assert login.clean_code(claude, pasted) == pasted.strip()
+
+
+def test_the_service_says_why_without_the_paste(paths, held_login):
+    handle = _start(paths, "claude")
+
+    address = handle.send_code(
+        "https://platform.claude.com/oauth/code/callback?code=MARKER&s=1")
+    digits = handle.send_code("482913")
+
+    assert (address.error.code, address.error.message) == (
+        "code_invalid", login.CODE_IS_ADDRESS)
+    assert (digits.error.code, digits.error.message) == (
+        "code_invalid", login.CODE_IS_VERIFICATION)
+    assert held_login[0].sent == []
+    assert "MARKER" not in repr(address.to_dict())
+    assert "482913" not in repr(digits.to_dict())
+
+
+def test_a_provider_whose_spec_does_not_say_so_is_not_checked_this_way(
+        claude, monkeypatch):
+    """The refusals are Claude Code's, written in its spec; a provider that
+    takes codes without them keeps only the general rules."""
+    rules = dict(claude.spec["login"]["paste_code"])
+    rules.pop("refuses", None)
+    spec = {**claude.spec, "login": {**claude.spec["login"],
+                                     "paste_code": rules}}
+    monkeypatch.setattr(claude, "spec", spec)
+    assert login.clean_code(claude, "482913#" + "s" * 43)
+    with pytest.raises(login.CodeRejectedError) as caught:
+        login.clean_code(claude, "482913")
+    assert str(caught.value) == login.CODE_INCOMPLETE

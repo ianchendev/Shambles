@@ -363,6 +363,43 @@ CODE_TOO_LONG = ("That is longer than a sign-in code. Copy only the code "
                  "from the browser page.")
 CODE_NOT_TAKEN = ("{binary} does not take a pasted code. Finish signing in "
                   "in the browser.")
+CODE_IS_ADDRESS = ("That's the page address, not the code. Copy the code "
+                   "shown on the page.")
+CODE_IS_LOCAL_ADDRESS = ("That address only works in a browser on this "
+                         "machine. Open the link above instead, and paste the "
+                         "code its last page shows.")
+CODE_IS_VERIFICATION = ("That's a verification code. Paste the code shown on "
+                        "the page after you sign in.")
+
+#: Claude Code 2.1.330's own tests (``GRe``), anywhere in the paste: a web
+#: address, a ``/magic-link#``, and an address on this machine.
+_WEB = re.compile(r"https?://|/magic-link#", re.IGNORECASE)
+_LOCAL = re.compile(r"https?://(?:localhost|127\.0\.0\.1|\[::1\])[:/]",
+                    re.IGNORECASE)
+
+#: An address without its scheme, which 2.1.330 would take for a code and
+#: fail on: localhost, or a dotted host followed by a port, a path or a
+#: query. Matched from the start of the part before any '#'. A real code has
+#: no '/' or ':' there, so a dot alone (``abc.def``) is never taken for one.
+_BARE_LOCAL = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\])(?![A-Za-z0-9_-])",
+                         re.IGNORECASE)
+_BARE_HOST = re.compile(
+    r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::[0-9]+)?[/?]"
+    r"|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+:[0-9]+")
+
+#: The short number an email or text message gives, pasted on its own; as
+#: 2.1.330 does, spaces and dashes inside it ("123-456") do not count.
+_VERIFICATION = re.compile(r"[0-9]{4,10}")
+
+
+def _address_reason(text: str) -> str | None:
+    """Which address reason fits ``text``, if it is an address at all."""
+    head = text.partition("#")[0]
+    if _LOCAL.search(text) or _BARE_LOCAL.match(head):
+        return CODE_IS_LOCAL_ADDRESS
+    if _WEB.search(text) or _BARE_HOST.match(head):
+        return CODE_IS_ADDRESS
+    return None
 
 #: What an OAuth code or state may contain: visible ASCII and the space
 #: (RFC 6749, appendix A, VSCHAR). Nothing that ends a line, moves a cursor
@@ -403,6 +440,16 @@ def clean_code(provider, pasted) -> str:
         raise CodeRejectedError(CODE_TOO_LONG)
     if not _ONE_LINE.fullmatch(text):
         raise CodeRejectedError(CODE_HIDDEN_CHARACTERS)
+    # What the vendor itself refuses, refused here first with the reason:
+    # its own would reach the window only as hidden output.
+    refuses = set(rules.get("refuses") or ())
+    if "address" in refuses:
+        reason = _address_reason(text)
+        if reason:
+            raise CodeRejectedError(reason)
+    if "verification_code" in refuses and _VERIFICATION.fullmatch(
+            re.sub(r"[\s-]", "", text)):
+        raise CodeRejectedError(CODE_IS_VERIFICATION)
     separator = rules.get("separator")
     if separator:
         # The vendor's own rule: both halves present, or it prints "Invalid
