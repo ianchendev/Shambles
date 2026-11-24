@@ -281,3 +281,51 @@ def test_a_device_code_for_a_browser_sign_in_is_ignored(make):
     service.device_code(DeviceSignIn("CODE-12345", LINK, NOW + 900_000))
     assert ui.sheet["device"]["code"] == ""
     assert not ui._countdown.isActive()
+
+
+# -- after a device sign-in fails ----------------------------------------------
+
+
+def test_device_codes_off_offers_the_browser_and_starts_it(make):
+    ui, service, _, _ = _device_sheet(make)
+
+    service.settle(failure(
+        "login", "device_sign_in_off",
+        'Codex said: "device code login is not enabled for this Codex '
+        'server. Use the browser login or verify the server URL."',
+        "You are back on 'Main'. Nothing was lost. Then sign in to 'Spare' "
+        "again."))
+
+    assert ui.sheet["kind"] == "result"
+    assert ui.sheet["retryLabel"] == "Use this browser"
+    ui.retry()
+    assert service.named("start_login")[-1] == ("start_login", "codex",
+                                                "Spare")
+    assert service.devices[-1] is False
+    assert ui.sheet["method"] == "browser"
+
+
+def test_try_again_after_an_expired_code_asks_for_a_new_code(make):
+    ui, service, _, _ = _device_sheet(make)
+
+    service.settle(failure(
+        "login", "login_failed", "The code expired before it was entered.",
+        "You are back on 'Main'. Nothing was lost. Sign in to 'Spare' again "
+        "for a new code."))
+
+    assert ui.sheet["retryLabel"] == "Try again"
+    ui.retry()
+    assert service.devices[-1] is True
+    assert ui.sheet["method"] == "device"
+
+
+def test_try_again_after_a_browser_sign_in_stays_in_the_browser(make):
+    ui, service, _, _ = make()
+    ui.signIn("codex", "Spare")
+
+    service.settle(failure("login", "login_failed",
+                           "The vendor's sign-in did not finish.",
+                           "You are back on 'Main'. Nothing was lost."))
+    ui.retry()
+
+    assert service.devices == [False, False]

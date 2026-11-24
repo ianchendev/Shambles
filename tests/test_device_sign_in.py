@@ -277,11 +277,22 @@ def test_codex_saying_device_codes_are_off_is_shown_with_the_setting(
     scripted[-1].replay(CODEX_DEVICE_OUTPUT + [NOT_ENABLED], 1)
 
     error = done[0].error
-    assert error.code == "login_failed"
+    # A code of its own: trying the same way again cannot work, so a
+    # frontend offers the browser instead.
+    assert error.code == "device_sign_in_off"
     assert "device code login is not enabled" in error.message
     assert "ChatGPT security settings" in error.recovery
-    # The account is still put back, as for any failed sign-in.
+    # The account is still put back, as for any failed sign-in, and the
+    # terminal UI, which has no Try again, still says how to retry.
     assert "Personal" in error.recovery
+    assert error.recovery.endswith("Then sign in to 'Personal' again.")
+
+
+def test_device_codes_off_is_only_said_when_codex_says_it(paths, scripted):
+    """The same words in a browser sign-in are not read at all."""
+    _, _, _, done = _sign_in(paths)
+    scripted[-1].replay([NOT_ENABLED], 1)
+    assert done[0].error.code == "login_failed"
 
 
 def test_an_expired_code_says_so_without_blaming_the_setting(paths, scripted):
