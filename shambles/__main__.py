@@ -19,7 +19,6 @@ shambles — switch between Claude Code and Codex accounts
   shambles                     open the terminal interface, on a terminal
   shambles tui                 open the terminal interface explicitly
   shambles gui                 open the window instead
-  shambles gui --classic       open the classic Tk window
   shambles list                list every account and its state
   shambles list --json         the same thing, machine-readable
   shambles switch claude Work  switch without opening an interface
@@ -43,39 +42,39 @@ in ~/.shambles/<provider>/active.
 #: through to a usage message the way an unrecognized subcommand would.
 _TUI_FLAGS = ("--no-motion",)
 
-TK_MISSING = """\
-Shambles needs Tkinter, which is not installed.
+#: The last line of both messages below. The terminal UI needs neither Qt
+#: nor a display, so it is always the way forward from here.
+TERMINAL_UI = "Run shambles for the terminal UI.\n"
 
-  Debian/Ubuntu   sudo apt install python3-tk
-  Fedora          sudo dnf install python3-tkinter
-  Arch            sudo pacman -S tk
-
-On Windows and macOS, Tkinter ships with Python — if you see this there,
-reinstall Python from python.org rather than using the Store build.
-"""
-
-#: `shambles gui --new` where PySide6 is not installed at all.
+#: `shambles gui` where PySide6 is not installed at all.
 QT_MISSING = """\
-The new Shambles window needs PySide6 (Qt), which is not installed here.
+The Shambles window needs PySide6 (Qt), which is not installed here.
 Add it:
 
   {install}
 
-Until then, `shambles gui` opens the classic window and `shambles` the
-terminal dashboard.
-"""
+""" + TERMINAL_UI
 
-#: `shambles gui --new` where PySide6 is installed and Qt still cannot open
-#: a window. {fix} is one of the two below, or empty when the reason says
-#: it all ("could not connect to display").
+#: `shambles gui` from a release binary with no window installed beside it,
+#: which the install script skips under SHAMBLES_NO_WINDOW=1.
+WINDOW_MISSING = """\
+The Shambles window is not installed here. It is a separate download, and
+the install script fetches it beside this binary (unless SHAMBLES_NO_WINDOW
+is set):
+
+  {install}
+
+""" + TERMINAL_UI
+
+#: `shambles gui` where PySide6 is installed and Qt still cannot open a
+#: window. {fix} is one of the two below, or empty when the reason says it
+#: all ("could not connect to display").
 QT_BROKEN = """\
-The new Shambles window could not start:
+The Shambles window could not start:
 
   {reason}
 
-{fix}Until this works, `shambles gui` opens the classic window and
-`shambles` the terminal dashboard.
-"""
+{fix}""" + TERMINAL_UI
 
 QT_FIX_LIBRARIES = """\
 Qt needs system libraries that a desktop install has and a bare Linux or
@@ -96,15 +95,13 @@ Reinstalling PySide6 may fix it:
 
 """
 
-CLASSIC_FALLBACK = """\
-Opening the classic window: the new one is not installed here.
-  shambles gui --new    says what it needs.
-"""
+#: `shambles gui --classic`, accepted in 2.3.0 only so that a script or a
+#: shortcut naming it fails with a reason instead of an unknown option.
+CLASSIC_RETIRED = """\
+The classic window was retired in 2.3.0.
 
-CLASSIC_FALLBACK_BROKEN = """\
-Opening the classic window: the new one could not start here.
-  {reason}
-  shambles gui --new    says how to fix it.
+  shambles gui    opens the window
+  shambles        opens the terminal UI
 """
 
 TEXTUAL_MISSING = """\

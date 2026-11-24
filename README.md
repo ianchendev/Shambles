@@ -194,9 +194,8 @@ sudo apt install libegl1 libgl1 libfontconfig1 libfreetype6 \
   libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
 ```
 
-Until it has them, `shambles gui` opens the classic window instead, which
-needs `python3-tk`, and names the missing libraries. `shambles gui --new`
-prints the whole fix.
+Until it has them, `shambles gui` names the missing libraries, prints this
+list and exits. `shambles`, the terminal dashboard, needs none of them.
 
 **A binary from [Releases](https://github.com/ianchendev/Shambles/releases).**
 One file, nothing to install. Same unsigned caveat.
@@ -312,7 +311,7 @@ switch and tells you the line to change.
 one.** `codex login`, `codex logout`, `claude auth logout` and `/logout` all
 tell the vendor's servers to revoke the login that is currently stored. The
 copy Shambles saved is the same login, so it dies too, and that account then
-needs a new verification email. To add an account, use **Add Account**: it
+needs a new verification email. To add an account, use **Add account**: it
 empties the live slot first, so there is nothing for the vendor to revoke.
 
 **WSL is the sharp edge.** A Windows `.exe` manages `C:\Users\<you>\.claude`.
@@ -328,7 +327,7 @@ out to be the Windows program. `shambles doctor` tells you if it is.
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or a Bedrock, Vertex or Foundry switch is set; or `CODEX_ACCESS_TOKEN` or `CODEX_API_KEY` for Codex | The vendor signs in from the variable and ignores its stored login. A switch succeeds and changes nothing. `shambles doctor` names the variable |
 | Codex set to `keyring`, `auto` or `ephemeral` storage | Shambles refuses to switch Codex and names the setting |
 | Claude inside WSL is really the Windows install | `shambles doctor` says so. Install Claude Code inside WSL, or use Shambles for Windows |
-| `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set in a shell | Shambles started from that shell manages that directory. Programs started without the variable, VS Code from the desktop for one, use the default directory and are not affected. A banner and `shambles doctor` both say so |
+| `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set in a shell | Shambles started from that shell manages that directory. Programs started without the variable, VS Code from the desktop for one, use the default directory and are not affected. The window, the dashboard and `shambles doctor` all say so |
 | A Mac's Keychain is locked and there is no fallback file (some SSH sessions) | Shambles reports the Keychain as locked. Unlock it with `security unlock-keychain`, or run Shambles at the Mac itself |
 | The Claude desktop app, and ChatGPT's own chat login | Separate logins that Shambles does not manage |
 | Alpine and other musl systems, or glibc older than 2.35 | The binaries cannot start. The install script says so before downloading; install with pipx |
@@ -361,10 +360,10 @@ shambles gui  --home /tmp/scratch      # the window, against nothing real
 
 **1. Save the account you are signed in as now.** Open the window
 (`shambles gui`) or the dashboard (`shambles`). Your current login appears
-with a **Save …** button, labelled with the address it found. Click it and
-name the profile `Work`. Nothing moves and nothing is deleted.
+with the address it found and an offer to save it. Name it `Work` and save.
+Nothing moves and nothing is deleted.
 
-**2. Add your second account.** Click **＋ Add Account**, pick the provider,
+**2. Add your second account.** Choose **Add account**, pick the provider,
 and name it `Personal`. Shambles creates the profile, makes it active, then
 runs the vendor's login command while your browser opens. This is the only
 time you wait for that account's email.
@@ -389,7 +388,6 @@ usage and changes nothing.
 | `shambles` | The terminal dashboard, on a real terminal |
 | `shambles tui` | The terminal dashboard, always |
 | `shambles gui` | The desktop window |
-| `shambles gui --classic` | The previous Tk window |
 | `shambles list` | Every account and its state, as text |
 | `shambles list --json` | The same thing, for scripts |
 | `shambles switch <provider> <account>` | Switch without opening anything |
@@ -431,83 +429,100 @@ the dashboard draw from, so you can tell a display bug from a logic bug.
 
 ### The window
 
-`shambles gui` opens the window. It is one resizable column: each provider's
-live account on top with its usage on show, and every other account as a row
-beneath.
+`shambles gui` opens the window: one column, each provider's live account on
+top with its usage, and every other account as a row beneath. Drag the header
+to move it and the bottom-right corner to resize it; it opens where you left
+it.
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
-│ Shambles                              [ ⟳ ]  [ ··· ]  [ + Add account ] │
+│ Shambles  Updated just now             [⟳]  [···]  [+ Add account] │
 │                                                                    │
-│ Claude Code  Terminal, VS Code          3 accounts · 1 needs sign-in │
+│ Claude Code (i)                          3 accounts · 1 signed out │
 │ ┌────────────────────────────────────────────────────────────────┐ │
-│ │ (W) Work  ● Live                                      ⌄   ···  │ │  ← the live account:
-│ │     work@example.com · Max 5x                                  │ │       no Switch, no Remove
-│ │ Session ▓▓▓░░░░░░░░ 22%        Week ▓▓▓▓▓▓░░░░░ 58%            │ │
-│ │ Resets today, 15:10            Resets Tue 17 Nov               │ │
+│ │ Admin stops working Fri 27 Nov (i)              [ Sign in ]  × │ │  ← its last three days
 │ └────────────────────────────────────────────────────────────────┘ │
 │ ┌────────────────────────────────────────────────────────────────┐ │
-│ │ (C) Client  Expires soon     81% · 92%  [1] [ Switch ]  ⌄  ··· │ │  ← press 1 to switch
-│ │ (P) Personal  Needs sign-in             [ Sign in ]     ⌄  ··· │ │  ← a lapsed one signs
-│ └────────────────────────────────────────────────────────────────┘ │       in instead
-│                                                                    │
-│ Codex  Terminal, VS Code, ChatGPT                         1 account │
-│ ┌────────────────────────────────────────────────────────────────┐ │
-│ │ (P) Personal  ● Live                                  ⌄   ···  │ │
+│ │ (W) Work  ● In use  Max 5x                                 ··· │ │  ← the live account:
+│ │     work@example.com                                           │ │     no Switch, no Remove
+│ │ Session ▓▓▓▓▓▓░░░░ 62%          Week ▓▓▓▓░░░░░░ 35%            │ │
+│ │ Resets in 3h                    Resets Sat 28 Nov, 20:36       │ │
 │ └────────────────────────────────────────────────────────────────┘ │
-│ Reads local files only, never the network.                         │
+│ ┌────────────────────────────────────────────────────────────────┐ │
+│ │ (A) Admin  Max 5x       ▓▓▓▓▓ 100%   [2d]      [ Switch ]  ··· │ │  ← Ctrl+2 switches, and
+│ │     admin@example.com   ▓▓▓▓░  88%                             │ │     the 2d badge signs in
+│ │ (C) Client  Max 5x      ▓░░░░  12%  Signed out [ Sign in ] ··· │ │  ← a lapsed login
+│ │     client@example.com  ▓░░░░  20%                             │ │     signs in instead
+│ └────────────────────────────────────────────────────────────────┘ │
+│                                                                    │
+│ Codex (i)                                               2 accounts │
+│ ...                                                                │
+│ Local only                                                         │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
 The live account has **no Switch and no Remove**, so you cannot delete the
-login you are using by misclicking. Remove lives under each other account's
-`···` menu, asks first, and Cancel is the default answer.
+login you are using by misclicking.
 
-An account whose login has lapsed shows **Sign in** where Switch would be,
-the live one included. It runs the vendor's own browser sign-in with the
-address filled in (Claude), saves the new login under the same account and
-leaves it live. Cancel, and you are put back on the account you were using.
-If your browser signs in as a different account, nothing is saved over the
-one you asked for, and the window says which address the browser used.
+Every other account is one row: its name and plan, its address, two small
+bars (session, then week), at most one badge, one button and `···`. Click a
+row, or `···` › **Details**, to open it: the date its saved login is good
+until, and its last usage with the time each limit resets. **Rename** and
+**Remove account** are under `···` too; Remove asks first. In a narrow window
+the address and the small bars give way first.
+
+| Badge | Meaning |
+|---|---|
+| *(none)* | Healthy, or an expiry it cannot read |
+| `2d`, with a clock | A login closing soon: the days left, or hours in the last day. Fewer than four days for Claude, whose date was fixed at sign-in, so using the account does not move it: click the badge to sign in again, and the button still switches. Fewer than three for Codex, which using the account renews, so there the badge only explains on hover |
+| `Signed out` | No working login. The button is **Sign in** |
+| `Most room` | Once the live account passes 80% of a limit, the switchable account with the most room left. A hint only |
+
+In a Claude login's last three days a line above that provider's accounts
+names the day it stops working, with **Sign in**. `×` hides it until
+tomorrow.
+
+**Sign in** runs the vendor's own browser sign-in in a sheet, with the
+address filled in (Claude), and saves the new login under the same account.
+The link appears with **Copy** and **Open** as soon as the vendor prints it.
+When Claude's page ends with a code instead of signing you in, paste it into
+the sheet. Codex offers **This browser** or **Another device**, which shows a
+one-time code and a link to enter on any device. Cancel puts you back on the
+account you were using. So does renewing an account you were not using
+before its login ran out; signing in a lapsed one leaves you on it. If your
+browser signs in as a different account, nothing is saved over the one you
+asked for, and the window says which address the browser used.
 
 If you are signed in as one saved account while another is marked as the
 one in use, the window says so at the top of that provider with one button,
 **Switch to** that account. It files the login there, keeping the one it
-replaces, and the other Switch buttons wait until you have pressed it.
+replaces, and the other Switch buttons wait until you have pressed it. A
+login Shambles has not saved yet appears there instead, with a name field
+and **Save login**.
 
-Nothing opens a separate dialog. Adding, signing in, renaming, removing and
-ejecting happen in a sheet inside the window, and what an action did is said
-in words at the bottom.
+Adding, signing in, renaming, removing and ejecting all happen in a sheet
+inside the window, and what an action did is said in words at the bottom.
 
-Each account shows a state only when something needs you:
-
-| Shown | Meaning |
-|---|---|
-| *(nothing)* | Healthy, or an expiry it cannot read |
-| `Expires soon` (amber) | Fewer than four days left (Claude) or three (Codex). For Codex, using the account renews it. For Claude it does not: the date is fixed at sign-in, so the window offers **Sign in** beside Switch until you do |
-| `Needs sign-in` (red) | The window closed, or this account has no login yet. Press **Sign in** |
-| `Signed out` (red) | The login was cleared. The account survives, the token is empty |
-
-Click a row, or its `⌄`, to open it: the exact date its saved login is good
-until, and its last recorded usage with the time each figure resets.
-
-Usage bars come from what the vendor already wrote to your disk, never from a
-request. They turn red at 80%, and a figure older than an hour on an account
-you are not using goes grey and is labelled `as of 5h ago`.
+"Updated just now" says when the window last read your accounts. It re-reads
+the vendors' files by itself: when you come back to it, when they change, and
+every minute. ⟳ reads everything again. Usage comes from what the vendor
+already wrote to your disk, never from a request. Bars turn red at 80%. A
+reading over an hour old on an account you are not using is striped, and a
+limit that has reset since its reading is hatched; hover for the figures.
 
 | Key | Action |
 |---|---|
-| `1` to `9` | Switch to the account showing that number |
-| `/` | Filter accounts, once there are seven or more |
+| `Ctrl+1` to `Ctrl+9` (`⌘` on macOS) | Press that account's button: switch, or sign in if it is signed out. Numbers count every saved account, the live one included, and hold `Ctrl` to see them |
 | `Ctrl+N` | Add an account |
-| `Ctrl+R` or `F5` | Refresh. Re-reads local files only |
+| `/` | Filter accounts, once there are seven or more |
+| `Ctrl+R` or `F5` | Read everything again |
 | `Tab`, `Space`, `Enter` | Move between controls and press them |
 | `Esc` | Close the sheet, or clear the filter |
 
-Light and dark are under the `···` menu. The window follows the system where
-it can tell and remembers your choice where it cannot, which includes WSL.
-`SHAMBLES_SCALE` (1.0 to 4.0) sets its size and `SHAMBLES_MOTION=0` turns
-animation off.
+The theme and **Eject Shambles** are under the header's `···`. The window
+follows the system theme where it can tell and remembers your choice where it
+cannot, which includes WSL. `SHAMBLES_SCALE` (1.0 to 4.0) sets its size and
+`SHAMBLES_MOTION=0` turns animation off.
 
 **Where the window comes from.** It is built on Qt, a 36 to 82 MB download
 depending on the platform, so it ships as its own archive beside the
@@ -533,7 +548,7 @@ python -m pip install 'PySide6-Essentials>=6.8,<6.10'
 
 Shambles is not on PyPI, so `pip install shambles` fetches nothing of
 ours. Installed either way on a bare Linux or WSL machine, Qt needs these
-system libraries, and `shambles gui --new` names any that are missing:
+system libraries, and `shambles gui` names any that are missing:
 
 ```bash
 sudo apt install libegl1 libgl1 libfontconfig1 libfreetype6 \
@@ -560,15 +575,14 @@ calls it: the window loads only files that ship with it, and the rule that
 no Python module in the package imports a network module is still enforced
 by `tests/test_login.py`.
 
-**The classic window.** `shambles gui --classic` opens the previous Tk
-window. It is also what `shambles gui` opens when the new window is not
-installed, with a line saying so. It will be removed in a later release.
-[docs/how-it-works.md](docs/how-it-works.md) still describes it.
+**The classic window** was retired in 2.3.0. In that release
+`shambles gui --classic` says so and exits with an error, so a script or
+shortcut that names it does not fail silently.
 
 ### The terminal dashboard
 
 `shambles` opens a keyboard dashboard instead of the window whenever you run
-it on a real terminal. No `DISPLAY`, no Tk, and it works the same over SSH.
+it on a real terminal. No `DISPLAY`, no Qt, and it works the same over SSH.
 
 | Key | Action |
 |---|---|
@@ -699,15 +713,15 @@ Session history, plugins and settings are shared and live elsewhere.
 | Symptom | Cause and fix |
 |---|---|
 | `No module named 'textual'` | A clone whose dependencies were never installed. Run `pip install -e .` in the checkout, or use pipx |
-| `Shambles needs Tkinter` | Only the window needs it. Run `sudo apt install python3-tk`, or use `shambles tui` instead |
+| `The Shambles window needs PySide6 (Qt)` or `could not start` | The window is the optional `[gui]` extra. The message gives the command that adds it and, on Linux, the libraries Qt is missing. `shambles` opens the terminal dashboard, which needs neither |
 | `shambles: command not found` after the install script | `~/.local/bin` is not on your PATH. The script prints the line to add |
 | Switching seems to do nothing | A session that was already running keeps its old token. Start a new one, or run *Developer: Reload Window* in VS Code |
 | Switching does nothing, even in new sessions | Run `shambles doctor`. The usual causes are an environment variable supplying its own login, `CLAUDE_CONFIG_DIR` set in one place and not another, or Shambles 2.1.2 or older on Windows. See [the support table](#will-it-work-for-you) |
 | `Codex is set to keep its login in the system keyring` | Codex is not using `auth.json`, so there is nothing for Shambles to swap. Set `cli_auth_credentials_store = "file"` in `~/.codex/config.toml` and sign in again |
 | `The macOS Keychain is locked` | Usually an SSH session. Run `security unlock-keychain`, or use Shambles at the Mac itself |
-| An account needs a new login right after you signed out of another | Signing out revokes the stored login on the vendor's servers, and Shambles' saved copy is the same login. Use **Add Account** instead of signing out |
+| An account needs a new login right after you signed out of another | Signing out revokes the stored login on the vendor's servers, and Shambles' saved copy is the same login. Use **Add account** instead of signing out |
 | The window will not close | `Ctrl+C` in the launching terminal works, and so does `kill <pid>`. If it is stopped rather than frozen, run `pkill -CONT -f shambles && pkill -f shambles` |
-| A provider is greyed out in Add Account | Its CLI is not on your PATH. Shambles runs the vendor's own login command, so it needs `claude` or `codex` installed |
+| A provider says *Not installed* in Add account | Its CLI is not on your PATH. Shambles runs the vendor's own login command, so it needs `claude` or `codex` installed |
 | Windows SmartScreen warns you | The binaries are unsigned. Use pipx if you would rather not click through it |
 | PowerShell says `The term 'shambles' is not recognized` | The install worked; this terminal predates it. Open a new PowerShell window, or run `$env:Path += ";$env:LOCALAPPDATA\Shambles"` |
 | `libc.so.6: version 'GLIBC_2.38' not found` | A 2.1.0 Linux binary, which was built on too new a system. Upgrade to 2.1.1 or later, or install with pipx |
@@ -758,7 +772,7 @@ asserts that `Work → Personal → Work` leaves the credential byte-identical,
 refresh token and expiry included. If it regresses, the tool stops solving the
 problem it exists for.
 
-Developed on WSL2 Ubuntu with WSLg, Python 3.12, Tk 8.6. macOS and native
+Developed on WSL2 Ubuntu with WSLg, Python 3.12, Qt 6.9. macOS and native
 Windows are exercised by the `real-machine` workflow and by nobody's daily
 use yet; see [the support table](#will-it-work-for-you) for exactly what
 that does and does not establish.

@@ -9,8 +9,8 @@ because Qt's X11 plugin links against libraries only a desktop brings.
 
 So on Linux the question goes first to a short-lived child process that
 makes a ``QGuiApplication`` and exits. If the child dies, the window would
-have died the same way, and ``shambles gui`` opens the classic window
-instead and says why. The child costs about a tenth of a second.
+have died the same way, and ``shambles gui`` says why and what would fix
+it instead of dumping core. The child costs about a tenth of a second.
 
 Nothing here imports PySide6. This module runs exactly when PySide6 may be
 broken, and also builds the advice for when it is not installed at all.
@@ -68,6 +68,10 @@ APT_PACKAGES = tuple(dict.fromkeys(LIBRARIES.values()))
 #: The ``[gui]`` extra in pyproject.toml, for installing Qt on its own.
 PYSIDE_REQUIREMENT = "PySide6-Essentials>=6.8,<6.10"
 SOURCE = "git+https://github.com/ianchendev/Shambles"
+#: The install scripts, less their extension. A release binary cannot run
+#: pip; these are what fetch the window beside it.
+INSTALL_SCRIPT = ("https://raw.githubusercontent.com/ianchendev/Shambles/"
+                  "main/scripts/install")
 
 #: Long enough for a cold WSLg display to answer its first client.
 PROBE_TIMEOUT_S = 30
@@ -100,8 +104,9 @@ class QtCannotStart(ImportError):
     """PySide6 imports, but Qt cannot open a window on this machine.
 
     An ImportError so that it takes the same road as PySide6 being absent:
-    the window bundle if there is one, else the classic window. ``missing``
-    holds the libraries ``ldd`` could not find, when that was the reason.
+    the window bundle if there is one, else a message saying what to
+    install. ``missing`` holds the libraries ``ldd`` could not find, when
+    that was the reason.
     """
 
     def __init__(self, reason, missing=()):
@@ -225,23 +230,31 @@ def in_pipx(prefix=None) -> bool:
     return (Path(prefix) / "pipx_metadata.json").is_file()
 
 
-def install_command(*, prefix=None, executable=None, windows=None) -> str:
+def install_command(*, prefix=None, executable=None, windows=None,
+                    frozen=None) -> str:
     """The command that adds Qt to the environment Shambles runs in.
 
-    A pipx environment is reinstalled with the extra, the way the README
-    installs it; pip run inside that environment would not survive pipx's
-    next upgrade. Anything else gets PySide6 itself, installed by this
-    interpreter's pip, so it lands next to Shambles however Shambles got
-    there: from a clone, a git URL or a wheel. Shambles is not on PyPI,
+    A release binary is not an environment pip can reach: ``sys.executable``
+    is the binary itself, and ``-m pip`` means nothing to it. Its Qt is the
+    window archive, which the install script fetches beside it, so that is
+    the command. A pipx environment is reinstalled with the extra, the way
+    the README installs it; pip run inside that environment would not
+    survive pipx's next upgrade. Anything else gets PySide6 itself, installed
+    by this interpreter's pip, so it lands next to Shambles however Shambles
+    got there: from a clone, a git URL or a wheel. Shambles is not on PyPI,
     so ``pip install shambles[gui]`` would fetch somebody else's project or
     nothing.
     """
+    windows = (os.name == "nt") if windows is None else windows
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    if frozen:
+        return (f"irm {INSTALL_SCRIPT}.ps1 | iex" if windows
+                else f"curl -fsSL {INSTALL_SCRIPT}.sh | bash")
     if in_pipx(prefix):
         words = ["pipx", "install", "--force", f"shambles[gui] @ {SOURCE}"]
     else:
         words = [executable or sys.executable, "-m", "pip", "install",
                  PYSIDE_REQUIREMENT]
-    windows = (os.name == "nt") if windows is None else windows
     return _windows_join(words) if windows else shlex.join(words)
 
 

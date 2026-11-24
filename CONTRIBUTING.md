@@ -49,12 +49,14 @@ Found a security problem? Do not open an issue — see [SECURITY.md](SECURITY.md
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e ".[dev,gui]"
 .venv/bin/python -m pytest
 ```
 
-The GUI tests need a display. On a headless Linux box, `xvfb-run -a
-python -m pytest` runs them; without it they skip themselves.
+The window's tests need Qt, which `[gui]` brings; without it they skip
+themselves. They draw offscreen, so no display is needed. On a bare Linux or
+WSL install Qt also needs the system libraries listed in the
+[README](README.md#install).
 
 ## What a change needs
 

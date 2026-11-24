@@ -9,13 +9,18 @@ Architectural reference for the account switcher.
 > [docs/design-decisions.md](docs/design-decisions.md). The §-numbered mechanism below —
 > the switch ordering, the atomic-write discipline, the state machine, the
 > concurrency caveat — is unchanged and still authoritative.
+>
+> **The Tk window was retired in 2.3.0 (2026-11-25).** `gui.py` and
+> `theme.py` below, and the window code quoted in §2.4, describe it as it
+> was. The window is now `shambles/app/qt/`, and like the CLI and the
+> terminal UI it goes through `ShamblesService` (§1.12).
 
 | | |
 |---|---|
 | **Version** | 1.1 (multi-provider) |
 | **Target** | Claude Code 2.1.x and Codex 0.147.x — CLI and VS Code extension |
 | **Platforms** | Linux and WSL2 in daily use for Claude. macOS, native Windows and Codex verified on CI runners with made-up credentials and the vendors' own status commands, not yet with a real account. See §1.11 |
-| **Runtime** | Python 3.10+, Tkinter. No third-party dependencies |
+| **Runtime** | Python 3.10+ and Textual. The window adds PySide6 (Qt), an optional extra |
 | **Source** | ~3,740 lines across 24 modules |
 | **Tests** | 303 cases, all passing |
 
@@ -423,12 +428,11 @@ migration should run with no Claude Code sessions active.
 ### 1.12 Application service boundary
 
 `shambles.app.service.ShamblesService` is the application boundary for the
-migrated script CLI and the target boundary for native shells. The current Tk
-GUI still contains its legacy direct calls into `switcher`, `login`, and
-`eject`; migrating it to this service remains outstanding. New interfaces must
-render service data and ask the service to perform operations. This keeps
-credential ordering, provider lookup, error mapping, and post-operation state
-in one tested implementation as each interface is migrated.
+CLI, the terminal UI, the Qt window and native shells. The Tk window, the last
+interface that called `switcher`, `login` and `eject` directly, was retired in
+2.3.0 rather than migrated. Interfaces must render service data and ask the
+service to perform operations. This keeps credential ordering, provider
+lookup, error mapping, and post-operation state in one tested implementation.
 
 The service exposes these operations:
 

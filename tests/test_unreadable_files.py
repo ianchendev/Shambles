@@ -83,12 +83,13 @@ def test_refresh_reports_instead_of_raising(unreadable_codex_store):
     assert result.snapshot is not None
 
 
-def test_the_window_opens_with_an_unreadable_store(unreadable_codex_store,
-                                                   make_app):
-    """It used to die in its constructor, before drawing anything."""
-    app = make_app(unreadable_codex_store)
+def test_opening_survives_an_unreadable_store(unreadable_codex_store):
+    """The classic window used to die in its constructor, before drawing
+    anything. Every interface now opens through these two calls."""
+    svc = service(unreadable_codex_store)
 
-    app.refresh()
+    svc.run_migrations()
+    assert svc.refresh().snapshot is not None
 
 
 def test_an_unreadable_store_still_refuses_a_switch(unreadable_codex_store):

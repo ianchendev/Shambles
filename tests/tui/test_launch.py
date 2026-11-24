@@ -3,7 +3,7 @@
 ``selected_frontend`` decides which frontend a raw ``argv`` selects, before
 any package-internal import runs -- which is why it lives in
 ``shambles.__main__`` rather than ``shambles.app.cli``: picking "gui" versus
-"tui" versus "cli" has to happen before either Tkinter or Textual is
+"tui" versus "cli" has to happen before either Qt or Textual is
 imported. ``replace_process`` is the only place ``execvp`` is called, and
 only ever after Textual's ``App.run()`` has returned -- see
 ``shambles/app/launch.py``. These tests never actually exec anything; every
@@ -24,9 +24,9 @@ from shambles.app.launch import LaunchRequest, replace_process
 @pytest.fixture(autouse=True)
 def prevent_unexpected_window(monkeypatch):
     def unexpected_window(*args, **kwargs):
-        raise AssertionError("Terminal dispatch unexpectedly opened the Tk window")
+        raise AssertionError("Terminal dispatch unexpectedly opened the window")
 
-    monkeypatch.setattr("shambles.gui.run", unexpected_window)
+    monkeypatch.setattr("shambles.app.cli._open_window", unexpected_window)
 
 
 @pytest.fixture
@@ -198,10 +198,10 @@ def test_explicit_tui_token_is_passed_through_unmodified(monkeypatch):
     assert calls == [["tui", "--home", "/tmp/x"]]
 
 
-def test_explicit_gui_token_opens_the_tk_window_directly(monkeypatch):
+def test_explicit_gui_token_opens_the_window_directly(monkeypatch):
     calls = []
-    monkeypatch.setattr("shambles.gui.run",
-                        lambda **kw: calls.append("ran") or 0)
+    monkeypatch.setattr("shambles.app.cli._open_window",
+                        lambda args: (calls.append("ran") or 0, None))
 
     from shambles.__main__ import main
     assert main(["gui"]) == 0
@@ -394,7 +394,7 @@ import builtins
 import sys
 original_import = builtins.__import__
 def guarded_import(name, *args, **kwargs):
-    if name.split('.')[0] in ('tkinter', 'textual'):
+    if name.split('.')[0] in ('tkinter', 'textual', 'PySide6'):
         raise AssertionError('headless command imported ' + name)
     return original_import(name, *args, **kwargs)
 builtins.__import__ = guarded_import

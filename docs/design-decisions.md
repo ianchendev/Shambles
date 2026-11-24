@@ -324,7 +324,7 @@ Most of the current codebase is already provider-agnostic and simply mis-labelle
 | [`paths.py`](../shambles/paths.py) | hardcodes `.claude*`; the injectable-home *structure* survives, the constants move to the spec |
 | `configjson.ACCOUNT_KEYS` | becomes `provider.companion_writes` |
 | [`profiles.token_state`](../shambles/profiles.py) | becomes `provider.liveness()` |
-| [`gui.py`](../shambles/gui.py) | profiles grouped by provider; otherwise unchanged |
+| `gui.py` (the Tk window, retired in 2.3.0) | profiles grouped by provider; otherwise unchanged |
 
 The flow and the state machine — the parts that took the most thought — are
 untouched. What moves is leaf facts.
@@ -376,7 +376,12 @@ The repo is 1745 readable lines. The failure mode here is a framework.
 
 ## DD-5 — One application service owns operations and state refresh
 
-**Status: Decided — implemented 2026-09-06**
+**Status: Decided — implemented 2026-09-06; amended 2026-11-25**
+
+> **Amendment (2026-11-25).** The Tk GUI was never migrated. It was retired
+> in 2.3.0 instead, so the follow-up below is closed: the CLI, the terminal
+> UI and the Qt window all go through `ShamblesService`, and nothing calls
+> `switcher`, `login` or `eject` from an interface any more.
 
 ### Context
 

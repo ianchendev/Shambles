@@ -177,9 +177,8 @@ class LoginProgress(ModalScreen[None]):
     in the transcript. Both vendors print one exactly when they could not open
     a browser themselves -- the normal case under WSL and over SSH -- so it is
     the one line on this screen the user has to act on, and leaving it to
-    scroll past as text is the failure this screen exists to prevent. The Tk
-    window has offered it as a button since the beginning; this is the same
-    affordance for the frontend that is now the default.
+    scroll past as text is the failure this screen exists to prevent. The
+    window offers the same thing as a button.
     """
 
     BINDINGS = [

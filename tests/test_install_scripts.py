@@ -322,7 +322,8 @@ def test_a_release_with_no_window_still_installs(release, tmp_path):
 
     assert done.returncode == 0, done.stderr
     assert installed(home).is_file()
-    assert "classic one" in done.stdout
+    assert "no window to download" in done.stdout
+    assert "'shambles' for the terminal UI" in done.stdout
     assert not window_dir(home).exists()
     assert not desktop_entry(home).exists()
 

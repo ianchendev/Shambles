@@ -137,52 +137,80 @@ def test_native_windows_has_no_posix_opener_and_must_fall_back():
                           runner=lambda *a, **k: None) is False
 
 
-def test_the_dialog_falls_back_to_webbrowser(make_app, paths, monkeypatch):
+# ---- what every interface calls: open_url, then webbrowser where it helps --
+#
+# These used to be tests of the classic Tk window's sign-in dialog, the only
+# place the fallback lived. The Qt window and the terminal UI went straight
+# to open_url, so on native Windows and macOS their Open button never opened
+# anything. The fallback now sits under all three.
+
+LINK = "https://x.example/authorize?a=1&b=2"
+
+
+class Browser:
+    """Stands in for ``webbrowser.open``."""
+
+    def __init__(self, answer=True):
+        self.answer, self.opened = answer, []
+
+    def __call__(self, url):
+        self.opened.append(url)
+        if isinstance(self.answer, BaseException):
+            raise self.answer
+        return self.answer
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_where_no_opener_exists_the_sign_in_page_falls_back_to_webbrowser(
+        monkeypatch, platform):
     """On Windows that fallback is the whole mechanism -- webbrowser uses
     os.startfile there. If it is ever dropped, Windows silently loses the
-    ability to open a sign-in link."""
-    import tkinter as tk
-    import webbrowser
-    from shambles import gui
-
-    app = make_app(paths)
-    dialog = gui.LoginDialog.__new__(gui.LoginDialog)
-    tk.Toplevel.__init__(dialog, app)
-    dialog.theme = app.theme
-    dialog._url = "https://x.example/authorize?a=1&b=2"
-    dialog.copy_button = tk.Button(dialog)
-
+    ability to open a sign-in link, and macOS with it."""
     monkeypatch.setattr(login, "open_url", lambda *a, **k: False)
-    called = []
-    monkeypatch.setattr(webbrowser, "open", lambda u: called.append(u) or True)
+    browser = Browser()
 
-    gui.LoginDialog._open_url(dialog)
-
-    assert called == [dialog._url], "webbrowser fallback was not reached"
-    dialog.destroy()
+    assert login.open_sign_in_page(LINK, platform=platform,
+                                   browser=browser) is True
+    assert browser.opened == [LINK], "webbrowser fallback was not reached"
 
 
-def test_the_link_is_copied_before_any_opener_is_tried(make_app, paths,
-                                                       monkeypatch):
-    """explorer.exe's return code cannot distinguish success from failure, so
-    the clipboard is what makes 'did it open?' not matter."""
-    import tkinter as tk
-    from shambles import gui
+def test_an_opener_that_worked_is_the_end_of_it(monkeypatch):
+    monkeypatch.setattr(login, "open_url", lambda *a, **k: True)
+    browser = Browser()
 
-    app = make_app(paths)
-    dialog = gui.LoginDialog.__new__(gui.LoginDialog)
-    tk.Toplevel.__init__(dialog, app)
-    dialog.theme = app.theme
-    dialog._url = "https://x.example/authorize?a=1&b=2"
-    dialog.copy_button = tk.Button(dialog)
+    assert login.open_sign_in_page(LINK, platform="win32",
+                                   browser=browser) is True
+    assert browser.opened == []
 
-    order = []
-    monkeypatch.setattr(gui.LoginDialog, "_copy_url",
-                        lambda self: order.append("copy"))
-    monkeypatch.setattr(login, "open_url",
-                        lambda *a, **k: order.append("open") or True)
 
-    gui.LoginDialog._open_url(dialog)
+@pytest.mark.parametrize("platform", ["linux", "linux2"])
+def test_linux_and_wsl_never_fall_back_to_webbrowser(monkeypatch, platform):
+    """webbrowser picks gio there, which reports success while doing
+    nothing, or with no display a text browser that would take over the
+    terminal the terminal UI is drawing on."""
+    monkeypatch.setattr(login, "open_url", lambda *a, **k: False)
+    browser = Browser()
 
-    assert order == ["copy", "open"], f"wrong order: {order}"
-    dialog.destroy()
+    assert login.open_sign_in_page(LINK, platform=platform,
+                                   browser=browser) is False
+    assert browser.opened == []
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "javascript:x", "",
+                                 None])
+def test_only_http_links_ever_reach_webbrowser(monkeypatch, url):
+    monkeypatch.setattr(login, "open_url", lambda *a, **k: False)
+    browser = Browser()
+
+    assert login.open_sign_in_page(url, platform="win32",
+                                   browser=browser) is False
+    assert browser.opened == []
+
+
+@pytest.mark.parametrize("answer", [False, OSError("no handler")])
+def test_a_webbrowser_that_fails_or_raises_is_not_claimed_as_opened(
+        monkeypatch, answer):
+    monkeypatch.setattr(login, "open_url", lambda *a, **k: False)
+
+    assert login.open_sign_in_page(LINK, platform="darwin",
+                                   browser=Browser(answer)) is False

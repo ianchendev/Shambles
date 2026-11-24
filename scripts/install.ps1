@@ -342,7 +342,7 @@ public static class ShamblesShortcut {
                 if ("$_" -match 'does not match the release checksum') {
                     Write-Warning "The window download does not match the release checksum, so it was not installed. Shambles itself is installed. Run the installer again to retry the window."
                 } else {
-                    Write-Host "This release has no window to download; 'shambles gui' opens the classic one."
+                    Write-Host "This release has no window to download; run 'shambles' for the terminal UI."
                 }
             }
             if ($fetched) {

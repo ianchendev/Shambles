@@ -23,8 +23,8 @@ FONTS = HERE / "fonts"
 ICON = HERE / "icons" / "shambles.png"
 FONT_FAMILY = "Inter"
 
-#: ``SHAMBLES_SCALE`` is the Tk window's knob; the same values mean the same
-#: thing here so nobody has to learn a second one.
+#: ``SHAMBLES_SCALE`` was the classic Tk window's knob; the same values mean
+#: the same thing here, so nobody who set it had to learn a second one.
 SCALE_ENV = "SHAMBLES_SCALE"
 SCALE_LIMITS = (1.0, 4.0)
 #: ``software`` or ``gpu``, to overrule the choice made below.

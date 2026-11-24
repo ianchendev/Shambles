@@ -5,9 +5,10 @@
 #
 # Proves, with nothing installed but Python and what this script adds:
 #   1. Every library but libxcb-icccm4 and libxcb-keysyms1, the state of the
-#      WSL machine this was reported from: `shambles gui --new` explains
-#      and exits 1 instead of aborting (134), and names the two libraries,
-#      and plain `shambles gui` heads for the classic window.
+#      WSL machine this was reported from: `shambles gui` explains and exits
+#      1 instead of aborting (134), names the two libraries and the packages
+#      that hold them, and points at the terminal UI. `--new`, kept as an
+#      alias, does the same.
 #   2. The list in shambles/app/window_check.py: ldd finds everything Qt's
 #      X11 plugin and every Qt file the window loads link against.
 #   3. With only that list, the window opens and draws, on the software
@@ -37,23 +38,20 @@ step "1. All but libxcb-icccm4 and libxcb-keysyms1"
 partial=$(printf '%s\n' $packages | grep -vx -e libxcb-icccm4 -e libxcb-keysyms1)
 quiet apt-get install -y --no-install-recommends $partial
 status=0
-/tmp/v/bin/shambles gui --new --home "$home" 2>/tmp/new.txt || status=$?
-cat /tmp/new.txt
-echo "exit status $status"
-test "$status" = 1
-grep -q "libxcb-icccm.so.4" /tmp/new.txt
-grep -q "libxcb-keysyms.so.1" /tmp/new.txt
-grep -q "sudo apt install" /tmp/new.txt
-
-# No python3-tk in this container, so the classic window cannot open
-# either; what matters is that the new one is given up on with a reason.
-status=0
 /tmp/v/bin/shambles gui --home "$home" 2>/tmp/gui.txt || status=$?
 cat /tmp/gui.txt
 echo "exit status $status"
 test "$status" = 1
-grep -q "could not start here" /tmp/gui.txt
+grep -q "libxcb-icccm.so.4" /tmp/gui.txt
 grep -q "libxcb-keysyms.so.1" /tmp/gui.txt
+grep -q "sudo apt install" /tmp/gui.txt
+grep -q "Run shambles for the terminal UI." /tmp/gui.txt
+
+status=0
+/tmp/v/bin/shambles gui --new --home "$home" 2>/tmp/new.txt || status=$?
+echo "--new: exit status $status"
+test "$status" = 1
+cmp /tmp/gui.txt /tmp/new.txt
 
 step "2. The full list"
 quiet apt-get install -y --no-install-recommends $packages
@@ -79,7 +77,7 @@ tag=$(. /etc/os-release && echo "$VERSION_ID")
 for render in software gpu; do
     status=0
     SHAMBLES_RENDER=$render SHAMBLES_WINDOW_SMOKE=/out/bare-$tag-$render.png \
-        /tmp/v/bin/shambles gui --new --home "$home" || status=$?
+        /tmp/v/bin/shambles gui --home "$home" || status=$?
     cat "/out/bare-$tag-$render.png.log" || true
     test "$status" = 0
     test -s "/out/bare-$tag-$render.png"

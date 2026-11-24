@@ -57,28 +57,13 @@ def test_the_window_entry_hands_back_the_window_when_qt_can_start(
     assert run_window is real
 
 
-def test_gui_new_explains_instead_of_dumping_core(monkeypatch, capsys, home):
+def test_gui_explains_instead_of_dumping_core(monkeypatch, capsys, home):
     """End to end through the CLI, with the real probe and real PySide6."""
     monkeypatch.setattr(cli, "_window_entry", REAL_ENTRY)
     monkeypatch.setenv("QT_QPA_PLATFORM", "bogus")
 
-    assert cli.main(["gui", "--new", "--home", str(home)]) == cli.EXIT_FAILED
+    assert cli.main(["gui", "--home", str(home)]) == cli.EXIT_FAILED
 
     err = capsys.readouterr().err
     assert "could not start" in err and '"bogus"' in err
-
-
-def test_plain_gui_opens_the_classic_window_instead(monkeypatch, capsys,
-                                                     home):
-    from shambles import gui
-
-    opened = []
-    monkeypatch.setattr(cli, "_window_entry", REAL_ENTRY)
-    monkeypatch.setattr(gui, "run",
-                        lambda paths=None: opened.append(paths.home) or 0)
-    monkeypatch.setenv("QT_QPA_PLATFORM", "bogus")
-
-    assert cli.main(["gui", "--home", str(home)]) == 0
-
-    assert opened == [home]
-    assert "could not start here" in capsys.readouterr().err
+    assert err.endswith("Run shambles for the terminal UI.\n")

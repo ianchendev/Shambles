@@ -52,9 +52,9 @@ def test_a_change_here_needs_real_machines(rule, path):
     "README.md",
     "CHANGELOG.md",
     "docs/token-storage.md",
-    "shambles/gui.py",
+    "shambles/app/qt/bridge.py",
     "shambles/app/tui/application.py",
-    "tests/test_widgets.py",
+    "tests/qt/test_qt_bridge.py",
     # A directory entry is a directory, not a prefix of a name.
     "shambles/stores_notes.md",
     "scripts.md",

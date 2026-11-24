@@ -65,9 +65,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install X server (Linux)
+      # binutils for scripts/check_glibc.py, which reads the archive below.
+      - name: Install binutils (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb binutils
+        run: sudo apt-get update && sudo apt-get install -y binutils
 
       - name: Install
         run: pip install -e ".[dev]" pyinstaller
@@ -92,15 +93,11 @@ jobs:
           fi
           echo "Tag $GITHUB_REF_NAME matches version $code."
 
-      # Never ship a build that has not passed its own suite.
-      - name: Test (Linux)
-        if: runner.os == 'Linux'
-        run: xvfb-run -a python -m pytest
-
-      # No xvfb on macOS: Tk talks to the window server, not X11, and the GUI
-      # tests already skip themselves on a TclError when no display answers.
-      - name: Test (macOS)
-        if: runner.os == 'macOS'
+      # Never ship a build that has not passed its own suite. No display on
+      # any of them: the window's tests draw offscreen, and nothing else
+      # draws at all.
+      - name: Test (Linux, macOS)
+        if: runner.os != 'Windows'
         run: python -m pytest
 
       # No retries, on any platform. The terminal-UI tests used to assert
@@ -286,9 +283,8 @@ jobs:
             36 to 82 MB depending on the platform, named `shambles-window-…`
             below, and unpack it to
             `~/.local/share/shambles/window` (or
-            `%LOCALAPPDATA%\Shambles\window`). `shambles gui` opens it, and
-            `shambles gui --classic` opens the older Tk window. It is
-            separate because it carries Qt, which would slow every
+            `%LOCALAPPDATA%\Shambles\window`). `shambles gui` opens it.
+            It is separate because it carries Qt, which would slow every
             other command if it were inside the binary. Set
             `SHAMBLES_NO_WINDOW=1` before running the script to skip it.
 

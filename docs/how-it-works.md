@@ -237,60 +237,41 @@ profile before replacing anything, so you can always get back by switching
 back.
 
 1. **Close any running Claude Code sessions**, in VS Code and in terminals.
-2. **＋ Add Account** → pick the provider, type a name → **Create**. A
-   provider whose CLI is missing from your PATH shows greyed out rather than
-   hidden. A missing row reads as a bug; a greyed one reads as an instruction.
+2. **+ Add account** (or `Ctrl+N`) → pick the provider, type a name →
+   **Continue to sign-in**. A provider whose CLI is missing from your PATH
+   shows disabled, marked *Not installed on this machine*, rather than
+   hidden. A missing row reads as a bug; a disabled one reads as an
+   instruction.
 3. Shambles creates the profile and **makes it active right away**, empty,
    with no token. It has to. The vendor writes to one fixed place, so that
    slot must be free first.
-4. A sign-in window opens and runs `claude auth login` (or `codex login`),
-   streaming its output. Your browser should open on its own. If it does not,
-   **Open sign-in page** and **Copy link** light up as soon as the URL
-   appears. Under WSL and over SSH the link goes to your clipboard either way,
-   because the browser openers there claim success while doing nothing.
-5. On success Shambles tells you the account is signed in and active. New
-   sessions start on it.
+4. The window runs `claude auth login` (or `codex login`) and shows its
+   progress in a sheet. Your browser should open on its own. If it does not,
+   **Open** and a copy button appear as soon as the vendor prints the link.
+   Opening also puts the link on your clipboard, because under WSL and over
+   SSH the browser openers claim success while doing nothing.
+5. On success the sheet closes and the window says the account is signed in
+   and in use. New sessions start on it.
 
 If sign-in does not finish, Shambles switches you back to your previous
 account and says so. It **keeps** the empty profile, so you can retry without
 renaming anything.
 
-### Every control
+### Controls
 
-| Control | Where | What it does |
-|---|---|---|
-| **Switch** | Any card that is not live | Makes that account the one every surface uses |
-| **✕** | Any card that is not live | Deletes that profile, after a confirmation naming it |
-| Double-click the name | Any card | Rename the profile |
-| **Save …** | Group heading, when a live login is unsaved | Files the current login as a new profile |
-| **Forget that profile** | Group heading, if the active marker points at something gone | Clears the stale marker |
-| **＋ Add Account** | Footer | Create a profile and sign into it |
-| **Eject** | Footer | Hand every account back as a stock install |
-| **⟳** | Footer, far left | Re-read what is on disk. Local files only, no network |
-| **Details** / **Hide** | On a banner | Expand or collapse the explanation |
+Every control, the states an account can show and the keys are in the
+README, under [The window](../README.md#the-window).
 
-The live card has **no buttons at all**. You cannot delete the login you are
-using by misclicking. The code enforces that, not just the layout.
+The live account has **no Switch and no Remove**. You cannot delete the login
+you are using by misclicking. The code enforces that, not just the layout.
 
-Shambles picks the glyphs (`＋`, `⟳`, `✕`, `⚠`, `ⓘ`) at runtime based on what
-your font can draw, falling back to `+`, `R`, `x`, `!` and `i`.
+### Why dates stay off the row
 
-### Why dates stay off the card
-
-A countdown on every row is noise on the days it does not matter. So the state
-sits on the card and the numbers sit one hover away. Point at the name for the
-exact expiry date, and at the chip for what to do. Anything with something to
-say gives you a tooltip right away: the name, the chip, the ✕, the ⓘ next to a
-usage bar, and both footer buttons.
-
-### Banners
-
-Two warnings can appear, each collapsed to one line with a **Details** button:
-
-- **`codex not on PATH, can't add accounts`**. Switching between accounts you
-  already saved still works. You just cannot create new ones until you install
-  the vendor CLI.
-- **`⚠ CLAUDE_CONFIG_DIR is set`**, in red, and the more serious of the two.
+A countdown on every row is noise on the days it does not matter. So a row
+shows a state only when something needs you, and the exact dates sit one
+hover away, or in the row's details once you open it. In a Claude login's
+last three days a one-line notice above the rows names the day it stops
+working, with a **Sign in** button beside it.
 
 ### Two things the window does on its own
 
@@ -308,8 +289,8 @@ profile. Nothing leaves your disk.
 
 ## Desktop shortcuts
 
-Tkinter apps launched through `python.exe` drag a blank terminal along behind
-the window. Each install route has a quiet path:
+A window launched through `python.exe` drags a blank terminal along behind
+it. Each install route has a quiet path:
 
 | Route | Quiet launcher |
 |---|---|

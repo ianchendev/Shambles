@@ -203,11 +203,9 @@ def open_url(url, *, wsl=None, which=shutil.which, runner=None) -> bool:
     element and never through a shell -- it arrives from another process's
     stdout, so it is not ours to trust.
 
-    Covers Linux and WSL. On native Windows none of these binaries exists, so
-    this finds nothing and returns False; the caller falls back to
-    ``webbrowser``, which uses ``os.startfile`` there and is the right answer.
-    ``tests/test_browser.py`` pins that fallback, because losing it would take
-    Windows with it silently.
+    Covers Linux and WSL. On native Windows and macOS none of these binaries
+    exists, so this finds nothing and returns False; :func:`open_sign_in_page`
+    is what an interface calls, and it falls back to ``webbrowser`` there.
     """
     if not url or not str(url).lower().startswith(("http://", "https://")):
         return False
@@ -224,6 +222,39 @@ def open_url(url, *, wsl=None, which=shutil.which, runner=None) -> bool:
         if getattr(result, "returncode", None) in accepted:
             return True
     return False
+
+
+def open_sign_in_page(url, *, platform=None, browser=None) -> bool:
+    """Open a sign-in link in a browser. Returns whether anything took it.
+
+    :func:`open_url` first. Where it finds nothing to run, which is every
+    native Windows and macOS machine, Python's ``webbrowser`` is the right
+    answer: ``os.startfile`` on Windows, Launch Services on macOS. Without it
+    the Open button on those systems would never open anything, and
+    ``tests/test_browser.py`` pins it for that reason.
+
+    Not on Linux or WSL. ``webbrowser`` there picks ``gio``, which has no
+    handler and reports success anyway, and with no display it picks a text
+    browser that would take over the terminal the terminal UI is drawing on.
+    :func:`open_url` already tried everything worth trying.
+
+    ``browser`` stands in for ``webbrowser.open`` under test.
+    """
+    if open_url(url):
+        return True
+    if platform is None:
+        platform = sys.platform
+    if platform.startswith("linux"):
+        return False
+    if not url or not str(url).lower().startswith(("http://", "https://")):
+        return False
+    if browser is None:
+        import webbrowser
+        browser = webbrowser.open
+    try:
+        return bool(browser(url))
+    except Exception:
+        return False
 
 
 class LoginUnavailableError(ShamblesError):
@@ -691,10 +722,10 @@ class LoginProcess:
     buffer would conclude the tool is broken.
 
     ``on_line`` and ``on_exit`` are invoked **on a worker thread**. They must
-    not call Tk at all, ``widget.after`` included: hand the value to the Tk
-    thread (``LoginDialog`` puts it on a ``queue.Queue`` that the window
-    polls). A blocking wait on the main thread instead freezes the window and
-    stops the signal pump that makes Ctrl+C work.
+    not touch an interface directly: hand the value to the interface's own
+    thread (the window's bridge emits a Qt signal, which Qt queues onto the
+    window's thread). A blocking wait on the main thread instead freezes the
+    window and stops the signal pump that makes Ctrl+C work.
 
     ``takes_input`` gives the vendor a pipe on its standard input instead of
     an empty one, for :meth:`send_line`. Only a provider that reads a pasted

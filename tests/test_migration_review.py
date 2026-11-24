@@ -282,55 +282,51 @@ def test_copy_in_place_does_not_put_an_old_address_on_a_kept_login(paths):
     assert configjson.read_sidecar(paths.account("claude", "Alpha")).get(
         "oauthAccount", {}).get("emailAddress") != "old@example.test"
 
-def _dialogs(monkeypatch):
-    from shambles import gui
-    shown = []
-    monkeypatch.setattr(gui.messagebox, "showinfo",
-                        lambda *a, **k: shown.append(("info", str(a[1]))))
-    monkeypatch.setattr(gui.messagebox, "showerror",
-                        lambda *a, **k: shown.append(("error", str(a[1]))))
-    return shown
+def _opening(paths):
+    """What opening any interface runs first, and what it then says."""
+    from shambles.app.service import ShamblesService
+
+    return ShamblesService(paths=paths,
+                           providers=_providers.all_providers(env={}),
+                           platform="linux",
+                           clock_ms=lambda: NOW).run_migrations()
 
 
-def test_window_does_not_announce_accounts_it_did_not_bring(
-        paths, make_app, monkeypatch):
+def _filed(paths):
+    return [n for n in ("Alpha", "Beta")
+            if paths.credentials("claude", n).exists()]
+
+
+def test_opening_does_not_announce_accounts_it_did_not_bring(paths):
     """The real startup path, with a link the new predicate rejects."""
-    shown = _dialogs(monkeypatch)
     make_legacy_profile(paths, "Alpha", email="alpha@example.test", sessions=2)
     make_legacy_profile(paths, "Beta", email="beta@example.test", sessions=1)
     os.symlink(paths.legacy_profiles_dir / "Gone", paths.claude_dir,
                target_is_directory=True)
 
-    app = make_app(paths)
-    app.update()
+    notices = _opening(paths)
 
-    announced = [text for kind, text in shown if "account(s) are now filed" in text]
-    filed = [n for n in ("Alpha", "Beta")
-             if paths.credentials("claude", n).exists()]
-    assert not announced or filed == ["Alpha", "Beta"], (
-        f"dialog said: {announced[0].splitlines()[2]!r}; logins filed: {filed}")
+    announced = [n.message for n in notices if n.code == "store_moved"]
+    assert not announced or _filed(paths) == ["Alpha", "Beta"], (
+        f"said {announced[0]!r}; logins filed: {_filed(paths)}")
 
 
 def test_a_failed_conversion_is_not_followed_by_a_claim_of_success(
-        paths, make_app, monkeypatch):
-    """Disk full while merging history. run() reports it, and the window
-    then runs the v1.0 store migration over the pre-1.0 store."""
-    shown = _dialogs(monkeypatch)
+        paths, monkeypatch):
+    """Disk full while merging history. run() reports it, and opening then
+    runs the v1.0 store migration over the pre-1.0 store."""
     _legacy(paths, linked="Alpha", richest="Alpha")
     monkeypatch.setattr(migrate, "_merge_tree",
                         _fails(OSError(errno.ENOSPC, "No space left on device")))
 
-    app = make_app(paths)
-    app.update()
+    notices = _opening(paths)
 
-    kinds = [kind for kind, _ in shown]
-    assert "error" in kinds
-    announced = [text for kind, text in shown if "account(s) are now filed" in text]
-    filed = [n for n in ("Alpha", "Beta")
-             if paths.credentials("claude", n).exists()]
-    assert not announced or filed == ["Alpha", "Beta"], (
-        f"after the error dialog the window said {announced[0].splitlines()[2]!r} "
-        f"with logins filed for {filed}")
+    assert [n.code for n in notices if not n.ok] == ["history_merge_failed"]
+    announced = [n.message for n in notices if n.code == "store_moved"]
+    assert not announced or _filed(paths) == ["Alpha", "Beta"], (
+        f"after the failure it said {announced[0]!r} with logins filed for "
+        f"{_filed(paths)}")
+
 
 def test_an_empty_file_in_the_new_store_is_not_a_login_that_wins(paths):
     """'A login already in the store wins' is decided by the file existing.
