@@ -137,6 +137,19 @@ Notable changes per release. Dates are the tag date.
 
 ### Fixed
 
+- **Narrow windows kept what matters in view.** At 420 px the deadline
+  line cut off its date ("Administrator account stops …"); it now cuts the
+  name instead and keeps "stops Fri 27 Nov". The add-account sheet opened
+  scrolled past its own title to reach its name field; a sheet now opens
+  at its top and follows focus only where Tab takes it. An ⓘ after a
+  sentence that wraps sits after its last line, not beside its first, on
+  every sheet, the sign-in sheet's included.
+- **The unsaved-login card reads as a card.** It said "Signed in as
+  newhire@example.test, which is not saved yet. 'work' is
+  work@example.test." as its title. It now says "Signed in as
+  newhire@example.test", then "Not saved yet", with why saving matters
+  behind ⓘ. Notices and the settle card write account names without
+  quotes, as the rest of the window does.
 - **A sheet with room to spare could still scroll.** A sheet whose text
   was still being laid out when it opened could decide it scrolled, and
   the rule it then drew above its buttons took away exactly the room that

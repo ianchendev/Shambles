@@ -157,6 +157,14 @@ def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
     settle = None
     deadline = None
     notices = []
+    names = [a.name for a in group.accounts]
+
+    def said(text):
+        # The service's words as the window writes them (D9): no quotes
+        # round names, the tool by its name.
+        return as_the_window_says(text or "", tool=group.display_name,
+                                  names=names)
+
     for notice in group.notices:
         if notice.code == SIGN_IN_SOON:
             # D4: a line of its own in the last days, the row's badge
@@ -171,8 +179,8 @@ def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
             settle = {
                 "provider": group.provider,
                 "account": notice.account,
-                "title": notice.message,
-                "body": notice.remedy,
+                "title": said(notice.message),
+                "body": said(notice.remedy),
                 # Nothing is marked to switch away from when the marked
                 # account was deleted or the marker cleared.
                 "label": (f"Switch to {notice.account}"
@@ -181,11 +189,16 @@ def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
             }
             continue
         if notice.code == UNSAVED:
+            # Who, then that it is not saved; why that matters on hover.
+            # The service's message also names the marked account, which
+            # adds nothing next to the field that saves this one.
             save = {
                 "provider": group.provider,
                 "email": group.live_email or "",
-                "title": notice.message,
-                "body": notice.remedy,
+                "title": (f"Signed in as {group.live_email}"
+                          if group.live_email else said(notice.message)),
+                "body": "Not saved yet",
+                "tip": said(notice.remedy),
                 "suggested": suggest_name(group.live_email,
                                           [a.name for a in group.accounts]),
             }
@@ -199,8 +212,8 @@ def _group(group, needle: str, now_ms: int, *, numbers, hidden) -> dict:
         notices.append({
             "code": notice.code,
             "tone": NOTICE_TONES.get(notice.code, "info"),
-            "message": notice.message,
-            "remedy": notice.remedy,
+            "message": said(notice.message),
+            "remedy": said(notice.remedy),
             "provider": group.provider,
             "account": notice.account or "",
             "action": action,
@@ -283,6 +296,10 @@ def _deadline(group, notice, accounts, now_ms, hidden):
         "provider": group.provider,
         "account": account.name,
         "text": f"{account.name} stops working {day}".strip(),
+        # Apart from the name, so a narrow window cuts the name, never the
+        # date; the short form for when even that is tight.
+        "when": f"stops working {day}".strip(),
+        "whenShort": f"stops {day}".strip(),
         "tip": as_the_window_says(
             " ".join(p for p in (notice.message, notice.remedy) if p),
             tool=group.display_name, names=[a.name for a in group.accounts]),

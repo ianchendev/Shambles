@@ -157,23 +157,12 @@ Pane {
         visible: !sheet.device
         width: parent.width
         spacing: 10
-        Row {
-            width: parent.width
-            spacing: 6
-            Text {
-                text: ui.sheet.linkHint || ""
-                color: ui.theme.muted
-                font.pixelSize: 13
-                width: Math.min(implicitWidth, parent.width - linkInfo.width - 6)
-                wrapMode: Text.WordWrap
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            Info {
-                id: linkInfo
-                visible: !!ui.sheet.url
-                tip: ui.sheet.linkTip || ""
-                anchors.verticalCenter: parent.verticalCenter
-            }
+        TipText {
+            // The i follows the sentence's last line, as on every sheet.
+            text: ui.sheet.linkHint || ""
+            tip: ui.sheet.url ? (ui.sheet.linkTip || "") : ""
+            color: ui.theme.muted
+            font.pixelSize: 13
         }
         Rectangle {
             objectName: "signInLink"
@@ -262,23 +251,10 @@ Pane {
         visible: sheet.device
         width: parent.width
         spacing: 10
-        Row {
-            width: parent.width
-            spacing: 6
-            Text {
-                text: ui.sheet.deviceHint || ""
-                color: ui.theme.text
-                font.pixelSize: 13
-                width: Math.min(implicitWidth, parent.width - deviceInfo.width - 6)
-                wrapMode: Text.WordWrap
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            Info {
-                id: deviceInfo
-                tip: ui.sheet.deviceTip || ""
-                visible: tip !== ""
-                anchors.verticalCenter: parent.verticalCenter
-            }
+        TipText {
+            text: ui.sheet.deviceHint || ""
+            tip: ui.sheet.deviceTip || ""
+            font.pixelSize: 13
         }
         TextEdit {
             objectName: "deviceCode"
@@ -308,7 +284,8 @@ Pane {
                 onClicked: ui.copyUrl()
             }
             Text {
-                height: 38
+                // As tall as the buttons beside it (D9: 36 on sheets).
+                height: 36
                 verticalAlignment: Text.AlignVCenter
                 text: ui.sheet.expiresIn || ""
                 color: ui.sheet.expiresIn === "expired" ? ui.theme.badText : ui.theme.muted

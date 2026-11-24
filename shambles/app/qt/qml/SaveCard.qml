@@ -34,13 +34,13 @@ Rectangle {
             font.weight: Font.DemiBold
             wrapMode: Text.WordWrap
         }
-        Text {
-            width: parent.width
+        TipText {
+            // "Not saved yet", with why that matters behind its i.
+            objectName: "saveBody"
             text: root.save.body || ""
+            tip: root.save.tip || ""
             color: ui.theme.muted
             font.pixelSize: 13
-            lineHeight: 1.25
-            wrapMode: Text.WordWrap
         }
         Text {
             text: "Name for this account"

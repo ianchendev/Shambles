@@ -227,6 +227,25 @@ def test_an_unsaved_login_becomes_a_save_card_with_a_name_suggested():
     assert shown["notices"] == [], "the save card replaces the banner"
 
 
+def test_the_save_card_says_who_in_its_title_and_why_on_hover():
+    """Not "Signed in as x, which is not saved yet. 'work' is w@..." as a
+    title: who, then that it is not saved, then why it matters behind an i.
+    Which account is marked says nothing the save field does not."""
+    notice = Notice("unsaved_login",
+                    "Signed in as newhire@example.test, which is not saved "
+                    "yet. 'work' is work@example.test.",
+                    "Save it as an account before switching, or switching "
+                    "away will replace it with no copy kept.")
+    save = only(view(group(account("work", active=True), notices=[notice],
+                           can_save=True, state="drifted",
+                           live_email="newhire@example.test")))["save"]
+
+    assert save["title"] == "Signed in as newhire@example.test"
+    assert save["body"] == "Not saved yet"
+    assert save["tip"] == notice.remedy
+    assert "'" not in save["title"] + save["body"] + save["tip"]
+
+
 def test_a_missing_profile_notice_offers_to_forget_the_marker():
     notice = Notice("missing_profile", "'Gone' is marked active but is no "
                     "longer on disk.", "Save the current login.",
@@ -883,7 +902,7 @@ def test_a_login_saved_elsewhere_is_settled_by_switching_not_by_saving():
     settle = shown["settle"]
     assert settle["account"] == "Home"
     assert settle["label"] == "Switch to Home"
-    assert "saved as 'Home'" in settle["title"]
+    assert "saved as Home," in settle["title"], "names without quotes (D9)"
     assert "Nothing is lost" in settle["body"]
     assert shown["notices"] == [], "drawn as the settle card, not a banner"
 
@@ -1001,6 +1020,18 @@ def test_a_deadline_in_the_last_three_days_is_one_line_with_sign_in():
     assert strip["tip"] == (SOON.message + " " + SOON.remedy).replace(
         "'Work'", "Work")
     assert strip["canSignIn"] is True
+
+
+def test_a_deadline_line_keeps_its_date_apart_from_the_name():
+    """At narrow widths the name gives way, never the date."""
+    strip = only(view(group(due_account("Work", active=True,
+                                        expires_at_ms=NOW + 2 * DAY),
+                            notices=[SOON]), now_ms=NOW))["deadline"]
+    day = presenter.local_time(NOW + 2 * DAY, presenter.DAY_FORMAT)
+
+    assert strip["when"] == f"stops working {day}"
+    assert strip["whenShort"] == f"stops {day}"
+    assert strip["text"] == f"Work stops working {day}"
 
 
 def test_a_deadline_further_off_is_left_to_the_rows_badge():

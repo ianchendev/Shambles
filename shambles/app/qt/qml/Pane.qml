@@ -75,6 +75,13 @@ Item {
                 probe = probe.parent
             if (!item || probe !== bodyColumn)
                 return
+            // Only where the keyboard took it. The focus a sheet gives its
+            // first field as it opens would otherwise open it scrolled past
+            // its own title.
+            var reason = item.focusReason
+            if (reason !== undefined && reason !== Qt.TabFocusReason
+                    && reason !== Qt.BacktabFocusReason)
+                return
             var top = item.mapToItem(bodyColumn, 0, 0).y
             var bottom = top + item.height
             if (top < scroll.contentY)

@@ -30,19 +30,40 @@ Rectangle {
         weight: 2
         color: ui.theme.warnText
     }
-    Text {
+    Row {
+        // Who, then when. A narrow window cuts the name, never the date,
+        // and says "stops" for "stops working" when even that is tight.
         id: label
         anchors.left: mark.right
         anchors.leftMargin: 8
         anchors.verticalCenter: parent.verticalCenter
-        width: Math.min(implicitWidth, actions.x - x - why.width - 18)
-        textFormat: Text.StyledText
-        text: root.said.indexOf(root.who) === 0
-              ? "<b>" + root.esc(root.who) + "</b>" + root.esc(root.said.slice(root.who.length))
-              : root.esc(root.said)
-        color: ui.theme.warnText
+        spacing: 4
+        readonly property real room: actions.x - x - why.width - 18
+        readonly property bool roomy: room - whenInFull.implicitWidth - spacing >= 80
+        Text {
+            objectName: "deadlineName"
+            width: Math.max(0, Math.min(implicitWidth,
+                                        label.room - when.implicitWidth - label.spacing))
+            text: root.who
+            color: ui.theme.warnText
+            font.pixelSize: 13
+            font.weight: Font.DemiBold
+            elide: Text.ElideRight
+        }
+        Text {
+            id: when
+            objectName: "deadlineWhen"
+            text: label.roomy ? (root.deadline.when || "") : (root.deadline.whenShort || "")
+            color: ui.theme.warnText
+            font.pixelSize: 13
+        }
+    }
+    Text {
+        // Measures the long form, to choose between the two.
+        id: whenInFull
+        visible: false
+        text: root.deadline.when || ""
         font.pixelSize: 13
-        elide: Text.ElideRight
     }
     Info {
         id: why
