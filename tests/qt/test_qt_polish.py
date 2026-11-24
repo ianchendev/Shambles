@@ -154,3 +154,91 @@ def test_eject_puts_its_folder_on_a_line_of_its_own(window, pump, size):
         assert not [bar for bar in items(root, "sheetScrollBar")
                     if bar.property("contentItem").property("opacity") > 0]
         assert inside(rect(path), rect(find(root, "sheetBody")))
+
+
+# -- the final render pass: what a narrow window still got wrong -------------------
+
+
+def deadline_admin():
+    import time
+
+    from shambles.app.snapshot import Notice
+
+    soon = int(time.time() * 1000) + 2 * 86_400_000
+    notice = Notice("sign_in_soon", "'Administrator account' stops working "
+                    "soon.", "Sign in to 'Administrator account' again.",
+                    account="Administrator account")
+    admin = Account(name="Administrator account", email="admin@example.test",
+                    plan="max_5x", state="closing", status_label="soon",
+                    sign_in_due=True, expires_at_ms=soon)
+    return Snapshot(1, [group(account("work", active=True), admin,
+                              notices=[notice])])
+
+
+@pytest.mark.parametrize("size", [(760, 720), SMALL])
+def test_a_narrow_deadline_line_cuts_the_name_never_the_date(window, pump,
+                                                              size):
+    engine, ui, _service, messages = window(FakeService(deadline_admin()))
+    root = engine.rootObjects()[0]
+    sized(root, pump, *size)
+
+    strip = find(root, "deadline")
+    when = find(root, "deadlineWhen")
+    name = find(root, "deadlineName")
+    day = ui.view["groups"][0]["deadline"]["when"].split(" ", 2)[-1]
+
+    assert when.property("text").endswith(day), "the date is always said"
+    assert inside(rect(when), rect(strip))
+    sx, _sy, _sw, _sh = rect(find(root, "deadlineClose"))
+    wx, _wy, ww, _wh = rect(when)
+    assert wx + ww < sx, "the date runs under the buttons"
+    if size == SMALL:
+        assert name.width() < name.implicitWidth(), "the name gave way"
+    else:
+        assert name.width() == name.implicitWidth()
+    assert messages == []
+
+
+def test_a_sheet_opens_at_its_title_and_follows_only_the_keyboard(window,
+                                                                    pump):
+    engine, ui, _service, _messages = window()
+    root = engine.rootObjects()[0]
+    sized(root, pump, *SMALL)
+
+    ui.openAdd("claude")
+    pump(timeout=0.2)
+    root.grabWindow()
+    body = find(root, "sheetBody")
+    assert body.property("contentY") == 0, "opened scrolled past its title"
+
+    field = [item for item in items(root, "") if
+             item.property("label") == "Account name"][0]
+    cancel = [b for b in buttons(root) if b.property("text") == "Cancel"][0]
+    cancel.forceActiveFocus(Qt.TabFocusReason)
+    pump(timeout=0.05)
+    field.forceActiveFocus(Qt.BacktabFocusReason)
+    assert pump(lambda: body.property("contentY") > 0, timeout=1), \
+        "Tab to a field below the fold should bring it into view"
+
+
+def test_an_i_follows_the_last_line_of_the_text_it_explains(window, pump):
+    service = FakeService()
+    service.plan_eject = lambda: ActionPlan(
+        "eject", None, None, True, "Eject Shambles?", ("Eject.",),
+        details={"keeps": [], "parked": ["Administrator account", "client",
+                                         "spare", "Research"],
+                 "store": "/tmp/example/.shambles"})
+    engine, ui, _service, messages = window(service)
+    root = engine.rootObjects()[0]
+    sized(root, pump, *SMALL)
+
+    ui.askEject()
+    pump(timeout=0.2)
+    root.grabWindow()
+
+    info = find(root, "tipTextInfo")
+    text = info.parentItem()
+    assert text.height() > 30, "the sentence should wrap at this width"
+    assert info.y() > text.height() / 2, "the i sat beside the first line"
+    assert inside(rect(info), rect(find(root, "sheetPanel")))
+    assert messages == []
